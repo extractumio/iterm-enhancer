@@ -13,6 +13,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+if sys.platform != "darwin":  # procinfo reads libproc, macOS only; the CI runner is Linux
+    raise unittest.SkipTest("bridge lifecycle needs macOS")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from fbbridge import lifecycle  # noqa: E402
 from fbbridge.procinfo import proc_start  # noqa: E402

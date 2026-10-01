@@ -1,0 +1,73 @@
+name: release
+
+# A tag v* builds the Linux agents on the owner's runner and attaches them to the GitHub
+# release (AC-39); `make release TAG=…` on the Mac adds the macOS agents. No pull-request
+# trigger (public repository); no permissions unless a job asks; only the upload job may
+# write, after the tests passed, for a tag whose commit is on main.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  test:
+    name: Tests on Linux
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Tests
+        run: |
+          (cd ui && npm ci --ignore-scripts --no-fund --no-audit && npm run build && npx tsc -p . && npm test)
+          (cd fbd && cargo test)
+          python3 -m unittest discover -s bridge/tests
+
+  release:
+    name: Linux agents to the release
+    needs: test
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: The tag is on main
+        run: |
+          case "$GITHUB_REF" in refs/tags/v*) ;; *) echo "not a v* tag: $GITHUB_REF"; exit 1;; esac
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Build and upload the Linux agents
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd ui && npm ci --ignore-scripts --no-fund --no-audit && npm run build)
+          python3 scripts/agents.py toolchain linux-x86_64 linux-aarch64
+          python3 scripts/release.py "$GITHUB_REF_NAME" linux-x86_64 linux-aarch64

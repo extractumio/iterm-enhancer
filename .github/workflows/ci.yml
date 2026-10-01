@@ -1,14 +1,46 @@
 name: ci
-on: [push, pull_request]
+
+# The owner's runner only (AC-39): never a GitHub-hosted runner, cache or artifact store.
+# This repository is public: no pull-request trigger, or a fork could run code on the
+# runner. Pushes to main and manual runs only.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+
 jobs:
   test:
-    runs-on: macos-latest
+    name: Tests on Linux, agents build
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cd ui && npm ci --no-fund --no-audit && npm run build && npx tsc -p . && npm test
-      - run: cd fbd && cargo test
-      - run: python3 -m unittest discover -s bridge/tests
-      - run: cd fbd && cargo build --release
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: UI build, typecheck, unit tests
+        run: cd ui && npm ci --ignore-scripts --no-fund --no-audit && npm run build && npx tsc -p . && npm test
+
+      - name: fbd tests
+        run: cd fbd && cargo test
+
+      - name: Bridge and installer tests
+        run: python3 -m unittest discover -s bridge/tests
+
+      - name: Agents for Linux (the same script as on the Mac)
+        run: |
+          python3 scripts/agents.py toolchain linux-x86_64 linux-aarch64
+          python3 scripts/agents.py build linux-x86_64 linux-aarch64
