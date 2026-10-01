@@ -40,6 +40,7 @@ class Windows:
         self.viewer_session = None
         self.last_width = 0.0
         self.shown = {}                                           # window id → Toolbelt shown (AC-36)
+        self.refused = set()                                      # windows whose Toolbelt menu was disabled
         self.state = self._load()
 
     # ── Toolbelt in new windows ──────────────────────────────────────────────
@@ -50,17 +51,27 @@ class Windows:
         self.known |= ids
         self.pending &= ids
         self.shown = {w: v for w, v in self.shown.items() if w in ids}  # closed windows
+        self.refused &= ids
         key = self.app.current_terminal_window
         if AUTO_TOOLBELT and key and key.window_id in self.pending:
-            self.pending.discard(key.window_id)
+            # macOS disables the menu while iTerm2 is not the active app or a sheet is open:
+            # the window stays pending and is tried on every poll while it is key (AC-25)
             try:
                 st = await iterm2.MainMenu.async_get_menu_item_state(conn, "Show Toolbelt")
-                if not st.checked:
-                    await iterm2.MainMenu.async_select_menu_item(conn, "Show Toolbelt")
-                self.shown[key.window_id] = True
-            except Exception as e:  # menu disabled while a sheet is open: try on the next focus
-                self.pending.add(key.window_id)
-                log(f"toolbelt: {e}")
+                if st.checked or st.enabled:
+                    if not st.checked:
+                        await iterm2.MainMenu.async_select_menu_item(conn, "Show Toolbelt")
+                    self.pending.discard(key.window_id)
+                    self.shown[key.window_id] = True
+                    self.refused.discard(key.window_id)
+                    reason = None
+                else:
+                    reason = "DISABLED"
+            except Exception as e:  # disabled between the read and the select
+                reason = str(e)
+            if reason and key.window_id not in self.refused:
+                self.refused.add(key.window_id)
+                log(f"toolbelt: {reason} (will retry while the window is key)")
         await self._remember_viewer_frame()
 
     async def toolbelt_shown(self, conn, window_id, refresh=False):

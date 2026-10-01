@@ -6,11 +6,19 @@ a restart) and reuses it, the viewer never becomes "the focused pane", and each 
 its window (AC-36). Run it with iTerm2 in front: a hidden window's Toolbelt never loads.
 Needs the installed bridge (make install && make restart). Closes what it opens."""
 import asyncio
+import subprocess
+import sys
 
 import iterm2
 
 from e2e_common import REPO, call, check
 from fbbridge.viewer_profile import VIEWER_GUID, VIEWER_PROFILE
+
+
+def iterm_in_front():
+    r = subprocess.run(["osascript", "-e", 'tell application "System Events" to get name of first process whose frontmost is true'],
+                       capture_output=True, text=True)
+    return r.stdout.strip() == "iTerm2"
 
 
 async def main(conn):
@@ -117,4 +125,8 @@ async def main(conn):
     print("PASS" if ok else "FAIL")
 
 
+if not iterm_in_front():
+    # menus are disabled and hidden Toolbelts never load while iTerm2 is in the background
+    # (AS-09); and this test must not open windows behind the user's work
+    sys.exit(print("SKIP: bring iTerm2 to the front and run again") or 0)
 iterm2.run_until_complete(main)
