@@ -1,10 +1,9 @@
 name: release
 
-# A tag v* tests and builds the Linux helpers on the owner's runner and attaches them to
-# the GitHub release (AC-39); `make release TAG=…` on the Mac attaches the package users
-# install (it carries all helpers, AC-40). No pull-request
-# trigger (public repository); no permissions unless a job asks; only the upload job may
-# write, after the tests passed, for a tag whose commit is on main.
+# A tag v* tests and builds the Linux helpers on the owner's runner (AC-39), read-only:
+# code that runs here can never change a release. `make release TAG=…` on the Mac
+# publishes the signed package users install (it carries all helpers, AC-40). No
+# pull-request trigger (public repository); no write permission and no token for the GitHub API.
 on:
   push:
     tags: ["v*"]
@@ -37,16 +36,16 @@ jobs:
       - name: Tests
         run: |
           (cd ui && npm ci --ignore-scripts --no-fund --no-audit && npm run build && npx tsc -p . && npm test)
-          (cd fbd && cargo test)
+          (cd fbd && cargo test --locked)
           python3 -m unittest discover -s bridge/tests
 
-  release:
-    name: Linux agents to the release
+  agents:
+    name: Linux agents build
     needs: test
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 30
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -65,17 +64,10 @@ jobs:
           node-version: "22"
           package-manager-cache: false
 
-      - name: Build and upload the Linux agents
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Build the Linux agents
         run: |
           (cd ui && npm ci --ignore-scripts --no-fund --no-audit && npm run build)
           python3 scripts/agents.py toolchain linux-x86_64 linux-aarch64
           python3 scripts/agents.py build linux-x86_64 linux-aarch64
           aid=$(python3 scripts/agents.py id)
-          mkdir -p out
-          for p in linux-x86_64 linux-aarch64; do cp "dist/agents/$aid/$p/fbd" "out/fbd-$p"; done
-          (cd out && sha256sum fbd-* > SHA256SUMS-linux)
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes "Linux helpers built on the owner's runner"
-          gh release upload "$GITHUB_REF_NAME" out/* --clobber
+          for p in linux-x86_64 linux-aarch64; do sha256sum "dist/agents/$aid/$p/fbd"; done

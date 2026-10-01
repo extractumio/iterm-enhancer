@@ -31,12 +31,6 @@ echo "== packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq curl ca-certificates git build-essential python3 python3-venv tar >/dev/null
-if ! command -v gh >/dev/null; then  # GitHub's own apt repository, for `gh release` in release.yml
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-        > /etc/apt/sources.list.d/github-cli.list
-    apt-get update -qq && apt-get install -y -qq gh >/dev/null
-fi
 
 echo "== user $RUNNER_USER"
 id "$RUNNER_USER" >/dev/null 2>&1 || useradd --create-home --shell /bin/bash "$RUNNER_USER"

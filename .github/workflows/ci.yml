@@ -35,7 +35,7 @@ jobs:
         run: cd ui && npm ci --ignore-scripts --no-fund --no-audit && npm run build && npx tsc -p . && npm test
 
       - name: fbd tests
-        run: cd fbd && cargo test
+        run: cd fbd && cargo test --locked
 
       - name: Bridge and installer tests
         run: python3 -m unittest discover -s bridge/tests
