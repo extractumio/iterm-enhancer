@@ -50,8 +50,24 @@ async def run_commands(conn, app, windows, queue):
                 await windows.open_viewer(conn, c["path"], c["code"])
             elif action == "default-width":
                 await windows.set_default_width(conn)
+            elif action == "which-window":  # its own task: never delays a terminal command
+                asyncio.create_task(answer_which_window(conn, app, windows, c))
         except Exception as e:
             await asyncio.get_running_loop().run_in_executor(None, backend.report_failure, c, e)
+
+
+async def answer_which_window(conn, app, windows, c):
+    """A panel was used, so its window is key (AC-36): say which, read after the request."""
+    try:
+        await asyncio.sleep(POLL)  # let the focus change reach the app model
+        win = app.current_terminal_window
+        wid = win.window_id if win and win.window_id != windows.viewer_id else None
+        # the cached value: re-reading the menu while a new Toolbelt appears can say "hidden"
+        shown = bool(wid) and await windows.toolbelt_shown(conn, wid)
+        await asyncio.get_running_loop().run_in_executor(
+            None, backend.post, "/internal/bound", {"req": c["req"], "window": wid, "panel": shown})
+    except Exception as e:
+        await asyncio.get_running_loop().run_in_executor(None, backend.report_failure, c, e)
 
 
 async def is_terminal(sess, windows):
@@ -87,7 +103,8 @@ class Follower:
             state = {"window": win.window_id, "session": sess.session_id, "key": r["key"],
                      "title": await sess.async_get_variable("presentationName") or "",
                      "mode": r["mode"], "note": r.get("note", ""), "job": r.get("job"),
-                     "busy": r.get("busy", False), "theme": self.theme}
+                     "busy": r.get("busy", False), "theme": self.theme,
+                     "panel": await windows.toolbelt_shown(self.conn, win.window_id, refresh=self.tick % THEME_EVERY == 0)}
             last = self.last
             if cwd:
                 state.update(cwd=cwd, stale=False)

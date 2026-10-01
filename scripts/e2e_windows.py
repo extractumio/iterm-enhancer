@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 """AC-25 / AC-26 end-to-end in iTerm2: a new window gets the Toolbelt, ⌘-click opens one
 viewer window (a browser, even when iTerm2 holds the profile as a terminal profile, as after
-a restart) and reuses it, and the viewer never becomes "the focused pane".
+a restart) and reuses it, the viewer never becomes "the focused pane", and each panel keeps
+its window (AC-36). Run it with iTerm2 in front: a hidden window's Toolbelt never loads.
 Needs the installed bridge (make install && make restart). Closes what it opens."""
 import asyncio
 
 import iterm2
 
-from e2e_common import REPO, call
+from e2e_common import REPO, call, check
 from fbbridge.viewer_profile import VIEWER_GUID, VIEWER_PROFILE
 
 
@@ -78,6 +79,38 @@ async def main(conn):
             print(f"{'PASS' if passed else 'FAIL'} AC-26 a second file reuses the viewer window")
             frame = await viewer.async_get_frame()
             print(f"     viewer frame {int(frame.size.width)}×{int(frame.size.height)}")
+
+        # AC-36: the new window's panel lives there; a window without a Toolbelt is marked
+        panels = call("GET", "/api/health")[1].get("panels", {})
+        ok &= check("AC-36 the new window's panel claimed its window", panels.get(term.window_id) == 1, panels)
+        ids = {w.window_id for w in app.terminal_windows}
+        await iterm2.Window.async_create(conn)
+        await asyncio.sleep(0.8)
+        other = next(w for w in app.terminal_windows if w.window_id not in ids)
+        opened.append(other)
+        await other.async_activate()
+        await asyncio.sleep(1.0)  # AC-25 shows its Toolbelt; hide it again, as a user would
+        for _ in range(8):  # the menu is briefly disabled while the window settles
+            try:
+                if (await iterm2.MainMenu.async_get_menu_item_state(conn, "Show Toolbelt")).checked:
+                    await iterm2.MainMenu.async_select_menu_item(conn, "Show Toolbelt")
+                break
+            except iterm2.mainmenu.MenuItemException:
+                await asyncio.sleep(0.25)
+        await other.current_tab.current_session.async_send_text("cd /tmp\r")
+        st = {}
+        for _ in range(16):
+            await asyncio.sleep(0.25)
+            st = call("GET", "/api/state")[1]
+            if st.get("window") == other.window_id and st.get("panel") is False:
+                break
+        ok &= check("AC-36 a window without a Toolbelt is reported as panel: false",
+                    st.get("window") == other.window_id and st.get("panel") is False, f"panel={st.get('panel')}")
+        own = call("GET", f"/api/state?window={term.window_id}")[1]
+        ok &= check("AC-36 the first window's last state is kept for its panel",
+                    own.get("window") == term.window_id and own.get("key") == terminal_key)
+        panels = call("GET", "/api/health")[1].get("panels", {})
+        ok &= check("AC-36 the first panel keeps its window", panels.get(term.window_id) == 1, panels)
     finally:
         for w in opened:
             await w.async_close(force=True)

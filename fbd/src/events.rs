@@ -37,6 +37,8 @@ pub enum Event {
     ViewerOpen { path: String },
     /// a bridge command failed; only the panel `by` (its `X-FB-Client`) shows it
     BridgeError { message: String, by: Option<String> },
+    /// these panels lost their window binding to a stronger or competing claim (AC-36)
+    Unbind { clients: Vec<String> },
 }
 
 impl Event {
@@ -47,6 +49,7 @@ impl Event {
             Event::FsChange { .. } => "fs-change",
             Event::ViewerOpen { .. } => "viewer-open",
             Event::BridgeError { .. } => "bridge-error",
+            Event::Unbind { .. } => "unbind",
         }
     }
 

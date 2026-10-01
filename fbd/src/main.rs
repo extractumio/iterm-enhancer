@@ -13,9 +13,11 @@ mod files;
 mod http;
 mod listing;
 mod ops;
+mod panels;
 mod watcher;
 mod workspace;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -40,8 +42,10 @@ struct Config {
 }
 
 struct Term {
-    /// last state pushed by the bridge, as sent to panels
+    /// last state pushed by the bridge (the key window's), as sent to panels
     state: Value,
+    /// last state of each window, for panels that live in a window that is not key (AC-36)
+    windows: HashMap<String, (Value, Instant)>,
     version: u64,
     last_push: Option<Instant>,
     /// what panels were last told about the bridge (AC-30)
@@ -80,6 +84,8 @@ pub struct App {
     tickets: Tickets,
     /// files sent to the viewer window before its page connected (drained by the page)
     viewer_pending: Mutex<Vec<String>>,
+    /// which window each panel lives in (AC-36)
+    panels: panels::Panels,
 }
 
 pub type Shared = Arc<App>;
@@ -150,6 +156,9 @@ fn routes(app: Shared) -> Router {
         .route("/api/view/open", post(view_open))
         .route("/api/view/pending", get(view_pending))
         .route("/api/ui/toolbelt-width", post(toolbelt_width))
+        .route("/api/panel/claim", post(panels::panel_claim))
+        .route("/api/panel/bind", post(panels::panel_bind))
+        .route("/internal/bound", post(panels::internal_bound))
         .route("/ticket", get(ticket))
         .route("/internal/viewer-open", post(internal_viewer_open))
         .route("/internal/error", post(internal_error))
@@ -193,7 +202,8 @@ async fn main() {
         store: Store::load(dir.join("workspaces.json"), env("FB_WORKSPACE_TTL_DAYS", 14), bus.clone()),
         roots: Roots::parse(&std::env::var("FB_WRITABLE_ROOTS").unwrap_or_else(|_| "$HOME:/tmp".into())),
         bus,
-        term: Mutex::new(Term { state: json!({}), version: 0, last_push: None, announced_alive: false }),
+        term: Mutex::new(Term { state: json!({}), windows: HashMap::new(), version: 0, last_push: None, announced_alive: false }),
+        panels: Default::default(),
         started: Instant::now(),
         denied: Default::default(),
         commands: tokio::sync::broadcast::channel(32).0,
@@ -257,7 +267,7 @@ mod tests {
 
     #[test]
     fn bridge_silence_is_announced_once() {
-        let mut t = Term { state: json!({}), version: 3, last_push: None, announced_alive: false };
+        let mut t = Term { state: json!({}), windows: HashMap::new(), version: 3, last_push: None, announced_alive: false };
         assert!(!t.went_silent(), "never connected: nothing to announce");
         t.last_push = Some(Instant::now());
         t.announced_alive = true;

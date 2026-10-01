@@ -29,15 +29,32 @@ fn state_json(app: &App) -> Value {
 /// The state panels see. Send it while holding `term`, so events leave in the order the
 /// state changed (a bridge's return must not be overtaken by its silence).
 pub fn state_of(t: &Term) -> Value {
-    let mut s = if t.state.is_object() { t.state.clone() } else { json!({}) };
+    with_status(t, &t.state)
+}
+
+fn with_status(t: &Term, state: &Value) -> Value {
+    let mut s = if state.is_object() { state.clone() } else { json!({}) };
     s["version"] = json!(t.version);
     s["bridge"] = json!(t.bridge_alive());
     s
 }
 
-pub async fn get_state(State(app): State<Shared>) -> Json<Value> {
-    Json(state_json(&app))
+#[derive(Deserialize)]
+pub struct StateQuery {
+    window: Option<String>,
 }
+
+/// The key window's state, or the last state of `window` (a panel that lives there,
+/// AC-36); a window fbd has not seen yet answers the key window's state.
+pub async fn get_state(State(app): State<Shared>, Query(q): Query<StateQuery>) -> Json<Value> {
+    let t = app.term.lock();
+    Json(match q.window.as_deref().and_then(|w| t.windows.get(w)) {
+        Some((s, _)) => with_status(&t, s),
+        None => state_of(&t),
+    })
+}
+
+const WINDOWS_MAX: usize = 64;
 
 pub async fn internal_state(State(app): State<Shared>, Json(mut body): Json<Value>) -> StatusCode {
     body.as_object_mut().map(|o| o.remove("version"));
@@ -49,6 +66,14 @@ pub async fn internal_state(State(app): State<Shared>, Json(mut body): Json<Valu
         let changed = t.state != body || !t.announced_alive;
         t.announced_alive = true;
         if changed {
+            if let Some(w) = body["window"].as_str() {
+                if t.windows.len() >= WINDOWS_MAX && !t.windows.contains_key(w) {
+                    // closed windows pile up otherwise: drop the one not updated for longest
+                    let oldest = t.windows.iter().min_by_key(|(_, (_, at))| *at).map(|(k, _)| k.clone());
+                    oldest.map(|k| t.windows.remove(&k));
+                }
+                t.windows.insert(w.to_string(), (body.clone(), Instant::now()));
+            }
             t.state = body;
             t.version += 1;
         }
@@ -67,9 +92,20 @@ pub async fn internal_state(State(app): State<Shared>, Json(mut body): Json<Valu
     StatusCode::NO_CONTENT
 }
 
-pub async fn events(State(app): State<Shared>) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
+#[derive(Deserialize)]
+pub struct EventsQuery {
+    client: Option<String>,
+}
+
+/// A panel's event stream; when it names its `client`, the panel's window claim (AC-36)
+/// lasts as long as the stream.
+pub async fn events(State(app): State<Shared>, Query(q): Query<EventsQuery>) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
     let first = SseEvent::default().event("state").data(Event::State(state_json(&app)).data());
-    let rx = BroadcastStream::new(app.bus.subscribe()).filter_map(|e| e.ok().map(|e| Ok(SseEvent::default().event(e.name()).data(e.data()))));
+    let guard = q.client.map(|c| crate::panels::StreamGuard::new(app.clone(), c));
+    let rx = BroadcastStream::new(app.bus.subscribe()).filter_map(move |e| {
+        let _ = &guard;
+        e.ok().map(|e| Ok(SseEvent::default().event(e.name()).data(e.data())))
+    });
     Sse::new(tokio_stream::once(Ok(first)).chain(rx)).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }
 
@@ -263,6 +299,7 @@ pub async fn health(State(app): State<Shared>) -> Json<Value> {
         "workspaces": app.store.len(),
         "watched_dirs": app.watcher.as_ref().map_or(0, |w| w.len()),
         "writable_roots": app.roots.list(),
+        "panels": app.panels.per_window(),
         "denied_requests": app.denied.load(Ordering::Relaxed),
     }))
 }

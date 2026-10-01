@@ -39,6 +39,7 @@ class Windows:
         self.viewer_id = None
         self.viewer_session = None
         self.last_width = 0.0
+        self.shown = {}                                           # window id → Toolbelt shown (AC-36)
         self.state = self._load()
 
     # ── Toolbelt in new windows ──────────────────────────────────────────────
@@ -48,6 +49,7 @@ class Windows:
         self.pending |= ids - self.known
         self.known |= ids
         self.pending &= ids
+        self.shown = {w: v for w, v in self.shown.items() if w in ids}  # closed windows
         key = self.app.current_terminal_window
         if AUTO_TOOLBELT and key and key.window_id in self.pending:
             self.pending.discard(key.window_id)
@@ -55,10 +57,23 @@ class Windows:
                 st = await iterm2.MainMenu.async_get_menu_item_state(conn, "Show Toolbelt")
                 if not st.checked:
                     await iterm2.MainMenu.async_select_menu_item(conn, "Show Toolbelt")
+                self.shown[key.window_id] = True
             except Exception as e:  # menu disabled while a sheet is open: try on the next focus
                 self.pending.add(key.window_id)
                 log(f"toolbelt: {e}")
         await self._remember_viewer_frame()
+
+    async def toolbelt_shown(self, conn, window_id, refresh=False):
+        """Whether `window_id` (the key window: the menu reports only that one) shows its
+        Toolbelt; read when it is first seen as key and on `refresh`. A state from a window
+        without one is marked so panels of other windows ignore it (AC-36)."""
+        if refresh or window_id not in self.shown:
+            try:
+                self.shown[window_id] = (await iterm2.MainMenu.async_get_menu_item_state(conn, "Show Toolbelt")).checked
+            except Exception as e:  # menu disabled while a sheet is open: assume shown, as before
+                log(f"toolbelt state: {e}")
+                return self.shown.get(window_id, True)
+        return self.shown[window_id]
 
     def is_viewer(self, session):
         return session is not None and session.session_id == self.viewer_session

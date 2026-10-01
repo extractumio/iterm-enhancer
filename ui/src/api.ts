@@ -44,6 +44,8 @@ export interface Theme {
 export interface TermState {
   version: number; bridge: boolean; key?: string; session?: string; title?: string;
   mode?: string; note?: string; job?: string; busy?: boolean; cwd?: string | null; stale?: boolean; theme?: Theme;
+  window?: string;  // the iTerm2 window of the pane (AC-36)
+  panel?: boolean;  // false: that window shows no Toolbelt, so no panel lives there
 }
 export interface FileView {
   path: string; size: number; etag: string; binary: boolean; mime: string | null;
@@ -77,7 +79,7 @@ export async function api<T>(method: string, path: string, opts: { query?: Query
 }
 
 export const rawUrl = (path: string) => `/api/raw?path=${encodeURIComponent(path)}&t=${encodeURIComponent(TOKEN)}`;
-export const eventsUrl = () => `/api/events?t=${encodeURIComponent(TOKEN)}`;
+export const eventsUrl = () => `/api/events?t=${encodeURIComponent(TOKEN)}&client=${CLIENT}`;
 
 /** Run an API call; on failure show its message and resolve to undefined. */
 export const apiOrToast = <T>(...args: Parameters<typeof api<T>>) => api<T>(...args).catch((e: Error) => { toast(e.message); return undefined; });

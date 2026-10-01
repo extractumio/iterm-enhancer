@@ -8,6 +8,7 @@ import {
   api, apiOrToast, ApiError, basename, CLIENT, DEFAULT_PREFS, dirname, eventsUrl, keepToken, redeemTicket, toast, TOKEN,
   type FsChange, type Pane, type Prefs, type TermState,
 } from "./api";
+import { Binding } from "./binding";
 import { ask, menu, type MenuEntry } from "./dialogs";
 import { applyTheme } from "./theme";
 import { Tree, type EditMode } from "./tree";
@@ -17,6 +18,8 @@ import { PathBar } from "./viewer-path";
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 let term: TermState = { version: -1, bridge: false };
+const binding = new Binding();        // the iTerm2 window this panel lives in (AC-36)
+let unseen = false;                   // fbd has no state of that window yet
 let key: string | null = null;        // state key of the pane shown (session or tmux pane)
 let ws: Pane | null = null;           // its workspace as last read or written
 let prefs: Prefs = { ...DEFAULT_PREFS };
@@ -114,18 +117,42 @@ function renderHeader(s: TermState) {
   bdi.append(home ? head.replace(home, "~") : head, b);
   $("crumbs").replaceChildren(bdi);
   $("crumbs").title = cwd;
-  $("note").textContent = (s.stale ? "⏸ cwd unavailable — showing last known · " : "") + (s.note ?? "");
+  $("note").textContent = (unseen ? "Switch to this window to update · " : "") +
+    (s.stale ? "⏸ cwd unavailable — showing last known · " : "") + (s.note ?? "");
+}
+
+/** fbd answers, but nothing tells it where the terminal is: say so, the tree stays usable (AC-30). */
+function bridgeNotice(s: TermState) {
+  if (!s.bridge) notice(NOT_FOLLOWING, "Bridge not running: Scripts → AutoLaunch → fb_bridge.py, or restart iTerm2.");
+  else if (noticeTitle === NOT_FOLLOWING) notice("", "");
+}
+
+/** Show the last state of this panel's own window when another window's is on screen. */
+async function showOwnWindow() {
+  if (!binding.window || term.window === binding.window) return;
+  const s = await api<TermState>("GET", "/api/state", { query: { window: binding.window } });
+  unseen = s.window !== binding.window;
+  if (unseen) renderHeader(term); else await onState(s);
+}
+
+/** The user acted in the panel, so its window is key: bind to it (AC-36). */
+function confirmWindow() {
+  if (!VIEW) void binding.confirm().then(() => showOwnWindow()).catch(() => {});
 }
 
 async function onState(s: TermState) {
+  if (!VIEW && !binding.accepts(s)) { // another window's pane (AC-36): only the bridge status counts here
+    term = { ...term, bridge: s.bridge };
+    renderHeader(term);
+    return bridgeNotice(term);
+  }
   term = s;
+  unseen = false;
   const restyled = applyTheme(s.theme);
   if (VIEW) return; // the viewer window only takes the theme
   if (restyled) tree.themeChanged(); // row height follows the font size
   renderHeader(s);
-  // fbd answers, but nothing tells it where the terminal is: say so, the tree stays usable (AC-30)
-  if (!s.bridge) notice(NOT_FOLLOWING, "Bridge not running: Scripts → AutoLaunch → fb_bridge.py, or restart iTerm2.");
-  else if (noticeTitle === NOT_FOLLOWING) notice("", "");
+  bridgeNotice(s);
   if (!s.key || !s.cwd) {
     if (!key) $("empty").textContent = s.bridge ? "Focus a local terminal pane" : "Waiting for iTerm2…";
     return;
@@ -156,6 +183,7 @@ function connect() {
   on("fs-change", onFsChange);
   on("viewer-open", ({ path }) => { if (VIEW) viewer.open(path); });
   on("bridge-error", ({ message, by }) => { if (by === CLIENT) toast(message); }); // only the panel that asked
+  on("unbind", ({ clients }) => { if (clients.includes(CLIENT)) binding.lost(); });
   es.onerror = () => {
     $("dot").className = "dot off";
     // EventSource hides the status: ask once whether the token or the backend is the problem
@@ -167,6 +195,7 @@ function connect() {
   es.onopen = () => {
     notice("", "");
     if (VIEW) return void api<string[]>("GET", "/api/view/pending").then((ps) => ps.forEach((p) => viewer.open(p)), () => {});
+    void binding.claim().then(() => showOwnWindow()).catch(() => {});
     renderHeader(term);
     if (key) void loadWorkspace(key);
   };
@@ -316,6 +345,9 @@ const viewer = new Viewer($("tabs"), $("tools"), $("vbody"), {
   active: (p) => pathBar?.show(p),
 });
 let pathBar: PathBar | null = null; // viewer window only
+
+document.addEventListener("pointerdown", confirmWindow, true);
+document.addEventListener("keydown", () => { if (!binding.window) confirmWindow(); }, true); // keys reach only the key window
 
 const filterEl = $<HTMLInputElement>("filter");
 filterEl.addEventListener("input", () => {

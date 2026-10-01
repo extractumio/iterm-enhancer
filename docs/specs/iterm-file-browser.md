@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.9.0 |
+| Version | 0.10.0 |
 | Date | 2026-10-01 |
 | Status | approved |
 | Author | Project maintainers |
@@ -23,6 +23,7 @@ Change log:
 | 0.7.0 | 2026-10-01 | AC-30 (P0): one bridge per iTerm2 — it exits with its iTerm2 or its API connection, a new bridge takes over from a leftover one (`bridge.lock`), a hung iTerm2 call cannot freeze the loop, and a panel nobody follows says so. Found when an iTerm2 restart left the old bridge and fbd running: the new bridge failed on the busy port, new windows got no Toolbelt and the panel showed an old directory as current. AS-08 added. Pragmatic review: lock taken only after the API connection is up, silence keyed on `bridge` (not `stale`), `make restart` exercises the takeover, Python unit tests join `make test`. Implementation review: a holder that exits during the takeover is not an error, a holder is judged again after 0.5 s, the silence event is sent under the state lock, a failing watchdog check is logged and the watch goes on; rejected: `make install` stopping a lockless bridge (no release has shipped one; the single local instance is stopped once by hand) |
 | 0.8.0 | 2026-10-01 | AC-26: the viewer window opened as a terminal after an iTerm2 restart (iTerm2 3.7.3 loads dynamic profiles before its browser plugin, so "Files Viewer" was stored as a terminal profile); the bridge now checks and reloads the profile, closes a non-browser window, and every failed bridge command is shown in the panel that asked (`bridge-error`). The viewer window shows the file's full path with a copy button. AC-31 (expand and collapse all), AC-32 (file-type icons, Tabler Icons, MIT). Pragmatic review: failure message names no unverified cause, errors go only to the asking panel, expand all is cancelled by any re-root or collapse, icons vendored instead of an npm dependency; rejected: a profile "Title Components" change for the window title (iTerm2 browser windows compose their title themselves; not observable through the API). Implementation review: a window that fails its checks is never kept as the viewer; a folder dropped by a disk refresh no longer cancels expand all; expand all leaves folders the user had open; found and fixed: "Collapse all" left cached folders' children open (re-opening one showed them again) and a `/` root never restored its expanded folders |
 | 0.9.0 | 2026-10-01 | Planned (Stage 7): AC-33 (one command installs or upgrades a versioned build and rolls back a build that does not come up), AC-34 (open panels and viewer windows move to the new build — at once when clean, after the save when dirty — with tree and tabs intact and no error flash for a short gap), AC-35 (rollback; older builds read newer state). Pragmatic review: cut the spare-port preflight (`fbd --version` instead), state format versioning (serde defaults suffice), tests inside install and a separate upgrade command; replaced stashing unsaved buffers in `sessionStorage` by reloading after the save; added migration from the unversioned layout, a build id covering the bridge, import-path pinning, prune only after health, no iTerm2 start, osascript permission errors, root refusal, an install lock and rollback without `previous`. Gaps found while reviewing the current upgrade: panels keep old code until reloaded, lazy chunks of an old panel may be gone, changes during the restart gap are missed, an old bridge may start a new fbd, no health check or rollback |
+| 0.10.0 | 2026-10-01 | AC-36 (P0): a panel follows only the window it lives in. Found by the owner: switching to another window (with or without a Files panel) re-rooted the panel of the first window. Probes in iTerm2 3.7.3 (AS-09): a web view reports no window geometry (`screenX` 0, `outerWidth` 0), gets no focus/blur events, and neither browser sessions nor Toolbelt web views get `iterm2Invoke`; so the bridge marks the state of a window without a visible Toolbelt (`panel: false`) and panels ignore it; a panel claims the key window on load (dropped when two claims meet, as at launch) and binds for sure when the user acts in it (fbd asks the bridge for the key window after the request); the binding lives in `sessionStorage`; fbd keeps the last state per window. Pragmatic review: conflict rule instead of a 2 s load-burst rule, a pull through the bridge instead of waiting for the next push, the Toolbelt check on the bridge. Implementation review: a claim lives until the panel's last event stream closes (a late-closing old stream no longer drops it), a confirmed panel stops asking (clicks no longer delay terminal commands; `which-window` runs in its own bridge task), the per-window state cap drops the oldest window; live test: a load claim also asks the bridge (it used the last pushed state, which still named the previous window), the bridge answers from its cached Toolbelt state (re-reading the menu while a Toolbelt appears can say hidden), a claim needs an open event stream, and a window where load guesses collided stays contested until a user's action (a third guess no longer wins); accepted: a terminal command right after switching windows may be refused once (safe direction). Also observed: re-registering the tool reloads every open Files panel as new web views (input for AC-34: self-reload must use `location.reload()` to keep bindings) |
 
 ## 1. Overview
 
@@ -58,6 +59,7 @@ Assumptions:
 | AS-05 | The Toolbelt web view is WebKit (WKWebView) and supports ES2022, `color-mix()`, `local()` fonts, EventSource. | Claude | verified in demo |
 | AS-06 | One user, one Mac, local SSD (APFS). Reading a 500K-entry directory takes about 1 s (measured 2026-09-30: `ls -f` on 500,000 files, 1.31 s first run, 0.81 s warm). | Claude | verified |
 | AS-07 | Several Toolbelt web views (one per iTerm2 window) can each hold SSE streams without starving each other (measured: 2 views × 7 streams, a plain request still answers in 8–10 ms). | Claude | verified |
+| AS-09 | An iTerm2 web view cannot learn which window it is in: `window.screenX/screenY` are 0 and `outerWidth/outerHeight` 0, no `focus`/`blur` fires on window switches, `document.hasFocus()` stays false, and `iterm2Invoke` exists in neither browser sessions nor Toolbelt web views (probed 2026-10-01, iTerm2 3.7.3). Registering the tool again with another URL reloads every open Toolbelt web view of it, as new web views: `sessionStorage` does not survive that (it does survive an in-page reload). A Toolbelt web view of a window that is not on screen (iTerm2 behind other apps) does not load until it is shown. | Claude | verified |
 | AS-08 | When iTerm2 quits it does not signal its AutoLaunch scripts; it only closes the API connection. `it2_api_wrapper.sh` runs Python as a child, so both outlive iTerm2 (observed 2026-10-01: after a restart the old wrapper, bridge and fbd ran on with ppid 1). Inside the `iterm2` module the reader task dies on the closed connection while pending calls wait forever. | Claude | verified |
 
 Dependencies:
@@ -120,6 +122,7 @@ Open questions:
 | AC-33 | [SHOULD / P1] | The user installs or upgrades with one command; the new build is checked before it goes live, takes over the running one within seconds, and a failing build leaves the old one running. |
 | AC-34 | [SHOULD / P1] | The user keeps working through an upgrade: open panels and viewer windows switch to the new build by themselves, keeping unsaved edits, tree and tabs, and a short restart gap shows no error. |
 | AC-35 | [SHOULD / P1] | The user can go back to the previous build with one command, and state files written by either build stay readable by both. |
+| AC-36 | [MUST / P0] | The user sees in each window's Files panel only that window's panes: focusing another window, with or without a Files panel, never changes it. |
 
 ## 5. BDD scenarios
 
@@ -977,6 +980,56 @@ Scenario: AC-35 edge — an older build reads newer state
   Then "A" reads it, ignores the unknown field and works (every stored field is optional with a default; the field is dropped on A's next write)
 ```
 
+### AC-36 — Each panel follows its own window [MUST / P0]
+
+```gherkin
+Scenario: AC-36 happy path — a window without a panel changes nothing
+  Given window "w1" shows the Files panel at "/Users/alex/api" and window "w2" does not show its Toolbelt
+  When the user switches to "w2" and cds there
+  Then the panel of "w1" still shows "/Users/alex/api" (the bridge marks w2's state "panel": false, and panels ignore it)
+  When the user switches back to "w1" and to its other tab in "/Users/alex/web"
+  Then the panel of "w1" shows "/Users/alex/web" within 1 s
+
+Scenario: AC-36 happy path — two windows with panels
+  Given "w1" and "w2" both show a Files panel, each bound to its window
+  When the user works in "w2"
+  Then only the panel of "w2" follows; the panel of "w1" keeps showing the pane last focused in "w1"
+
+Scenario: AC-36 happy path — binding on load
+  When a panel loads (a new window, the Toolbelt shown) and has no binding yet
+  Then it claims the key window, as the bridge reads it after the load (the panel loads before the bridge reports its new window), as a tentative binding stored in sessionStorage
+  And if another live panel already claims that window, the new claim is dropped; if two tentative claims meet, both are dropped
+  And a panel without a binding follows the focused window as before AC-36 (except windows marked "panel": false)
+
+Scenario: AC-36 happy path — binding on interaction
+  When the user clicks in a panel, or types in it while it has no binding
+  Then the panel asks fbd, fbd asks the bridge, and the bridge reads the key window after the request arrived (so a click that made the window key is seen)
+  And the panel is bound to that window (confirmed); any other panel claiming the same window loses its claim
+
+Scenario: AC-36 edge — the panel reloads in place
+  Given a panel bound to "w1" reloads itself (Refresh, an AC-34 self-reload)
+  Then it keeps "w1" from sessionStorage and shows the last state of "w1", even while "w2" is key
+  But a reload by re-registering the tool creates new web views without that storage (AS-09): such panels bind again as on load
+
+Scenario: AC-36 edge — several panels load together
+  Given panels load while the same window is key (iTerm2 restores windows at launch, the tool is re-registered)
+  Then their tentative claims meet and are dropped; they follow the focused window until the user clicks in each
+
+Scenario: AC-36 edge — state of a window not seen yet
+  Given a panel bound to "w1" and fbd has no state for "w1" (fbd restarted while "w2" is key)
+  Then the panel keeps what it showed and its note says "Switch to this window to update"
+
+Scenario: AC-36 edge — bridge gone
+  Given a panel bound to "w1" while "w2" is key
+  When the bridge falls silent
+  Then the panel still shows "Not following iTerm2" (AC-30): bridge status is not per window
+
+Scenario: AC-36 edge — a terminal command right after switching windows
+  Given a panel bound to "w1" while "w2" is key
+  When the user clicks "Open Terminal Here" in that panel (which makes "w1" key)
+  Then fbd may refuse it with "Focus moved to another terminal" until the bridge has reported "w1" (one poll, 0.5 s); it never types into a pane of "w2"
+```
+
 ## 6. Flow and sequence diagrams
 
 ### Following the focused pane (AC-01, AC-05, AC-14)
@@ -1117,6 +1170,7 @@ State when this spec was written: a Python prototype in `demo/` (removed in 0.3.
 | AC-28 | A rejected token shows "connecting…" forever (seen with the prototype's stale registration). | Clear message, no retry loop. | `ui/src/main.ts` |
 | AC-31 | Collapse all only (header button). | Expand all (header, ⌥→/⌥←, ⌥-click), limits, cancellation. | `ui/src/tree.ts` |
 | AC-32 | One page outline for every file, colored by category. | An icon per category from Tabler Icons (MIT), vendored in `ui/src/icons/`. | `ui/src/icons.ts` |
+| AC-36 | Every panel shows the focused pane of whichever window is key. | Panel binds to its window (load, interaction, sessionStorage); fbd keeps the last state per window. | `ui/src/main.ts`, `fbd/src/api_state.rs` |
 | AC-33 | `make install` builds and copies files; `make restart` relaunches the bridge; no tests, health check, versioned folders or rollback; a half-copied bridge package is possible; an old bridge restarts the new fbd binary. | Versioned folders and links, preflight, switch, health wait, rollback; `make upgrade`. | `Makefile`, `bridge/fbbridge/backend.py` |
 | AC-34 | Panels keep the old code until the Toolbelt is toggled; any gap shows "Backend not running" at once; no re-read after reconnect; old lazy chunks may 404. | Build id, self-reload with unsaved edits kept, grace period, re-read on reconnect. | `ui/src/main.ts`, `fbd/src/http.rs` |
 | AC-35 | Nothing to roll back to; stored fields already default (`serde(default)`), untested for rollback. | `make rollback`; compatibility rule and test. | `fbd/src/workspace.rs` |
@@ -1317,7 +1371,7 @@ The panel shows a red dot in the header when `bridge_connected` is false or SSE 
 
 | Step | Work | Depends on | Exit criteria |
 |---|---|---|---|
-| 0 | Probe `osascript … launch API script` with iTerm2 quit, without Automation permission, and with the Python API off; record the outcomes as assumptions | — | each case's exit code and message written down (AS-09) |
+| 0 | Probe `osascript … launch API script` with iTerm2 quit, without Automation permission, and with the Python API off; record the outcomes as assumptions | — | each case's exit code and message written down (AS-10) |
 | 1 | Build id over bridge, fbd and UI; `fbd --version`; `build` in `/api/health`, `state`, `/internal/state`; mismatch log | — | `cargo test` asserts `build` in health; a bridge-only change gives a new id |
 | 2 | State compatibility test (unknown field, missing newest field) | — | `cargo test workspace` passes both |
 | 3 | Versioned layout, `scripts/install.py` (root refusal, lock, copy, migration, atomic switch, prune after health); bridge pins its folder for imports and fbd | 1 | `bridge/tests/test_install.py` on a temp `HOME`: fresh install, upgrade, same build, migration, half-copied folder never linked, old bridge restarts its own fbd, root and lock refusals |
@@ -1361,6 +1415,7 @@ Results of 2026-09-30 on a MacBook (Apple Silicon) (iTerm2 3.6.11, tmux 3.6a). `
 - [x] AC-29 — Verified by: `e2e_panel` → md link opens page.html rendered at `#sec2`, its image loads, its script does not run, its link opens README.md; Source toggle present.
 - [ ] AC-30 — Verified by: `make test` → bridge `unittest` 14 pass (takeover by SIGTERM < 3 s, SIGKILL when ignored, holder exiting before the signal, holder caught before writing its pid, non-bridge holder left alone, stale pid ignored, failing watchdog check logged, old and new websocket clients, exit on iTerm2 gone / reused pid / closed connection, a never-answered call abandoned), `cargo test` 12 pass incl. `bridge_silence_is_announced_once`; `e2e_panel` 64/64 (×2): silent fake bridge → "Not following iTerm2" in 11.4 s, `/api/state` `bridge: false`, tree usable, note clears in 6 ms; live 2026-10-01: `make restart` with a bridge running → "exit: SIGTERM", "took over from bridge pid 73818" in the same second, one bridge and one fbd, `bridge_connected: true`; `kill -STOP` 13 s → `event="bridge.silent"`, `kill -CONT` → connected; `e2e_cwd.py 5`, `e2e_terminal.py`, `e2e_windows.py`, `security_check.sh` PASS. Open: owner quits and restarts iTerm2 and sees one bridge, one fbd and the Toolbelt in a new window.
 - [x] AC-26 (0.8.0) — Verified by: live 2026-10-01, iTerm2 3.7.3: after an iTerm2 restart the stored profile read `Custom Command = No` and the viewer session had a tty (bash); rewriting the same file reloaded it as `Browser` in 0.5 s and the viewer opened with no tty. `make test` → bridge 22 pass (`test_viewer`: left alone, reloaded, written when missing, fails loud after one rewrite, error reaches the asking panel), cargo 13 pass (`bridge_errors_are_capped_and_addressed`); `e2e_panel` 86/86 (×2): command carries `by`, another panel's error not shown, the asking panel's shown, path bar shows and follows the active tab, page title is the path, copy puts it on the clipboard; `security_check.sh` against a private fbd 10/10 incl. `/internal/error` without secret → 401. Live after `make install && make restart` (one bridge, one fbd, takeover in 1 s): `scripts/e2e_windows.py` flips the stored profile to a terminal, then ⌘-click opens a browser viewer (`tty=None`, `Browser`; bridge.log "viewer profile reloaded as a browser profile"), reused for a second file, focus kept on the terminal pane; `e2e_terminal.py` PASS; `e2e_cwd.py 5` PASS (bash p95 203 ms, tmux 443 ms, tmux -CC 503 ms). AC-25 failed once in the first run right after the restart and passed in the next 3 runs (timing, open).
+- [ ] AC-36 — Verified by: `cargo test panels` (claim levels, collision and contested windows, a late-closing stream keeps the claim, asks answered once); `e2e_panel` 95/95 (×2) with 9 AC-36 checks (acting binds, a window without a panel and another window's panel do not move it, a new panel claims and shows its window, an in-page reload keeps the window, two load guesses fall); live after `make install`: claims logged in fbd.log (`event="panel.claim"`), a window without a Toolbelt reported `panel: false`, the first window's last state kept. Open: the owner's own check of the reported scenario; `scripts/e2e_windows.py` AC-36 needs iTerm2 on screen (a hidden window's Toolbelt never loads, AS-09).
 - [ ] AC-33 — Verified by: (Stage 7)
 - [ ] AC-34 — Verified by: (Stage 7)
 - [ ] AC-35 — Verified by: (Stage 7)

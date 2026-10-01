@@ -41,9 +41,25 @@ const TOKEN = fs.readFileSync(path.join(APP, "token"), "utf8").trim();
 let focus = null;
 /** A call only the bridge may make (the fake bridge's secret). */
 const internal = (p, body) => fetch(base + p, { method: "POST", headers: { "Content-Type": "application/json", "X-FB-Bridge": SECRET }, body: JSON.stringify(body) });
-const push = (key, cwd) => (focus = [key, cwd],
-  internal("/internal/state", { key, session: key, cwd, mode: "bash", title: `e2e ${key}`, note: "fake bridge", stale: false }));
+/** The fake bridge reports pane `key` in `cwd`, in iTerm2 window `window` (`panel`: it shows its Toolbelt). */
+const push = (key, cwd, window = "w1", panel = true) => (focus = [key, cwd, window, panel],
+  internal("/internal/state", { key, session: key, cwd, window, panel, mode: "bash", title: `e2e ${key}`, note: "fake bridge", stale: false }));
 await push("e2eA", SB);
+// the fake bridge's command stream: record commands, answer "which window is key" (AC-36)
+const cmds = [];
+const commands = new AbortController();
+void fetch(base + "/internal/commands", { headers: { "X-FB-Bridge": SECRET }, signal: commands.signal }).then(async (r) => {
+  const reader = r.body.getReader(); const dec = new TextDecoder();
+  for (;;) {
+    const { value, done } = await reader.read(); if (done) break;
+    for (const line of dec.decode(value).split("\n")) {
+      if (!line.startsWith("data:")) continue;
+      const c = JSON.parse(line.slice(5));
+      cmds.push(c);
+      if (c.action === "which-window") void internal("/internal/bound", { req: c.req, window: focus[2], panel: focus[3] });
+    }
+  }
+}).catch(() => {});
 // like the real bridge: repeat the state every 3 s, or fbd reports it silent after 10 s (AC-30)
 const heartbeat = setInterval(() => void push(...focus).catch(() => {}), 3000);
 
@@ -261,21 +277,13 @@ try {
   await within("AC-26 the asking panel shows the bridge error", (ms) => page.waitForFunction((c) => document.getElementById("toast").textContent === `bridge says no (${c})`, client, { timeout: ms }));
 
   // AC-26 ⌘-click → the bridge gets a "viewer" command with a one-time code
-  const cmds = [];
-  const ctl = new AbortController();
-  void fetch(base + "/internal/commands", { headers: { "X-FB-Bridge": SECRET }, signal: ctl.signal }).then(async (r) => {
-    const reader = r.body.getReader(); const dec = new TextDecoder();
-    for (;;) { const { value, done } = await reader.read(); if (done) break;
-      for (const line of dec.decode(value).split("\n")) if (line.startsWith("data:")) cmds.push(JSON.parse(line.slice(5))); }
-  }).catch(() => {});
-  await page.waitForTimeout(300);
+  cmds.length = 0;
   await push("e2eA", SB); // keep the fake bridge "alive"
   await page.click(row("README.md"), { modifiers: ["Meta"] });
   await page.waitForTimeout(500);
   const cmd = cmds.find((c) => c.action === "viewer");
   check("AC-26 ⌘-click asks the bridge for a viewer window", cmd?.path === `${SB}/README.md` && /^[0-9a-f]{24}$/.test(cmd?.code ?? ""), JSON.stringify(cmd));
   check("AC-26 the command names the asking panel", cmd?.by === client && client !== "", `${cmd?.by} vs ${client}`);
-  ctl.abort();
   // the viewer page: trades the code, hides the tree, keeps no secret in the URL
   const vp = await browser.newPage({ viewport: { width: 1200, height: 800 } });
   vp.on("pageerror", (e) => errors.push("viewer: " + e.message));
@@ -310,6 +318,30 @@ try {
   check("AC-27 open panel keeps its own split", (await split()) === mine, mine);
   await np.close();
 
+  // AC-36 a panel follows only its own window
+  const bound = (pg) => pg.evaluate(() => sessionStorage.getItem("fb.window"));
+  await page.click("#crumbs");                                  // the user acts in the panel → bound for sure
+  await within("AC-36 acting in the panel binds it to the key window", (ms) => page.waitForFunction(() => sessionStorage.getItem("fb.window") === "w1", null, { timeout: ms }));
+  await push("e2eW2", `${SB}/docs`, "w2", false);               // another window, no Toolbelt there
+  await page.waitForTimeout(700);
+  check("AC-36 a window without a panel does not move it", !!(await page.$(row("src"))) && !(await page.$(row("docs/guide.md"))));
+  await push("e2eW2", `${SB}/docs`, "w2", true);                // another window with its own panel
+  await page.waitForTimeout(700);
+  check("AC-36 another window's panel state does not move it", !!(await page.$(row("src"))));
+  const w2 = await browser.newPage({ viewport: { width: 520, height: 900 } });
+  await w2.goto(`${base}/?t=${TOKEN}`);                         // the panel of w2 loads while w2 is key
+  await within("AC-36 a new panel claims the key window and shows it", (ms) => w2.waitForSelector(row("docs/guide.md"), { timeout: ms }));
+  check("AC-36 … and keeps the claim", (await bound(w2)) === "w2", await bound(w2));
+  await page.reload();                                           // an in-page reload while w2 is key
+  await within("AC-36 after a reload the panel shows its own window", (ms) => page.waitForSelector(row("src"), { timeout: ms }));
+  check("AC-36 … from sessionStorage", (await bound(page)) === "w1", await bound(page));
+  const w2b = await browser.newPage({ viewport: { width: 520, height: 900 } });
+  await w2b.goto(`${base}/?t=${TOKEN}`);                        // a second load guess for w2 (like a restore)
+  await within("AC-36 two load guesses for one window both fall", (ms) => w2.waitForFunction(() => !sessionStorage.getItem("fb.window"), null, { timeout: ms }));
+  check("AC-36 … the newer one too", (await bound(w2b)) === null, await bound(w2b));
+  await w2.close(); await w2b.close();
+  await push("e2eA", SB);
+
   // AC-28 an outdated link says so and stops retrying
   const op = await browser.newPage();
   let calls = 0;
@@ -322,6 +354,7 @@ try {
 
   // AC-30 a silent bridge is reported, and its return clears the note
   clearInterval(heartbeat);
+  commands.abort();
   await within("AC-30 silent bridge: \"Not following iTerm2\"", (ms) => page.waitForSelector('#notice.on:has-text("Not following iTerm2")', { timeout: ms }), 13000);
   const st = await (await fetch(base + "/api/state", { headers: { "X-FB-Token": TOKEN } })).json();
   check("AC-30 /api/state says bridge: false", st.bridge === false, JSON.stringify({ bridge: st.bridge, stale: st.stale }));
