@@ -27,7 +27,9 @@ class LaunchError(Exception):
 
 
 def iterm_running():
-    return subprocess.run(["pgrep", "-x", "iTerm2"], capture_output=True).returncode == 0
+    """iTerm2's app process is up (`ps`: `pgrep -x iTerm2` misses it from some shells)."""
+    out = subprocess.run(["ps", "-axo", "comm"], capture_output=True, text=True).stdout
+    return any(line.endswith("/iTerm.app/Contents/MacOS/iTerm2") for line in out.splitlines())
 
 
 def launch():

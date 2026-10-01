@@ -22,7 +22,10 @@ p.add_argument("--also", action="append", default=[], help="extra identifier to 
 p.add_argument("--domain", default=DOMAIN)
 a = p.parse_args()
 
-if a.domain == DOMAIN and subprocess.run(["pgrep", "-x", "iTerm2"], capture_output=True).returncode == 0:
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from install_launch import iterm_running  # noqa: E402
+
+if a.domain == DOMAIN and iterm_running():
     sys.exit("Quit iTerm2 first: it rewrites its preferences from memory and would restore the entries.")
 tools = registrations(a.domain)
 drop = [i for i, e in tools.items() if ours(e.get("URL"), a.port) or i in a.also]
