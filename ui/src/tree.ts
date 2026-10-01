@@ -256,8 +256,9 @@ export class Tree {
       const i = rows.findIndex((r) => r.n === name);
       if (i >= 0) return p * PAGE + i;
     }
-    const r = await api<Page>("GET", "/api/ls", { query: this.query({ path: n.path, offset: 0, limit: 1, locate: name }) });
-    return r.located ?? null;
+    // a failed lookup (an unreachable host, AC-37) counts as not found: the folder's error row says why
+    const r = await api<Page>("GET", "/api/ls", { query: this.query({ path: n.path, offset: 0, limit: 1, locate: name }) }).catch(() => null);
+    return r?.located ?? null;
   }
 
   private async expand(path: string, persist = true) {

@@ -17,16 +17,19 @@ from .lifecycle import LockError, bounded, connection_closed, take_lock, watch
 from .procinfo import iterm_process
 from .registry import heal
 from .resolve import resolve, static_vars, theme_of
+from .remote import Remotes
 from .viewer_profile import install_viewer_profile
 from .windows import Windows
 
 backend = Backend()
+remotes = Remotes(backend.post)
 
 
 def stop(reason, code=0):
     """Take fbd down with us so the port is free at once, then exit without waiting for
     asyncio (it may be stuck on a call to a dead connection)."""
     log(f"exit: {reason}")
+    remotes.stop()
     backend.stop()
     os._exit(code)
 
@@ -47,7 +50,7 @@ async def run_commands(conn, app, windows, queue):
                 await s.async_send_text(c["text"])
                 await s.async_activate()
             elif action == "viewer":
-                await windows.open_viewer(conn, c["path"], c["code"])
+                await windows.open_viewer(conn, c["path"], c["code"], c.get("host"))
             elif action == "default-width":
                 await windows.set_default_width(conn)
             elif action == "which-window":  # its own task: never delays a terminal command
@@ -99,14 +102,25 @@ class Follower:
             if sess.session_id != self.theme_session or self.tick % THEME_EVERY == 0:
                 self.theme, self.theme_session = await theme_of(app, sess), sess.session_id
             r = await resolve(self.conn, sess)
-            cwd = os.path.realpath(r["cwd"]) if r.get("cwd") else None
+            cwd = os.path.realpath(r["cwd"]) if r.get("cwd") else None  # remote panes: below
             state = {"window": win.window_id, "session": sess.session_id, "key": r["key"],
                      "title": await sess.async_get_variable("presentationName") or "",
                      "mode": r["mode"], "note": r.get("note", ""), "job": r.get("job"),
                      "busy": r.get("busy", False), "theme": self.theme,
                      "panel": await windows.toolbelt_shown(self.conn, win.window_id, refresh=self.tick % THEME_EVERY == 0)}
             last = self.last
-            if cwd:
+            remote_path = False
+            if r.get("remote_host"):  # a host's own path, never resolved on this Mac (AC-37)
+                connected, note = remotes.status(r["remote_host"])
+                state["note"] = note
+                if remotes.recorded(r["remote_host"]):
+                    # always with its host: while disconnected the panel's requests fail
+                    # with "not connected" instead of reading the same path on this Mac
+                    state.update(host=r["remote_host"], busy=not r["idle"])
+                    cwd, remote_path = r.get("path"), True
+            if remote_path and not cwd:
+                state.update(cwd=None, stale=True)
+            elif cwd:
                 state.update(cwd=cwd, stale=False)
             elif last and last.get("key") == r["key"]:
                 state.update(cwd=last.get("cwd"), stale=True)  # keep the last tree, mark stale
@@ -157,6 +171,7 @@ async def main(conn):
                 await asyncio.sleep(min(2 * backend.failures, 10))
                 backend.start()
                 await loop.run_in_executor(None, backend.wait_ready)
+                await loop.run_in_executor(None, remotes.reregister)
                 follower.last = None  # re-push state to the fresh process
             if not await bounded(follower.poll(), POLL_TIMEOUT):  # costs one poll, not the loop
                 log(f"poll timed out after {POLL_TIMEOUT:g} s")

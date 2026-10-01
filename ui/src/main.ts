@@ -5,7 +5,7 @@
 
 import "./style.css";
 import {
-  api, apiOrToast, ApiError, basename, CLIENT, DEFAULT_PREFS, dirname, eventsUrl, keepToken, redeemTicket, toast, TOKEN,
+  api, apiOrToast, ApiError, basename, CLIENT, DEFAULT_PREFS, dirname, eventsUrl, keepToken, redeemTicket, scope, setScope, toast, TOKEN,
   type FsChange, type Pane, type Prefs, type TermState,
 } from "./api";
 import { Binding } from "./binding";
@@ -112,8 +112,8 @@ function renderHeader(s: TermState) {
   $("mode").className = "badge" + (s.mode === "remote" ? " warn" : "");
   $("title").textContent = s.title ?? "";
   const cwd = ws?.root ?? s.cwd ?? "";
-  const home = cwd.match(/^\/Users\/[^/]+/)?.[0];
-  const head = cwd === "/" ? "" : dirname(cwd).replace(/\/?$/, "/");
+  const home = scope ? undefined : cwd.match(/^\/Users\/[^/]+/)?.[0];
+  const head = (scope ? `${scope}:` : "") + (cwd === "/" ? "" : dirname(cwd).replace(/\/?$/, "/"));
   const b = Object.assign(document.createElement("b"), { textContent: basename(cwd) });
   const bdi = document.createElement("bdi");
   bdi.append(home ? head.replace(home, "~") : head, b);
@@ -168,11 +168,14 @@ async function onState(s: TermState) {
   if (leaving && snap && ws && content(snap) !== content(ws)) {
     void api("PUT", "/api/workspace", { query: { key: leaving }, body: snap }).catch(() => {});
   }
+  setScope(s.host ?? null);   // the new pane's files: this Mac's or a host's (AC-37)
+  viewer.setHost(scope);
   ws = null;
   await loadWorkspace(s.key);
 }
 
 function onFsChange(c: FsChange) {
+  if ((c.host ?? null) !== scope) return; // another host's files (AC-37)
   for (const { from, to } of c.moved) { tree.renamed(from, to); viewer.renamed(from, to); }
   void tree.refreshDirs(c.dirs);
   viewer.diskChanged(c.files);
@@ -185,7 +188,7 @@ function connect() {
   // our own writes echo back with by === CLIENT
   on("workspace", ({ key: k, rev, by }) => { if (k === key && by !== CLIENT && (!ws || rev > ws.rev)) void loadWorkspace(k); });
   on("fs-change", onFsChange);
-  on("viewer-open", ({ path }) => { if (VIEW) viewer.open(path); });
+  on("viewer-open", ({ path, host }) => { if (VIEW && (host ?? null) === scope) viewer.open(path); });
   on("bridge-error", ({ message, by }) => { if (by === CLIENT) toast(message); }); // only the panel that asked
   on("unbind", ({ clients }) => { if (clients.includes(CLIENT)) binding.lost(); });
   es.onerror = () => {
@@ -291,13 +294,12 @@ async function contextMenu(path: string | null, isDir: boolean, ev: MouseEvent) 
     "-",
     { id: "copy-path", label: many ? `Copy ${sel.length} Paths` : "Copy Path", keys: "⌥⌘C" },
     { id: "copy-rel", label: many ? `Copy ${sel.length} Relative Paths` : "Copy Relative Path", keys: "⌥⇧⌘C" },
-    { id: "reveal", label: "Reveal in Finder", disabled: many },
-    { id: "open-app", label: "Open with Default App", disabled: many },
+    ...(scope ? [] : [{ id: "reveal", label: "Reveal in Finder", disabled: many }, { id: "open-app", label: "Open with Default App", disabled: many }]),
     "-",
     { id: "insert", label: "Insert Path in Terminal" },
     { id: "cd", label: "Open Terminal Here", disabled: many },
   );
-  else entries.push("-", { id: "reveal", label: "Reveal in Finder" }, { id: "cd", label: "Open Terminal Here" });
+  else entries.push("-", ...(scope ? [] : [{ id: "reveal", label: "Reveal in Finder" }]), { id: "cd", label: "Open Terminal Here" });
   switch (await menu(ev.clientX, ev.clientY, entries)) {
     case "new-file": return void tree.startCreate(dir, "file");
     case "new-folder": return void tree.startCreate(dir, "folder");
@@ -338,7 +340,7 @@ function initSplitter() {
 
 // ── wiring ───────────────────────────────────────────────────────────────────
 
-const openWindow = (path: string) => void apiOrToast("POST", "/api/view/open", { body: { path } });
+const openWindow = (path: string) => void apiOrToast("POST", "/api/view/open", { body: { path, host: scope } });
 
 const tree = new Tree($("tree"), {
   open: (p) => viewer.open(p),
@@ -442,6 +444,8 @@ function watchToolbeltWidth() {
 
 async function startViewer(path: string) {
   document.documentElement.classList.add("viewer-mode");
+  setScope(params.get("host")); // a remote file's viewer window (AC-37)
+  viewer.setHost(scope);
   pathBar = new PathBar($("pathbar"), copyText);
   pathBar.show(path);
   const code = params.get("v");

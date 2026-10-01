@@ -49,9 +49,10 @@ const TOKEN = fs.readFileSync(path.join(APP, "token"), "utf8").trim();
 let focus = null;
 /** A call only the bridge may make (the fake bridge's secret). */
 const internal = (p, body) => fetch(base + p, { method: "POST", headers: { "Content-Type": "application/json", "X-FB-Bridge": SECRET }, body: JSON.stringify(body) });
-/** The fake bridge reports pane `key` in `cwd`, in iTerm2 window `window` (`panel`: it shows its Toolbelt). */
-const push = (key, cwd, window = "w1", panel = true) => (focus = [key, cwd, window, panel],
-  internal("/internal/state", { key, session: key, cwd, window, panel, mode: "bash", title: `e2e ${key}`, note: "fake bridge", stale: false }));
+/** The fake bridge reports pane `key` in `cwd`, in iTerm2 window `window` (`panel`: it shows
+ *  its Toolbelt), on remote `host` if given (AC-37). The heartbeat repeats the last one. */
+const push = (key, cwd, window = "w1", panel = true, host = undefined) => (focus = [key, cwd, window, panel, host],
+  internal("/internal/state", { key, session: key, cwd, window, panel, host, mode: host ? "remote" : "bash", title: `e2e ${key}`, note: "fake bridge", stale: false }));
 await push("e2eA", SB);
 // the fake bridge's command stream: record commands, answer "which window is key" (AC-36)
 const cmds = [];
@@ -393,6 +394,61 @@ try {
   await page.evaluate(() => { window.__after = 1; });
   await page.waitForTimeout(2500);
   check("AC-34 one reload per build (a page that still differs does not loop)", (await page.evaluate(() => window.__after)) === 1);
+
+  // AC-37 a remote host's files through an agent (here: an agent on this Mac, host "e2ehost",
+  // serving the same folder, so local and remote paths are the same strings)
+  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "fba-"));
+  fs.rmSync(agentDir, { recursive: true });             // the agent makes its own private folder
+  const agentToken = "agent-token-0123456789abcdef";
+  const agent = spawn(FBD, ["--agent", "--socket", `${agentDir}/s`], { env: { ...process.env, FB_LOG: "warn" }, stdio: ["pipe", "pipe", "inherit"] });
+  agent.stdin.write(agentToken + "\n");
+  const ready = await new Promise((r) => agent.stdout.once("data", (d) => r(String(d))));
+  check("AC-37 the agent says it is ready", ready.startsWith("fbd-agent ready "), ready.trim());
+  await internal("/internal/remote", { host: "e2ehost", socket: `${agentDir}/s`, token: agentToken });
+  // a local tab with unsaved text, then the remote pane
+  await push("e2eA", SB);
+  await page.waitForSelector(row("greet.py"));
+  await page.click(row("greet.py")); await page.waitForSelector(".cm-content");
+  await page.click(".cm-content"); await page.keyboard.type("# local only\n");
+  const hosts = [];
+  page.on("request", (r) => { if (r.url().includes("/api/ls")) hosts.push(r.headers()["x-fb-host"] ?? "-"); });
+  await push("e2eR", SB, "w1", true, "e2ehost");
+  await within("AC-37 the remote pane's tree shows", (ms) => page.waitForFunction(() => document.getElementById("crumbs").textContent.startsWith("e2ehost:"), null, { timeout: ms }));
+  await page.waitForSelector(row("greet.py"));
+  check("AC-37 its listings name the host", hosts.length > 0 && hosts.every((h) => h === "e2ehost"), hosts.join(","));
+  check("AC-37 the local unsaved tab is not in the remote pane", !(await page.$('.tab .tname:text("greet.py")')));
+  await page.click(row("greet.py"));
+  await within("AC-37 a remote file opens", (ms) => page.waitForSelector('.tab.active .tname:text("greet.py")', { timeout: ms }));
+  check("AC-37 … with the host's content, not the local edit", !(await page.textContent(".cm-content")).includes("# local only"));
+  fs.writeFileSync(`${SB}/remote-live.txt`, "x");
+  await within("AC-37 a change on the host shows up (agent's watcher)", (ms) => page.waitForSelector(row("remote-live.txt"), { timeout: ms }));
+  await page.click(row("remote-live.txt"), { button: "right" });
+  await page.waitForSelector(".ctx .mi");
+  check("AC-37 no Finder actions for remote files", !(await page.$('.ctx .mi:has-text("Reveal in Finder")')) && !!(await page.$('.ctx .mi:has-text("Copy Path")')));
+  await page.keyboard.press("Escape");
+  const reveal = await fetch(base + "/api/os/reveal", { method: "POST", headers: { "X-FB-Token": TOKEN, "X-FB-Host": "e2ehost", "Content-Type": "application/json" }, body: JSON.stringify({ path: SB }) });
+  check("AC-37 fbd refuses Finder actions on remote files", reveal.status === 400);
+  const gone = await fetch(`${base}/api/ls?path=${encodeURIComponent(SB)}`, { headers: { "X-FB-Token": TOKEN, "X-FB-Host": "nohost" } });
+  check("AC-37 an unknown host is never served from local files", gone.status === 404);
+  // back to the local pane: its unsaved tab is still there, with the local edit
+  await push("e2eA", SB);
+  await within("AC-37 back on the Mac the unsaved local tab is back", (ms) => page.waitForSelector('.tab.dirty .tname:text("greet.py")', { timeout: ms }));
+  await page.click('.tab .tname:text("greet.py")');
+  check("AC-37 … with its local edit", (await page.textContent(".cm-content")).includes("# local only"));
+  await page.keyboard.press("Meta+s");
+  agent.stdin.end();                                      // the ssh connection is gone
+  await new Promise((r) => agent.once("exit", r));
+  check("AC-37 the agent exits with its connection and leaves no folder", !fs.existsSync(agentDir));
+  // the host is gone: its pane must fail loud, never list the same path on this Mac
+  await internal("/internal/remote", { host: "e2ehost", socket: null, token: null });
+  hosts.length = 0;
+  await push("e2eR", SB, "w1", true, "e2ehost");
+  await within("AC-37 a disconnected host says so", (ms) => page.waitForFunction(() => document.getElementById("tree").textContent.includes("e2ehost is not connected"), null, { timeout: ms }));
+  hosts.length = 0;
+  await page.click("#refresh");
+  await page.waitForTimeout(600);
+  check("AC-37 … and its listings never fall back to local files", hosts.length > 0 && hosts.every((h) => h === "e2ehost") && !(await page.$(row("greet.py"))), hosts.join(","));
+  await push("e2eA", SB);
 
   // AC-28 an outdated link says so and stops retrying
   const op = await browser.newPage();

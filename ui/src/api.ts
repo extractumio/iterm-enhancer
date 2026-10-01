@@ -38,7 +38,7 @@ export interface Page {
 }
 /** A changed file and its etag now (null: gone), as sent in fs-change events. */
 export interface Stamp { path: string; etag: string | null }
-export interface FsChange { dirs: string[]; files: Stamp[]; moved: { from: string; to: string }[] }
+export interface FsChange { dirs: string[]; files: Stamp[]; moved: { from: string; to: string }[]; host?: string }
 export interface Tab { path: string; view: "auto" | "rendered" | "source" }
 export interface Pane {
   rev: number; root: string; expanded: string[]; selected: string[]; scroll: number;
@@ -54,6 +54,7 @@ export interface TermState {
   window?: string;  // the iTerm2 window of the pane (AC-36)
   panel?: boolean;  // false: that window shows no Toolbelt, so no panel lives there
   build?: string;   // fbd's build: another one than this page's means an upgrade (AC-34)
+  host?: string;    // a remote pane's host: its files are reached through that host's agent (AC-37)
 }
 export interface FileView {
   path: string; size: number; etag: string; binary: boolean; mime: string | null;
@@ -72,7 +73,7 @@ export async function api<T>(method: string, path: string, opts: { query?: Query
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(opts.query ?? {})) if (v !== undefined) qs.set(k, String(v));
   const url = path + (qs.size ? `?${qs}` : "");
-  const headers: Record<string, string> = { "X-FB-Token": TOKEN, "X-FB-Client": CLIENT, ...opts.headers };
+  const headers: Record<string, string> = { "X-FB-Token": TOKEN, "X-FB-Client": CLIENT, ...(scope ? { "X-FB-Host": scope } : {}), ...opts.headers };
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   let res: Response;
   for (let waited = 0, step = 250; ; waited += step, step *= 2) {
@@ -91,7 +92,13 @@ export async function api<T>(method: string, path: string, opts: { query?: Query
   return body as T;
 }
 
-export const rawUrl = (path: string) => `/api/raw?path=${encodeURIComponent(path)}&t=${encodeURIComponent(TOKEN)}`;
+/** The host whose files the panel shows (a remote pane, AC-37), or null for this Mac. Every
+ *  file request names it; fbd sends such a request to that host's agent and nowhere else. */
+export let scope: string | null = null;
+export const setScope = (host: string | null) => { scope = host || null; };
+
+export const rawUrl = (path: string) =>
+  `/api/raw?path=${encodeURIComponent(path)}&t=${encodeURIComponent(TOKEN)}${scope ? `&host=${encodeURIComponent(scope)}` : ""}`;
 export const eventsUrl = () => `/api/events?t=${encodeURIComponent(TOKEN)}&client=${CLIENT}`;
 
 /** Run an API call; on failure show its message and resolve to undefined. */

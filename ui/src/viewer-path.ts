@@ -2,6 +2,7 @@
 // The viewer window's path bar (AC-26): the active tab's full path, selectable, with a copy
 // button. iTerm2's own address bar cannot be hidden, so this is where the path is read.
 
+import { scope } from "./api";
 import { copyIcon } from "./icons";
 
 export class PathBar {
@@ -15,9 +16,10 @@ export class PathBar {
   }
 
   show(path: string | null) {
-    this.path = path ?? "";
-    this.text.textContent = this.path;
-    this.text.title = this.path;
-    document.title = this.path || "Files";
+    this.path = path ?? "";                          // copied as is: the path on its host
+    const shown = this.path && scope ? `${scope}:${this.path}` : this.path;
+    this.text.textContent = shown;
+    this.text.title = shown;
+    document.title = shown || "Files";
   }
 }

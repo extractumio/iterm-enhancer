@@ -60,6 +60,40 @@ installed and starts with iTerm2.
 
 The first time: **View → Toolbelt → Show Toolbelt** and check **Files**.
 
+## Remote hosts
+
+A tmux -CC pane on another machine (for example `ssh -tt devbox "tmux -CC new-session -A -s
+work"`) shows that machine's files once it has an agent: fbd itself, run on the host and
+reached through ssh. Make a host ready once:
+
+```bash
+make agent HOST=devbox    # devbox: the ssh alias you log in with
+```
+
+It reads the host's platform (macOS arm64/x86_64, Linux x86_64/arm64; the Linux agent is a
+static binary for any Ubuntu or Debian), builds the agent if needed, copies it to
+`~/.local/lib/iterm-filebrowser/agent/` on the host, checks it through a trial tunnel and
+records the host. From then on, focusing a tmux -CC pane of that host starts `ssh devbox`
+carrying the agent and forwarding its socket; the panel shows `devbox:/path` and works as
+for local files (open, edit, save, create, rename, Trash, live refresh). Later `make
+install`s update the agent on its next connection.
+
+- **Needs**: ssh without a password prompt (a key or agent; BatchMode), the host key
+  already known, and socket forwarding allowed by the host's sshd (the default,
+  `AllowStreamLocalForwarding yes`).
+- **Lives** as long as its ssh connection: closing it (network, sleep, iTerm2 quit) ends the
+  agent on the host; the bridge reconnects with back-off.
+- **Writes** only under the host's `$HOME` and `/tmp`, as the user you log in as. Trash on
+  Linux is `~/.local/share/Trash`; saving keeps a file's mode and owner (not its extended
+  attributes, unlike on macOS).
+- **Not available** for remote files: Reveal in Finder, Open with Default App. Plain `ssh`
+  panes (no tmux -CC) stay frozen as "remote".
+- **Remove** from a host: `ssh devbox rm -rf ~/.local/lib/iterm-filebrowser` and delete its
+  entry from `~/Library/Application Support/iterm-filebrowser/agents.json`.
+
+Agents for all four platforms: `make toolchain` once (pinned zig and cargo-zigbuild in
+`./.toolchain`), then `make agents`.
+
 ## How it works
 
 ```
@@ -149,10 +183,29 @@ python3 scripts/e2e_cwd.py 10              # cd → panel latency in bash / tmux
 python3 scripts/e2e_terminal.py            # Insert Path / Open Terminal Here / refusals (opens an iTerm2 window)
 python3 scripts/e2e_windows.py             # Toolbelt in new windows, viewer window, panel per window (opens iTerm2 windows; needs iTerm2 in front)
 scripts/security_check.sh                  # refused requests against the installed fbd
+python3 scripts/e2e_remote.py [--amd64]    # remote agent end to end against a Linux container with sshd (Docker)
 scripts/make_big_dir.sh /tmp/fb-big 500000 && scripts/bench_ls.sh /tmp/fb-big
 ```
 
 Contributor rules: [CLAUDE.md](CLAUDE.md) (also read by AI agents as `AGENTS.md`).
+
+### CI and releases on the owner's runner
+
+Workflows run only on the owner's self-hosted Linux runner (`[self-hosted, linux, x64]`),
+never on GitHub-hosted runners, and never for pull requests (this repository is public: a
+fork must not run code on the runner); `bridge/tests/test_workflows.py` enforces it,
+with actions pinned to commits in `.github/actions-allowlist.json`. `ci.yml` runs the
+tests on Linux and builds the Linux agents on every push to `main`. A tag `v*` runs
+`release.yml`: tests, then the Linux agents and `SHA256SUMS-linux` attached to the GitHub
+release; `make release TAG=v…` on the Mac adds the macOS agents.
+
+Set the runner up once on a Linux VM (as root; the token travels on stdin):
+
+```bash
+scp scripts/runner/setup.sh root@<vm>:/root/fb-runner-setup.sh
+gh api -X POST repos/extractumio/iterm-extension/actions/runners/registration-token --jq .token \
+  | ssh root@<vm> 'bash /root/fb-runner-setup.sh --name vm102-iterm'
+```
 
 ## License
 

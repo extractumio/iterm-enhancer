@@ -38,6 +38,7 @@ class Windows:
         self.pending = set()                                      # new windows waiting to become key
         self.viewer_id = None
         self.viewer_session = None
+        self.viewer_host = None                                   # whose files it shows (AC-37)
         self.last_width = 0.0
         self.shown = {}                                           # window id → Toolbelt shown (AC-36)
         self.refused = set()                                      # windows whose Toolbelt menu was disabled
@@ -113,14 +114,18 @@ class Windows:
 
     # ── viewer window ────────────────────────────────────────────────────────
 
-    async def open_viewer(self, conn, path, code):
+    async def open_viewer(self, conn, path, code, host=None):
         win = self.app.get_window_by_id(self.viewer_id) if self.viewer_id else None
-        if win:
-            await asyncio.get_running_loop().run_in_executor(None, self.backend.post, "/internal/viewer-open", {"path": path})
+        if win and self.viewer_host == host:
+            await asyncio.get_running_loop().run_in_executor(None, self.backend.post, "/internal/viewer-open", {"path": path, "host": host})
             await win.async_activate()
             return
+        if win:  # one window shows one host's files; closing it could drop unsaved edits
+            where = self.viewer_host or "this Mac"
+            raise UserError(f"The viewer window shows files of {where}: close it to open {host or 'this Mac'}'s files")
+        self.viewer_host = host
         await ensure_browser(lambda: profile_kind(conn), lambda: install_viewer_profile(force=True))
-        url = f"{BASE}/?v={code}&view={urllib.parse.quote(path)}"
+        url = f"{BASE}/?v={code}&view={urllib.parse.quote(path)}" + (f"&host={urllib.parse.quote(host)}" if host else "")
         custom = iterm2.LocalWriteOnlyProfile()
         custom._simple_set("Initial URL", url)
         created = await iterm2.Window.async_create(conn, profile=VIEWER_PROFILE, profile_customizations=custom)

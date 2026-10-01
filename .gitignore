@@ -8,3 +8,6 @@ ui/.build-id
 .DS_Store
 __pycache__/
 *.pyc
+# remote agents: pinned cross toolchain and build output
+.toolchain/
+dist/

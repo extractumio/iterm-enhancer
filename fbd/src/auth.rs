@@ -50,7 +50,7 @@ pub async fn guard(State(app): State<Shared>, req: Request, next: Next) -> Respo
     };
     let h = req.headers();
     let header_str = |name: &str| h.get(name).and_then(|v| v.to_str().ok());
-    if header_str(header::HOST.as_str()) != Some(&format!("127.0.0.1:{}", app.cfg.port)) {
+    if header_str(header::HOST.as_str()) != Some(app.cfg.host.as_str()) {
         return deny(StatusCode::FORBIDDEN, "bad_host", "Host is not allowed".into());
     }
     let path = req.uri().path();

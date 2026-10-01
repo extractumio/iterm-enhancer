@@ -224,6 +224,8 @@ pub async fn terminal(State(app): State<Shared>, UrlPath(action): UrlPath<String
 #[derive(Deserialize)]
 pub struct ViewBody {
     path: String,
+    /// a remote file's host (AC-37)
+    host: Option<String>,
 }
 
 /// Open a file in the large viewer window (AC-26). The bridge creates the window with a
@@ -234,7 +236,7 @@ pub async fn view_open(State(app): State<Shared>, headers: HeaderMap, Json(b): J
         return Err(no_bridge());
     }
     let code = app.tickets.issue();
-    command(&app, json!({"action": "viewer", "path": b.path, "code": code}), &headers);
+    command(&app, json!({"action": "viewer", "path": b.path, "host": b.host, "code": code}), &headers);
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -245,7 +247,7 @@ pub async fn internal_viewer_open(State(app): State<Shared>, Json(b): Json<ViewB
     let len = pending.len();
     pending.drain(..len.saturating_sub(20)); // a page that never connects must not grow this
     drop(pending);
-    app.bus.send(Event::ViewerOpen { path: b.path });
+    app.bus.send(Event::ViewerOpen { path: b.path, host: b.host });
     StatusCode::NO_CONTENT
 }
 
@@ -301,11 +303,33 @@ pub async fn internal_commands(State(app): State<Shared>) -> Sse<impl Stream<Ite
     Sse::new(rx).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }
 
+#[derive(Deserialize)]
+pub struct WatchBody {
+    root: String,
+    #[serde(default)]
+    expanded: Vec<String>,
+    #[serde(default)]
+    files: Vec<String>,
+}
+
+/// An agent watches what the Mac shows of its host (AC-37): the Mac's fbd sends it the
+/// root, expanded folders and open files of the remote workspace on screen.
+pub async fn watch(State(app): State<Shared>, Json(b): Json<WatchBody>) -> ApiResult {
+    if !app.cfg.agent {
+        return Err(err(StatusCode::NOT_FOUND, "not_found", "only an agent takes a watch list"));
+    }
+    if let Some(w) = &app.watcher {
+        w.set(crate::watcher::wanted(&b.root, &b.expanded, b.files.into_iter()));
+    }
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
 pub async fn health(State(app): State<Shared>) -> Json<Value> {
     let (cache_bytes, cache_dirs) = app.cache.stats();
     Json(json!({
         "uptime_s": app.started.elapsed().as_secs(),
         "build": crate::build_id(),
+        "agent_id": crate::agent::AGENT_ID,
         "bridge_build": *app.bridge_build.lock(),
         "bridge_connected": app.term.lock().bridge_alive(),
         "cache_bytes": cache_bytes,
@@ -315,6 +339,7 @@ pub async fn health(State(app): State<Shared>) -> Json<Value> {
         "watched_dirs": app.watcher.as_ref().map_or(0, |w| w.len()),
         "writable_roots": app.roots.list(),
         "panels": app.panels.per_window(),
+        "remotes": crate::remote::health(&app),
         "denied_requests": app.denied.load(Ordering::Relaxed),
     }))
 }

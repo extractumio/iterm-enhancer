@@ -5,6 +5,7 @@
 //! (fb_bridge.py) pushes the focused pane's state to /internal/state; panels receive it
 //! over SSE (/api/events).
 
+mod agent;
 mod api_fs;
 mod api_state;
 mod auth;
@@ -14,6 +15,7 @@ mod http;
 mod listing;
 mod ops;
 mod panels;
+mod remote;
 mod watcher;
 mod workspace;
 
@@ -23,7 +25,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::middleware;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::Router;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
@@ -49,6 +51,10 @@ fn build_id() -> &'static str {
 
 struct Config {
     port: u16,
+    /// running as a remote host's agent (AC-37): served on a Unix socket
+    agent: bool,
+    /// the Host header requests must carry
+    host: String,
     token: String,
     bridge_secret: Option<String>,
     text_max: u64,
@@ -99,6 +105,8 @@ pub struct App {
     viewer_pending: Mutex<Vec<String>>,
     /// which window each panel lives in (AC-36)
     panels: panels::Panels,
+    /// remote hosts' agents (AC-37)
+    remotes: remote::Remotes,
     /// the build the bridge last said it is (AC-33)
     bridge_build: Mutex<Value>,
 }
@@ -130,13 +138,21 @@ impl Tickets {
 
 impl App {
     /// Watch what the focused pane shows: its root, expanded folders, folders of open tabs.
+    /// A remote pane's folders are watched by its host's agent (AC-37), not here.
     fn refresh_watch(&self) {
+        let (key, host) = {
+            let t = self.term.lock();
+            (t.state["key"].as_str().map(str::to_string), t.state["host"].as_str().map(str::to_string))
+        };
+        let pane = key.map(|k| self.store.get(&k, None));
+        if let (Some(h), Some(p)) = (&host, &pane) {
+            remote::watch(&self.remotes, h, p.root.clone(), p.expanded.clone(), p.tabs.iter().map(|t| t.path.clone()).collect());
+        }
         let Some(w) = &self.watcher else { return };
-        let key = self.term.lock().state["key"].as_str().map(str::to_string);
-        w.set(key.map_or_else(Default::default, |k| {
-            let p = self.store.get(&k, None);
-            watcher::wanted(&p.root, &p.expanded, p.tabs.into_iter().map(|t| t.path))
-        }));
+        w.set(match (host, pane) {
+            (None, Some(p)) => watcher::wanted(&p.root, &p.expanded, p.tabs.into_iter().map(|t| t.path)),
+            _ => Default::default(),
+        });
     }
 
     /// A change made through a panel: tell every panel now, without waiting for FSEvents.
@@ -168,18 +184,21 @@ fn routes(app: Shared) -> Router {
         .route("/api/workspace", get(get_workspace).put(put_workspace))
         .route("/api/prefs", get(get_prefs).put(put_prefs))
         .route("/api/health", get(health))
+        .route("/api/watch", put(watch))
         .route("/api/view/open", post(view_open))
         .route("/api/view/pending", get(view_pending))
         .route("/api/ui/toolbelt-width", post(toolbelt_width))
         .route("/api/panel/claim", post(panels::panel_claim))
         .route("/api/panel/bind", post(panels::panel_bind))
         .route("/internal/bound", post(panels::internal_bound))
+        .route("/internal/remote", post(remote::internal_remote))
         .route("/ticket", get(ticket))
         .route("/internal/viewer-open", post(internal_viewer_open))
         .route("/internal/error", post(internal_error))
         .route("/internal/state", post(internal_state))
         .route("/internal/commands", get(internal_commands))
         .fallback(http::ui)
+        .layer(middleware::from_fn_with_state(app.clone(), remote::route)) // after the auth guard
         .layer(middleware::from_fn_with_state(app.clone(), auth::guard))
         .with_state(app)
 }
@@ -187,6 +206,7 @@ fn routes(app: Shared) -> Router {
 /// Save the workspaces and exit (SSE streams never end, so there is no graceful drain).
 fn exit_with(store: &Store, reason: &str) -> ! {
     store.flush();
+    agent::cleanup();
     tracing::info!(event = "stop", reason);
     std::process::exit(0);
 }
@@ -197,23 +217,30 @@ async fn main() {
         println!("{BUILD}");
         return;
     }
+    if std::env::args().any(|a| a == "--agent-id") {
+        println!("{}", agent::AGENT_ID);
+        return;
+    }
+    let agent = agent::socket_arg().map(|s| agent::start(&s));
     tracing_subscriber::fmt()
         .with_env_filter(std::env::var("FB_LOG").unwrap_or_else(|_| "info".into()))
         .with_ansi(false)
         .with_writer(std::io::stderr)
         .init();
 
-    let dir = auth::app_dir();
+    let dir = agent.as_ref().map_or_else(auth::app_dir, |a| a.dir.clone());
     let port: u16 = env("FB_PORT", 47821);
     let bus = Bus::new();
-    let cache = Cache::new(env("FB_LIST_CACHE_MB", 128usize) << 20);
+    let cache = Cache::new(env("FB_LIST_CACHE_MB", if agent.is_some() { 32usize } else { 128 }) << 20);
     let watcher = Watcher::start(cache.clone(), bus.clone())
         .inspect_err(|e| tracing::warn!(event = "watch.unavailable", error = %e))
         .ok();
     let app = Arc::new(App {
         cfg: Config {
             port,
-            token: auth::load_token(&dir),
+            agent: agent.is_some(),
+            host: if agent.is_some() { agent::HOST.to_string() } else { format!("127.0.0.1:{port}") },
+            token: agent.as_ref().map_or_else(|| auth::load_token(&dir), |a| a.token.clone()),
             bridge_secret: std::env::var("FB_BRIDGE_SECRET").ok().filter(|s| s.len() >= 16),
             text_max: env("FB_TEXT_MAX_BYTES", 10u64 << 20),
         },
@@ -223,6 +250,7 @@ async fn main() {
         bus,
         term: Mutex::new(Term { state: json!({}), windows: HashMap::new(), version: 0, last_push: None, announced_alive: false }),
         panels: Default::default(),
+        remotes: Default::default(),
         bridge_build: Mutex::new(Value::Null),
         started: Instant::now(),
         denied: Default::default(),
@@ -232,6 +260,23 @@ async fn main() {
         viewer_pending: Mutex::new(Vec::new()),
     });
 
+    if let Some(a) = agent {
+        let store = app.store.clone();
+        agent::exit_with_stdin(move || exit_with(&store, "ssh connection closed"));
+        let (store, bus) = (app.store.clone(), app.bus.clone());
+        agent::exit_when_unused(move || bus.subscribers(), move || exit_with(&store, "no Mac connected for 90 s"));
+        ops::NO_FINDER.store(true, std::sync::atomic::Ordering::Relaxed);
+        let store = app.store.clone();
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            let (mut term, mut hup) = (signal(SignalKind::terminate()).unwrap(), signal(SignalKind::hangup()).unwrap());
+            tokio::select! { _ = term.recv() => {}, _ = hup.recv() => {} }
+            exit_with(&store, "signal");
+        });
+        tracing::info!(event = "start", mode = "agent", agent_id = agent::AGENT_ID, pid = std::process::id());
+        axum::serve(a.listener, routes(app)).await.unwrap();
+        return;
+    }
     // a previous fbd may still be shutting down (it polls for its bridge every 2 s)
     let mut attempt = 0;
     let listener = loop {

@@ -22,6 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import agents
 import install_launch as live
 
 REPO = Path(__file__).resolve().parent.parent
@@ -97,6 +98,14 @@ def copy_build(build, fbd):
     os.chmod(tmp / "fbd", 0o755)
     shutil.copytree(REPO / "bridge/fbbridge", tmp / "bridge/fbbridge", ignore=shutil.ignore_patterns("__pycache__"))
     (tmp / "BUILD").write_text(build + "\n")
+    # the agents of prepared hosts, so the bridge brings their agents up to this build (AC-38)
+    aid = agents.agent_id()
+    (tmp / "AGENT_ID").write_text(aid + "\n")
+    for plat in agents.recorded():
+        built = agents.DIST / aid / plat / "fbd"
+        if built.is_file():
+            (tmp / "agents" / plat).mkdir(parents=True)
+            shutil.copy2(built, tmp / "agents" / plat / "fbd")
     tmp.rename(dest)
 
 

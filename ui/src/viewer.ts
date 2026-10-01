@@ -58,7 +58,16 @@ const cmTheme = EditorView.theme({
 export class Viewer {
   tabs: Tab[] = [];
   active: number | null = null;
-  private docs = new Map<string, Doc>();
+  // one document store per host ("" is this Mac, AC-37): the same path on two hosts never
+  // shares a tab's contents or unsaved edits; the store follows the shown pane's host
+  private stores = new Map<string, Map<string, Doc>>();
+  private host = "";
+  private get docs(): Map<string, Doc> {
+    let m = this.stores.get(this.host);
+    if (!m) this.stores.set(this.host, (m = new Map()));
+    return m;
+  }
+  private set docs(m: Map<string, Doc>) { this.stores.set(this.host, m); }
   private editor: EditorView | null = null;
   private lang = new Compartment();
   private shown: { path: string; mode: "rendered" | "source" } | null = null; // on screen now
@@ -204,7 +213,15 @@ export class Viewer {
     this.reshow();
   }
 
-  get hasDirty() { return [...this.docs.values()].some((d) => d.dirty || d.saving); }
+  get hasDirty() { return [...this.stores.values()].some((m) => [...m.values()].some((d) => d.dirty || d.saving)); }
+
+  /** The shown pane's host (null: this Mac); call before setTabs of that pane. */
+  setHost(host: string | null) {
+    if ((host ?? "") === this.host) return;
+    this.remember();          // the editor's state belongs to the old host's document
+    this.host = host ?? "";
+    this.shown = null;        // the same path on the new host is another document
+  }
 
   /** fbd was away: re-check every open tab (unchanged files answer 304). */
   recheck() { for (const t of this.tabs) void this.revalidate(t.path); }

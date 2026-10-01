@@ -2,10 +2,8 @@
 //! File operations: save (etag-checked, atomic, metadata-preserving), create file/folder,
 //! rename, move to Trash. All writes are limited to the writable roots.
 
-use std::ffi::CString;
 use std::fs;
 use std::io::Write;
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use crate::files::{etag, Roots};
@@ -142,12 +140,26 @@ pub fn save(roots: &Roots, path: &Path, text: &str, if_match: &str) -> Result<St
     Ok(etag(&fs::metadata(&real).map_err(|e| io(e, path))?))
 }
 
+/// macOS: mode, ACLs and extended attributes (copyfile(3)); mode alone if that fails.
+#[cfg(target_os = "macos")]
 fn copy_metadata(from: &Path, to: &Path, perms: fs::Permissions) {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
     let (Ok(f), Ok(t)) = (CString::new(from.as_os_str().as_bytes()), CString::new(to.as_os_str().as_bytes())) else { return };
     // SAFETY: valid NUL-terminated paths; a null state is allowed by copyfile(3)
     let rc = unsafe { libc::copyfile(f.as_ptr(), t.as_ptr(), std::ptr::null_mut(), libc::COPYFILE_METADATA) };
     if rc != 0 {
         let _ = fs::set_permissions(to, perms);
+    }
+}
+
+/// Other systems (the Linux agent, AC-37): mode, and owner and group where allowed.
+#[cfg(not(target_os = "macos"))]
+fn copy_metadata(from: &Path, to: &Path, perms: fs::Permissions) {
+    use std::os::unix::fs::MetadataExt;
+    let _ = fs::set_permissions(to, perms);
+    if let Ok(m) = fs::metadata(from) {
+        let _ = std::os::unix::fs::chown(to, Some(m.uid()), Some(m.gid()));
     }
 }
 
@@ -199,6 +211,20 @@ pub fn rename(roots: &Roots, path: &Path, name: &str) -> Result<PathBuf, OpError
 }
 
 /// Move items to the macOS Trash (NSFileManager, no Finder prompt). Returns per-item errors.
+/// Agent mode on a macOS host: no Finder over ssh, so the file manager call (no "Put Back").
+pub static NO_FINDER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn trash_one(p: &Path) -> Result<(), trash::Error> {
+    #[cfg(target_os = "macos")]
+    if NO_FINDER.load(std::sync::atomic::Ordering::Relaxed) {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        let mut ctx = trash::TrashContext::default();
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+        return ctx.delete(p);
+    }
+    trash::delete(p)
+}
+
 pub fn trash(roots: &Roots, paths: &[PathBuf]) -> Vec<(PathBuf, OpError)> {
     let mut errors = Vec::new();
     for p in paths {
@@ -210,7 +236,7 @@ pub fn trash(roots: &Roots, paths: &[PathBuf]) -> Vec<(PathBuf, OpError)> {
             errors.push((p.clone(), io(e, p)));
             continue;
         }
-        if let Err(e) = trash::delete(p) {
+        if let Err(e) = trash_one(p) {
             errors.push((p.clone(), OpError::Io(format!("{}: {e}", name_of(p)))));
         }
     }

@@ -24,8 +24,9 @@ TMUX_FMT = "#{host}\t#{socket_path}\t#{pane_id}\t#{pane_current_path}\t#{pane_cu
 def tmux_result(mode, out):
     host, sock, pane, path, cmd = (out.strip().split("\t") + [""] * 5)[:5]
     key = f"tmux:{host.split('.')[0].lower()}:{sock}:{pane}"
-    if host.split(".")[0].lower() != LOCAL_HOST:
-        return {"mode": "remote", "key": key, "cwd": None, "note": f"remote host {host}", "job": cmd, "busy": True}
+    if host.split(".")[0].lower() != LOCAL_HOST:  # its files are reached through an agent, if any (AC-37)
+        return {"mode": "remote", "key": key, "cwd": None, "note": f"remote host {host}", "job": cmd, "busy": True,
+                "remote_host": host.split(".")[0].lower(), "path": path or None, "idle": cmd in SHELLS}
     return {"mode": mode, "key": key, "cwd": path or None, "note": f"pane {pane}", "job": cmd,
             "busy": cmd not in SHELLS}
 
