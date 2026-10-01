@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.8.0 |
+| Version | 0.9.0 |
 | Date | 2026-10-01 |
 | Status | approved |
 | Author | Project maintainers |
@@ -22,6 +22,7 @@ Change log:
 | 0.6.0 | 2026-10-01 | AC-29: HTML documents render (sandboxed, no scripts) and links between Markdown and HTML documents open them, with `#anchor` |
 | 0.7.0 | 2026-10-01 | AC-30 (P0): one bridge per iTerm2 — it exits with its iTerm2 or its API connection, a new bridge takes over from a leftover one (`bridge.lock`), a hung iTerm2 call cannot freeze the loop, and a panel nobody follows says so. Found when an iTerm2 restart left the old bridge and fbd running: the new bridge failed on the busy port, new windows got no Toolbelt and the panel showed an old directory as current. AS-08 added. Pragmatic review: lock taken only after the API connection is up, silence keyed on `bridge` (not `stale`), `make restart` exercises the takeover, Python unit tests join `make test`. Implementation review: a holder that exits during the takeover is not an error, a holder is judged again after 0.5 s, the silence event is sent under the state lock, a failing watchdog check is logged and the watch goes on; rejected: `make install` stopping a lockless bridge (no release has shipped one; the single local instance is stopped once by hand) |
 | 0.8.0 | 2026-10-01 | AC-26: the viewer window opened as a terminal after an iTerm2 restart (iTerm2 3.7.3 loads dynamic profiles before its browser plugin, so "Files Viewer" was stored as a terminal profile); the bridge now checks and reloads the profile, closes a non-browser window, and every failed bridge command is shown in the panel that asked (`bridge-error`). The viewer window shows the file's full path with a copy button. AC-31 (expand and collapse all), AC-32 (file-type icons, Tabler Icons, MIT). Pragmatic review: failure message names no unverified cause, errors go only to the asking panel, expand all is cancelled by any re-root or collapse, icons vendored instead of an npm dependency; rejected: a profile "Title Components" change for the window title (iTerm2 browser windows compose their title themselves; not observable through the API). Implementation review: a window that fails its checks is never kept as the viewer; a folder dropped by a disk refresh no longer cancels expand all; expand all leaves folders the user had open; found and fixed: "Collapse all" left cached folders' children open (re-opening one showed them again) and a `/` root never restored its expanded folders |
+| 0.9.0 | 2026-10-01 | Planned (Stage 7): AC-33 (one command installs or upgrades a versioned build and rolls back a build that does not come up), AC-34 (open panels and viewer windows move to the new build — at once when clean, after the save when dirty — with tree and tabs intact and no error flash for a short gap), AC-35 (rollback; older builds read newer state). Pragmatic review: cut the spare-port preflight (`fbd --version` instead), state format versioning (serde defaults suffice), tests inside install and a separate upgrade command; replaced stashing unsaved buffers in `sessionStorage` by reloading after the save; added migration from the unversioned layout, a build id covering the bridge, import-path pinning, prune only after health, no iTerm2 start, osascript permission errors, root refusal, an install lock and rollback without `previous`. Gaps found while reviewing the current upgrade: panels keep old code until reloaded, lazy chunks of an old panel may be gone, changes during the restart gap are missed, an old bridge may start a new fbd, no health check or rollback |
 
 ## 1. Overview
 
@@ -116,6 +117,9 @@ Open questions:
 | AC-30 | [MUST / P0] | The user finds the panel following the terminal again after iTerm2 quits, restarts or the bridge is relaunched, with no manual cleanup; a panel that nothing follows says so instead of showing an old directory as current. |
 | AC-31 | [SHOULD / P1] | The user can expand every folder below the root or a chosen folder in one action, bounded so large trees stay responsive, and collapse them all again. |
 | AC-32 | [SHOULD / P1] | The user recognizes a file's type by its icon in the tree and the tabs. |
+| AC-33 | [SHOULD / P1] | The user installs or upgrades with one command; the new build is checked before it goes live, takes over the running one within seconds, and a failing build leaves the old one running. |
+| AC-34 | [SHOULD / P1] | The user keeps working through an upgrade: open panels and viewer windows switch to the new build by themselves, keeping unsaved edits, tree and tabs, and a short restart gap shows no error. |
+| AC-35 | [SHOULD / P1] | The user can go back to the previous build with one command, and state files written by either build stay readable by both. |
 
 ## 5. BDD scenarios
 
@@ -852,6 +856,127 @@ Scenario: AC-32 edge — folders and tabs
   Then folders show a folder icon (open while expanded), and each viewer tab shows its file's icon
 ```
 
+### AC-33 — One-command install and upgrade [SHOULD / P1]
+
+```gherkin
+Scenario: AC-33 happy path — first install while iTerm2 runs
+  Given nothing is installed and iTerm2 runs with its Python API enabled
+  When the user runs "make install"
+  Then the build lands in "~/.local/lib/iterm-filebrowser/<build>/" (fbd, bridge package, BUILD file) and "current" links to it
+  And "<build>/fbd --version" prints the same id as BUILD before anything is switched
+  And "~/.local/bin/fbd" links to "current/fbd", and the AutoLaunch "fb_bridge.py" loads the bridge from the resolved "current"
+  And the bridge is launched, and within 10 s "/api/health" reports "build": "<build>" and "bridge_connected": true
+  And the command prints "Installed <build>; the Files panel is live (View → Toolbelt → Files)"
+
+Scenario: AC-33 happy path — upgrade with the same command
+  Given build "A" runs
+  When the user runs "make install" ("make upgrade" is the same command)
+  Then "previous" links to "A", "current" links to "B" (one rename each), and bridge "A" hands over to bridge "B" (AC-30)
+  And within 10 s "/api/health" reports "build": "B"; the command prints "Upgraded A → B"
+  And only then are build folders other than "current" and "previous" removed
+
+Scenario: AC-33 edge — upgrade from the unversioned layout
+  Given "~/.local/bin/fbd" is a regular file and "~/Library/Application Support/iterm-filebrowser/bridge" exists (installs before Stage 7)
+  When the user runs "make install"
+  Then the build is installed versioned as above, the old binary and bridge copy are removed after the new build reports healthy, and token and workspaces are untouched
+
+Scenario: AC-33 edge — same build again
+  Given build "B" is current and runs
+  When the user runs "make install" without changes
+  Then nothing is copied or relaunched and the command prints "B is already installed and running"
+
+Scenario: AC-33 edge — a change only in the bridge
+  When only files under "bridge/" changed since build "B"
+  Then the build id differs from "B" (it covers the bridge, fbd and the UI), and the upgrade runs
+
+Scenario: AC-33 edge — iTerm2 not running
+  When the user runs "make install" while iTerm2 is not running
+  Then the files are installed and switched, iTerm2 is not started, nothing is pruned, and the command prints "Installed <build>; takes effect when iTerm2 starts"
+
+Scenario: AC-33 failure — iTerm2 refuses the launch
+  Given macOS has not allowed the terminal to control iTerm2 (osascript error -1743), or iTerm2's Python API is off or waiting for consent
+  When the launch is attempted
+  Then the switch is kept (the build itself is fine), nothing is rolled back, and the command exits non-zero with the cause and its fix, e.g. "Allow <terminal> to control iTerm2 in System Settings → Privacy & Security → Automation, then run make install again"
+
+Scenario: AC-33 failure — the new build does not come up
+  Given "current" was switched to "B" and the launch succeeded
+  When "/api/health" does not report "build": "B" with "bridge_connected": true within 10 s
+  Then "current" is switched back to "A", the bridge is launched again and "A" is live within 10 s
+  And the command exits non-zero with "Upgrade to B failed (<reason>); rolled back to A — see ~/Library/Logs/iterm-filebrowser/"
+
+Scenario: AC-33 failure — wrong user or concurrent run
+  When "make install" runs as root, or while another install holds "~/.local/lib/iterm-filebrowser/.lock"
+  Then it changes nothing and exits non-zero with "Run as your user, not root" or "Another install is running"
+
+Scenario: AC-33 edge — one build per running bridge
+  Given bridge "A" runs and "current" was switched to "B" without a relaunch
+  When fbd of "A" exits and bridge "A" restarts it
+  Then bridge "A" starts the fbd of "A" (the build folder it resolved when it started, also its import path), never the one of "B"
+
+Scenario: AC-33 edge — uninstall
+  When the user runs "make uninstall"
+  Then the running bridge and fbd stop, the build folders, links, AutoLaunch script and "Files Viewer" profile are removed, and the token and workspaces are kept
+```
+
+### AC-34 — Working through an upgrade [SHOULD / P1]
+
+```gherkin
+Scenario: AC-34 happy path — clean panels switch at once
+  Given a panel of build "A" shows "src" expanded, "README.md" selected, tabs "main.rs" and "app.py", nothing unsaved
+  When build "B" goes live
+  Then within 2 s of reconnecting the panel sees "build": "B" (health or state event) and reloads itself
+  And after the reload it shows the same root, expanded folders, selection, scroll and tabs (they live in the workspace)
+
+Scenario: AC-34 edge — unsaved edits or work in progress
+  Given "main.rs" has unsaved edits, or an inline rename, a dialog or a save is in progress
+  When the panel learns of build "B"
+  Then it does not reload; the header shows "Update ready — reloads after you save"
+  When the last unsaved tab is saved or closed and nothing is in progress
+  Then it reloads as above; unsaved text is never dropped
+
+Scenario: AC-34 edge — the viewer window
+  Given a viewer window of build "A"
+  When build "B" goes live
+  Then it follows the same rules, keeps its tabs, and needs no new one-time code (its token is kept for the web view)
+
+Scenario: AC-34 edge — short restart gap
+  Given fbd is unreachable for less than 3 s
+  Then the panel shows an amber dot and no "Backend not running" notice, and reads retry until fbd answers
+  When fbd answers again
+  Then the panel re-reads its open folders and re-checks its open tabs (unchanged files answer 304), so a file created during the gap appears
+
+Scenario: AC-34 edge — an old panel asks for a missing chunk
+  Given a panel of build "A" loads a lazy code chunk that build "B" does not have
+  Then the panel treats itself as outdated and follows the reload rules above instead of failing silently
+
+Scenario: AC-34 failure — a write during the gap
+  Given the user saves "app.py" while fbd is unreachable
+  Then the tab stays unsaved with the toast "Not saved: backend restarting — save again"; nothing is retried behind the user's back
+
+Scenario: AC-34 failure — the gap lasts longer
+  Given fbd stays unreachable for 3 s or more
+  Then "Backend not running" shows as today (AC-28), and unsaved edits stay in the panel
+```
+
+### AC-35 — Rollback and compatible state [SHOULD / P1]
+
+```gherkin
+Scenario: AC-35 happy path — rollback
+  Given "current" links to "B" and "previous" to "A"
+  When the user runs "make rollback"
+  Then "current" links to "A", "previous" to "B", the bridge is relaunched and "/api/health" reports "build": "A" within 10 s; panels follow (AC-34)
+
+Scenario: AC-35 failure — nothing to roll back to
+  Given there is no "previous" link (first install, or after an uninstall)
+  When the user runs "make rollback"
+  Then nothing changes and the command exits non-zero with "No previous build to roll back to"
+
+Scenario: AC-35 edge — an older build reads newer state
+  Given "workspaces.json" was written by build "B" with a field build "A" does not know
+  When build "A" runs after a rollback
+  Then "A" reads it, ignores the unknown field and works (every stored field is optional with a default; the field is dropped on A's next write)
+```
+
 ## 6. Flow and sequence diagrams
 
 ### Following the focused pane (AC-01, AC-05, AC-14)
@@ -992,6 +1117,9 @@ State when this spec was written: a Python prototype in `demo/` (removed in 0.3.
 | AC-28 | A rejected token shows "connecting…" forever (seen with the prototype's stale registration). | Clear message, no retry loop. | `ui/src/main.ts` |
 | AC-31 | Collapse all only (header button). | Expand all (header, ⌥→/⌥←, ⌥-click), limits, cancellation. | `ui/src/tree.ts` |
 | AC-32 | One page outline for every file, colored by category. | An icon per category from Tabler Icons (MIT), vendored in `ui/src/icons/`. | `ui/src/icons.ts` |
+| AC-33 | `make install` builds and copies files; `make restart` relaunches the bridge; no tests, health check, versioned folders or rollback; a half-copied bridge package is possible; an old bridge restarts the new fbd binary. | Versioned folders and links, preflight, switch, health wait, rollback; `make upgrade`. | `Makefile`, `bridge/fbbridge/backend.py` |
+| AC-34 | Panels keep the old code until the Toolbelt is toggled; any gap shows "Backend not running" at once; no re-read after reconnect; old lazy chunks may 404. | Build id, self-reload with unsaved edits kept, grace period, re-read on reconnect. | `ui/src/main.ts`, `fbd/src/http.rs` |
+| AC-35 | Nothing to roll back to; stored fields already default (`serde(default)`), untested for rollback. | `make rollback`; compatibility rule and test. | `fbd/src/workspace.rs` |
 | AC-30 | After an iTerm2 restart the old bridge and fbd run on (ppid 1, loop stuck on a dead call); the new bridge exits on the busy port ("fbd did not start"); a silent bridge still shows as followed (`stale: false`, green dot, no event when it goes silent). | Exit with iTerm2 or the connection, lock and takeover, poll timeout, `bridge: false` event and header note. | `bridge/fbbridge/app.py`, `fbd/src/api_state.rs`, `ui/src/main.ts` |
 
 ## 8. Recommendation and ownership
@@ -1011,6 +1139,21 @@ State when this spec was written: a Python prototype in `demo/` (removed in 0.3.
 | Acceptance testing on a real iTerm2 setup | Owner |
 
 ## 9. Technical details and specifications
+
+### Install and upgrade (AC-33, AC-34, AC-35)
+
+| Item | Design |
+|---|---|
+| Build id | short hash over `bridge/`, `fbd/src`, `fbd/Cargo.lock` and `ui/dist`, prefixed by `git describe --always --dirty`; written to `BUILD`; compiled into fbd (`fbd --version`, `env!`) and the UI (esbuild `define`); the bridge reads `BUILD` from its build folder |
+| Layout | `~/.local/lib/iterm-filebrowser/<build>/{fbd, bridge/fbbridge, BUILD}`, links `current` and `previous`; `~/.local/bin/fbd` → `current/fbd`; AutoLaunch `fb_bridge.py` resolves `current` with `realpath` once and puts that folder on `sys.path` (the checkout next to it wins for development) |
+| Switch | new link as `current.new`, `rename(2)` over `current` (atomic); same for `previous`; prune other folders only after a healthy launch |
+| One build per bridge | the bridge keeps the folder it resolved at start and starts and restarts fbd only from there |
+| Script | `scripts/install.py` (stdlib, ≤ 500 lines; launching and health checks in `scripts/install_launch.py`): refuse root; take `.lock`; build check (`fbd --version` = `BUILD`); copy; migrate the unversioned layout; switch; launch only if iTerm2 runs (`pgrep -x iTerm2`), via `osascript … launch API script`, mapping -1743 and API errors to their fix; wait for health; roll back on a health failure; prune. `make install` / `upgrade` / `rollback` / `uninstall` call it; `make test` stays separate (CI runs it) |
+| Health | `/api/health` and the `state` event carry `build`; the bridge sends its `build` in `/internal/state`; fbd logs `event=build.mismatch` when they differ |
+| Panel reload | the panel compiles in its build id; on a different one it reloads at once when no tab is dirty and nothing is in progress, else shows "Update ready — reloads after you save" and reloads when that becomes true; tree, selection, scroll and tabs come back from the workspace |
+| Gap | `EventSource` errors start a 3 s grace timer (amber dot); GETs retry with backoff for up to 3 s; writes fail at once; on reopen after a gap: re-read shown folders (`refreshDirs`), re-check open tabs with `If-None-Match` |
+| Chunks | a failed `import()` of a chunk marks the panel outdated (reload rules above) |
+| State compatibility | rule: every stored field is optional with a default and unknown fields are ignored (serde's default); one test reads a file with an unknown field and one without the newest field |
 
 ### Interfaces
 
@@ -1167,7 +1310,23 @@ The panel shows a red dot in the header when `bridge_connected` is false or SSE 
 | Stage 4 | AC-25, AC-26, AC-27, AC-28, AC-29 | The panel is there in every window, files open in a big window, the layout is remembered, broken links explain themselves. | M (est. 1 day) |
 | Stage 5 | AC-30 | iTerm2 restarts, crashes and manual relaunches leave exactly one working bridge; a panel nothing follows says so. | — |
 | Stage 6 | AC-26 (fix), AC-31, AC-32 | ⌘-click reliably opens the viewer window and shows the full path; whole trees expand in one click; files are recognizable by icon. | — |
+| Stage 7 | AC-33, AC-34, AC-35 | One command installs or upgrades; a bad build never replaces a good one; panels move to the new build without losing work. | — |
 | Backlog | AC-21, AC-22 | Git colors, drag and drop. | M |
+
+### Stage 7 plan (AC-33, AC-34, AC-35)
+
+| Step | Work | Depends on | Exit criteria |
+|---|---|---|---|
+| 0 | Probe `osascript … launch API script` with iTerm2 quit, without Automation permission, and with the Python API off; record the outcomes as assumptions | — | each case's exit code and message written down (AS-09) |
+| 1 | Build id over bridge, fbd and UI; `fbd --version`; `build` in `/api/health`, `state`, `/internal/state`; mismatch log | — | `cargo test` asserts `build` in health; a bridge-only change gives a new id |
+| 2 | State compatibility test (unknown field, missing newest field) | — | `cargo test workspace` passes both |
+| 3 | Versioned layout, `scripts/install.py` (root refusal, lock, copy, migration, atomic switch, prune after health); bridge pins its folder for imports and fbd | 1 | `bridge/tests/test_install.py` on a temp `HOME`: fresh install, upgrade, same build, migration, half-copied folder never linked, old bridge restarts its own fbd, root and lock refusals |
+| 4 | Launch and health (`scripts/install_launch.py`): iTerm2 running check, osascript errors mapped, health wait, rollback, `make install` / `upgrade` / `rollback` / `uninstall` | 0, 3 | `test_install.py` with a fake launcher: launch refused keeps the switch, unhealthy build rolled back, rollback without `previous` fails; live: upgrade A → B and `make rollback` |
+| 5 | Panel: grace period, retrying reads, re-read after reconnect, failed writes fail loud | 1 | `e2e_panel`: fbd stopped for 2 s → no notice, a file created meanwhile appears; a save during the gap keeps the tab dirty |
+| 6 | Panel and viewer reload on a new build (clean → at once, dirty → after save); chunk failure counts as outdated | 1, 5 | `e2e_panel`: fbd swapped to another build id → clean panel reloads with tree and tabs; dirty panel waits, reloads after ⌘S; a 404 chunk triggers it |
+| 7 | Docs (README install/upgrade/rollback), Definition of Done | 1–6 | `make test`, `e2e_panel`, `e2e_windows.py`, `security_check.sh`, a live upgrade and rollback with open panels |
+
+Order: 0, 1 and 2 first (independent), then 3 → 4 for install and 5 → 6 for panels (independent tracks), then 7.
 
 ## 11. Checklist with Definition of Done
 
@@ -1202,6 +1361,9 @@ Results of 2026-09-30 on a MacBook (Apple Silicon) (iTerm2 3.6.11, tmux 3.6a). `
 - [x] AC-29 — Verified by: `e2e_panel` → md link opens page.html rendered at `#sec2`, its image loads, its script does not run, its link opens README.md; Source toggle present.
 - [ ] AC-30 — Verified by: `make test` → bridge `unittest` 14 pass (takeover by SIGTERM < 3 s, SIGKILL when ignored, holder exiting before the signal, holder caught before writing its pid, non-bridge holder left alone, stale pid ignored, failing watchdog check logged, old and new websocket clients, exit on iTerm2 gone / reused pid / closed connection, a never-answered call abandoned), `cargo test` 12 pass incl. `bridge_silence_is_announced_once`; `e2e_panel` 64/64 (×2): silent fake bridge → "Not following iTerm2" in 11.4 s, `/api/state` `bridge: false`, tree usable, note clears in 6 ms; live 2026-10-01: `make restart` with a bridge running → "exit: SIGTERM", "took over from bridge pid 73818" in the same second, one bridge and one fbd, `bridge_connected: true`; `kill -STOP` 13 s → `event="bridge.silent"`, `kill -CONT` → connected; `e2e_cwd.py 5`, `e2e_terminal.py`, `e2e_windows.py`, `security_check.sh` PASS. Open: owner quits and restarts iTerm2 and sees one bridge, one fbd and the Toolbelt in a new window.
 - [x] AC-26 (0.8.0) — Verified by: live 2026-10-01, iTerm2 3.7.3: after an iTerm2 restart the stored profile read `Custom Command = No` and the viewer session had a tty (bash); rewriting the same file reloaded it as `Browser` in 0.5 s and the viewer opened with no tty. `make test` → bridge 22 pass (`test_viewer`: left alone, reloaded, written when missing, fails loud after one rewrite, error reaches the asking panel), cargo 13 pass (`bridge_errors_are_capped_and_addressed`); `e2e_panel` 86/86 (×2): command carries `by`, another panel's error not shown, the asking panel's shown, path bar shows and follows the active tab, page title is the path, copy puts it on the clipboard; `security_check.sh` against a private fbd 10/10 incl. `/internal/error` without secret → 401. Live after `make install && make restart` (one bridge, one fbd, takeover in 1 s): `scripts/e2e_windows.py` flips the stored profile to a terminal, then ⌘-click opens a browser viewer (`tty=None`, `Browser`; bridge.log "viewer profile reloaded as a browser profile"), reused for a second file, focus kept on the terminal pane; `e2e_terminal.py` PASS; `e2e_cwd.py 5` PASS (bash p95 203 ms, tmux 443 ms, tmux -CC 503 ms). AC-25 failed once in the first run right after the restart and passed in the next 3 runs (timing, open).
+- [ ] AC-33 — Verified by: (Stage 7)
+- [ ] AC-34 — Verified by: (Stage 7)
+- [ ] AC-35 — Verified by: (Stage 7)
 - [x] AC-31 — Verified by: `npm test` `tree-expand` 5 pass (breadth-first, skip list, symlinks, > 500 entries collapsed again, depth 8, 200 folders, cancel, unreadable folder); `e2e_panel`: header expand opens `src/a/b`, `node_modules` and `.git` stay closed, toast "Expanded 6 folders · skipped 2 (.git, node_modules)", 6 folders saved, collapse all, a folder re-opens one level after collapse all, ⌥→, ⌥←, ⌥-click on the arrow.
 - [x] AC-32 — Verified by: `npm test` `icons` 3 pass (every spec example, names before extensions, every icon a Tabler SVG, tinted strings reused); `e2e_panel`: code, text and folder icons in their theme colors, tabs carry icons; screenshot checked.
 - [x] AC-24 — Verified by: `e2e_panel` local `.md` link opens a tab, `../README.md#sandbox` back, panel URL unchanged.
