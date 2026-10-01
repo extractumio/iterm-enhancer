@@ -57,8 +57,20 @@ async def main(conn):
         ok &= passed
         print(f"{'PASS' if passed else 'FAIL'} AC-12 insert path → prompt line ends with {line.strip()[-20:]!r}")
         await s.async_send_text("\x15")  # clear the prompt line
-        # Open Terminal Here: cd with quoting, pane follows
+        # Open Terminal Here: cd typed with quoting after what is already on the line, never
+        # run by fbd (the user presses Return); then the pane follows
+        await s.async_send_text("touch PWNED-BY-CD; ")
         status, _ = call("POST", "/api/terminal/cd", {"path": str(TARGET), "key": key})
+        await asyncio.sleep(1.0)
+        screen = await s.async_get_screen_contents()
+        line = next((x for x in reversed([screen.line(i).string for i in range(screen.number_of_lines)]) if x.strip()), "")
+        passed = status == 204 and line.rstrip().endswith(f"cd '{TARGET}'") and call("GET", "/api/state")[1].get("cwd") != str(TARGET)
+        ok &= passed
+        print(f"{'PASS' if passed else 'FAIL'} AC-12 open terminal here types, runs nothing → {line.strip()[-40:]!r}")
+        await s.async_send_text("\x15")  # clear the line, then type the cd alone and run it
+        call("POST", "/api/terminal/cd", {"path": str(TARGET), "key": key})
+        await asyncio.sleep(0.5)
+        await s.async_send_text("\r")
         for _ in range(20):
             await asyncio.sleep(0.25)
             if call("GET", "/api/state")[1].get("cwd") == str(TARGET):

@@ -38,6 +38,7 @@ interface Doc {
   saving?: Promise<boolean>;       // one save per file at a time
   deleted?: boolean;               // gone on disk (content kept; a rename may bring it back)
   scroll: Record<string, number>;  // per view mode
+  host: string | null;             // where the file lives: every read and save goes there (AC-37)
 }
 
 const cmTheme = EditorView.theme({
@@ -142,7 +143,7 @@ export class Viewer {
       const r = await ask(`Save changes to ${basename(t.path)}?`, "Your changes will be lost if you don't save them.",
         [{ id: "save", label: "Save", primary: true }, { id: "discard", label: "Don't Save", danger: true }, { id: "cancel", label: "Cancel" }]);
       if (r === "cancel") return false;
-      if (r === "save" && !(await this.save(t.path))) return false;
+      if (r === "save" && !(await this.save(t.path, false, d))) return false;  // the document asked about, on its host
     }
     const at = this.tabs.indexOf(t);
     if (at < 0) return true;
@@ -260,14 +261,14 @@ export class Viewer {
 
   private doc(path: string): Doc {
     let d = this.docs.get(path);
-    if (!d) { d = { dirty: false, diskChanged: false, scroll: {} }; this.docs.set(path, d); }
+    if (!d) { d = { dirty: false, diskChanged: false, scroll: {}, host: this.host || null }; this.docs.set(path, d); }
     return d;
   }
 
   private load(path: string): Promise<void> {
     const d = this.doc(path);
     if (!d.loading) {
-      d.loading = api<FileView>("GET", "/api/file", { query: { path } }).then(
+      d.loading = api<FileView>("GET", "/api/file", { query: { path }, host: d.host }).then(
         (f) => { d.file = f; d.error = undefined; d.state = undefined; d.saved = undefined; },
         (e) => { d.error = e.message; });
     }
@@ -279,7 +280,7 @@ export class Viewer {
     const d = this.docs.get(path);
     if (!d?.file || d.dirty) return;
     try {
-      const f = await api<FileView | undefined>("GET", "/api/file", { query: { path }, headers: { "If-None-Match": `"${d.file.etag}"` } });
+      const f = await api<FileView | undefined>("GET", "/api/file", { query: { path }, host: d.host, headers: { "If-None-Match": `"${d.file.etag}"` } });
       if (!f && !d.deleted) return; // 304: unchanged
       this.redraw(path, () => {
         d.deleted = false;
@@ -418,8 +419,7 @@ export class Viewer {
   }
 
   /** Save the file (If-Match etag); on conflict ask Overwrite / Reload / Cancel. */
-  save(path: string, force = false): Promise<boolean> {
-    const d = this.docs.get(path);
+  save(path: string, force = false, d = this.docs.get(path)): Promise<boolean> {
     if (!d) return Promise.resolve(false);
     if (!d.saving) d.saving = this.doSave(path, d, force).finally(() => { d.saving = undefined; });
     return d.saving;
@@ -431,7 +431,7 @@ export class Viewer {
     const text = doc.toString();
     try {
       const r = await api<{ etag: string }>("PUT", "/api/file", {
-        query: { path }, body: { text }, headers: { "If-Match": `"${force ? "*" : d.file.etag}"` },
+        query: { path }, body: { text }, host: d.host, headers: { "If-Match": `"${force ? "*" : d.file.etag}"` },
       });
       d.file = { ...d.file, etag: r.etag, size: new TextEncoder().encode(text).length, text };
       d.saved = doc;

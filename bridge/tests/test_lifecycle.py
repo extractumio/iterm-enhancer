@@ -62,12 +62,13 @@ class LockTest(unittest.TestCase):
         return p
 
     def take(self, **kw):
-        fd = lifecycle.take_lock(self.path, **kw)
+        fd, self.took_over = lifecycle.take_lock(self.path, **kw)
         self.fds.append(fd)
         return fd
 
     def test_free_lock_records_our_pid(self):
         self.take()
+        self.assertFalse(self.took_over)
         self.assertEqual(self.path.read_text().strip(), str(os.getpid()))
         self.assertEqual(self.logged, [])
 
@@ -83,6 +84,7 @@ class LockTest(unittest.TestCase):
         self.assertLess(time.monotonic() - start, 3.0)
         self.assertEqual(old.wait(2), -signal.SIGTERM)
         self.assertEqual(self.logged, [f"took over from bridge pid {old.pid}"])
+        self.assertTrue(self.took_over, "a handover: the token is kept (AC-07)")
 
     def test_sigkill_when_sigterm_is_ignored(self):
         old = self.holder("fb_bridge.py", "stubborn")

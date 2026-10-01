@@ -5,7 +5,7 @@
 
 import "./style.css";
 import {
-  api, apiOrToast, ApiError, basename, CLIENT, DEFAULT_PREFS, dirname, eventsUrl, keepToken, redeemTicket, scope, setScope, toast, TOKEN,
+  api, apiOrToast, ApiError, basename, CLIENT, DEFAULT_PREFS, dirname, keepToken, redeemTicket, scope, setScope, toast, TOKEN,
   type FsChange, type Pane, type Prefs, type TermState,
 } from "./api";
 import { Binding } from "./binding";
@@ -15,6 +15,7 @@ import { applyTheme } from "./theme";
 import { Tree, type EditMode } from "./tree";
 import { Viewer } from "./viewer";
 import { PathBar } from "./viewer-path";
+import { Stream } from "./stream";
 import { Upgrade } from "./upgrade";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -28,7 +29,6 @@ let ws: Pane | null = null;           // its workspace as last read or written
 let prefs: Prefs = { ...DEFAULT_PREFS };
 let saveTimer = 0;
 let filterTimer = 0;
-let es: EventSource | null = null;
 /** A viewer window (AC-26) shows only tabs: `?view=<path>`, opened with a one-time code `v`. */
 const params = new URLSearchParams(location.search);
 const VIEW = params.get("view");
@@ -46,11 +46,13 @@ function notice(title: string, text: string) {
   $("title").textContent = title || term.title || "";
 }
 
-function authFailed() {
-  es?.close();
+/** The token was refused, or fbd did not prove it knows it. `retrying`: the stream keeps
+ *  asking for a proof (no token goes out), so the panel comes back by itself if fbd does. */
+function authFailed(retrying = false) {
+  if (!retrying) stream.close();
   $("dot").className = "dot off";
   if (VIEW) notice("Viewer link expired", "Open the file again from the Files panel (⌘-click).");
-  else notice("Outdated panel link", "fbd no longer accepts this panel's token. Reopen it (View → Toolbelt → uncheck and check Files), or restart iTerm2.");
+  else notice("Outdated panel link", "fbd does not prove it knows this panel's token: the link is outdated, or another program holds port 47821. Restart iTerm2; a new link comes with it.");
 }
 
 // ── workspace sync ───────────────────────────────────────────────────────────
@@ -125,8 +127,15 @@ function renderHeader(s: TermState) {
 }
 
 /** fbd answers, but nothing tells it where the terminal is: say so, the tree stays usable (AC-30). */
+let bridgeCheck = 0;
+
+/** A freshly (re)started fbd has not heard from the bridge yet: give it the same grace as a
+ *  backend gap before saying the bridge is missing (AC-34). */
 function bridgeNotice(s: TermState) {
-  if (!s.bridge) notice(NOT_FOLLOWING, "Bridge not running: Scripts → AutoLaunch → fb_bridge.py, or restart iTerm2.");
+  clearTimeout(bridgeCheck);
+  const wait = stream.openedAt + 3000 - Date.now();
+  if (!s.bridge && wait > 0) bridgeCheck = window.setTimeout(() => bridgeNotice(term), wait);
+  else if (!s.bridge) notice(NOT_FOLLOWING, "Bridge not running: Scripts → AutoLaunch → fb_bridge.py, or restart iTerm2.");
   else if (noticeTitle === NOT_FOLLOWING) notice("", "");
 }
 
@@ -183,28 +192,19 @@ function onFsChange(c: FsChange) {
   viewer.diskChanged(c.files);
 }
 
-function connect() {
-  es = new EventSource(eventsUrl());
-  const on = (name: string, fn: (data: any) => void) => es!.addEventListener(name, (e) => fn(JSON.parse((e as MessageEvent).data)));
-  on("state", (s) => void onState(s));
-  // our own writes echo back with by === CLIENT
-  on("workspace", ({ key: k, rev, by }) => { if (k === key && by !== CLIENT && (!ws || rev > ws.rev)) void loadWorkspace(k); });
-  on("fs-change", onFsChange);
-  on("viewer-open", ({ path, host }) => { if (VIEW && (host ?? null) === scope) viewer.open(path); });
-  on("bridge-error", ({ message, by }) => { if (by === CLIENT) toast(message); }); // only the panel that asked
-  on("unbind", ({ clients }) => { if (clients.includes(CLIENT)) binding.lost(); });
-  es.onerror = () => {
-    $("dot").className = "dot wait"; // a restart or an upgrade takes a moment (AC-34)
-    upgrade.lost(() => {
-      $("dot").className = "dot off";
-      // EventSource hides the status: ask once whether the token or the backend is the problem
-      api("GET", "/api/state", { retry: false }).then(() => {}, (e: ApiError) => {
-        if (e.status === 401) authFailed();
-        else notice("Backend not running", "fbd is not reachable; retrying. Check that iTerm2's Python API is enabled and see ~/.iterm-filebrowser/logs/fbd.log.");
-      });
-    });
-  };
-  es.onopen = () => {
+let lastUnproven = false;
+/** The event stream's handlers; it opens after fbd proved itself (stream.ts, AC-07). */
+const stream = new Stream({
+  on: {
+    state: (s) => void onState(s),
+    // our own writes echo back with by === CLIENT
+    workspace: ({ key: k, rev, by }) => { if (k === key && by !== CLIENT && (!ws || rev > ws.rev)) void loadWorkspace(k); },
+    "fs-change": onFsChange,
+    "viewer-open": ({ path, host }) => { if (VIEW && (host ?? null) === scope) viewer.open(path); },
+    "bridge-error": ({ message, by }) => { if (by === CLIENT) toast(message); }, // only the panel that asked
+    unbind: ({ clients }) => { if (clients.includes(CLIENT)) binding.lost(); },
+  },
+  open() {
     notice("", "");
     if (upgrade.back()) { // fbd was away: what changed meanwhile was not announced
       viewer.recheck();
@@ -214,8 +214,17 @@ function connect() {
     void binding.claim().then(() => showOwnWindow()).catch(() => {});
     renderHeader(term);
     if (key) void loadWorkspace(key);
-  };
-}
+  },
+  lost(unproven) {  // say so after the grace period (the latest reason); the stream tries again by itself
+    lastUnproven = unproven;
+    $("dot").className = "dot wait"; // a restart or an upgrade takes a moment (AC-34)
+    upgrade.lost(() => {
+      $("dot").className = "dot off";
+      if (lastUnproven) authFailed(true);
+      else notice("Backend not running", "fbd is not reachable; retrying. Check that iTerm2's Python API is enabled and see ~/.iterm-filebrowser/logs/fbd.log.");
+    });
+  },
+});
 
 // ── file operations ──────────────────────────────────────────────────────────
 
@@ -241,7 +250,15 @@ async function commit(mode: EditMode, dir: string, name: string, path?: string):
   }
 }
 
+/** The pane changed hosts while the user was deciding: the decision was about other files. */
+function switchedSince(host: string | null) {
+  if (scope === host) return false;
+  toast("The panel switched to another pane — nothing changed");
+  return true;
+}
+
 async function trashSelected() {
+  const host = scope;
   const paths = [...tree.selected];
   if (!paths.length) return;
   if (paths.some((p) => !tree.isWritable(dirname(p)))) return toast("Read-only: outside writable folders");
@@ -250,9 +267,9 @@ async function trashSelected() {
   const extra = dirty.length ? `${dirty.length} unsaved file${dirty.length > 1 ? "s" : ""} will be lost. ` : "";
   const ok = await ask(`Move ${what} to Trash?`, `${extra}You can restore from the Trash in Finder.`,
     [{ id: "trash", label: "Move to Trash", danger: true, primary: true }, { id: "cancel", label: "Cancel" }]);
-  if (ok !== "trash") return;
+  if (ok !== "trash" || switchedSince(host)) return;
   type Failed = { failed: { path: string; message: string }[] };
-  const r: Failed = await api<Failed>("POST", "/api/fs/trash", { body: { paths } })
+  const r: Failed = await api<Failed>("POST", "/api/fs/trash", { body: { paths }, host })
     .catch((e: ApiError) => (e.body?.failed ? e.body : { failed: [{ path: "", message: e.message }] }));
   if (r.failed.length) toast(r.failed.map((f) => f.message).join("; "));
   viewer.removed(paths.filter((p) => !r.failed.some((f) => f.path === p)));
@@ -303,7 +320,9 @@ async function contextMenu(path: string | null, isDir: boolean, ev: MouseEvent) 
   );
   else entries.push("-", ...(scope ? [] : [{ id: "reveal", label: "Reveal in Finder" }]), { id: "cd", label: "Open Terminal Here" });
   entries.push(...hostEntries(term.remote));
+  const host = scope;
   const choice = await menu(ev.clientX, ev.clientY, entries);
+  if (choice && switchedSince(host)) return;
   if (choice?.startsWith("host-") && term.remote) return void hostMenu(choice, term.remote);
   switch (choice) {
     case "new-file": return void tree.startCreate(dir, "file");
@@ -459,7 +478,7 @@ async function startViewer(path: string) {
   }
   if (!TOKEN) return authFailed();
   keepToken(); // reloads keep working; the URL keeps no secret
-  connect();
+  void stream.connect();
   viewer.open(path, "auto");
 }
 
@@ -477,5 +496,5 @@ async function startViewer(path: string) {
   $("hidden").classList.toggle("on", !prefs.hidden);
   tree.themeChanged();
   watchToolbeltWidth();
-  connect();
+  void stream.connect();
 })().catch((e) => toast(String(e)));

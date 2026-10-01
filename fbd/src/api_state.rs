@@ -19,6 +19,7 @@ use tokio_stream::StreamExt;
 
 use crate::events::Event;
 use crate::http::{err, ApiResult};
+use crate::termtext;
 use crate::workspace::Pane;
 use crate::{App, Shared, Term};
 
@@ -180,25 +181,8 @@ pub struct TermBody {
     key: String,
 }
 
-/// C0 controls and DEL would act as keystrokes (Ctrl-C, Enter…) in the terminal.
-fn has_control(s: &str) -> bool {
-    s.chars().any(|c| (c as u32) < 0x20 || c as u32 == 0x7f)
-}
-
-/// POSIX shell word: bare when safe, single-quoted otherwise.
-fn shell_quote(s: &str) -> String {
-    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "@%+=:,./-_".contains(c)) {
-        s.to_string()
-    } else {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    }
-}
-
 pub async fn terminal(State(app): State<Shared>, UrlPath(action): UrlPath<String>, headers: HeaderMap, Json(b): Json<TermBody>) -> ApiResult {
-    if b.paths.iter().chain(&b.path).any(|s| has_control(s)) {
-        return Err(err(StatusCode::BAD_REQUEST, "control_chars", "Name contains control characters — not sent to the terminal"));
-    }
-    let session = {
+    let (session, job) = {
         let t = app.term.lock();
         let Some(session) = t.state["session"].as_str().filter(|_| t.bridge_alive()).map(str::to_string) else {
             return Err(no_bridge());
@@ -210,13 +194,10 @@ pub async fn terminal(State(app): State<Shared>, UrlPath(action): UrlPath<String
             let job = t.state["job"].as_str().unwrap_or("");
             return Err(err(StatusCode::CONFLICT, "busy", format!("Terminal is busy ({job}) — command not sent")));
         }
-        session
+        (session, t.state["job"].as_str().unwrap_or("").to_string())
     };
-    let text = match (action.as_str(), b.path) {
-        ("insert", _) if !b.paths.is_empty() => b.paths.iter().map(|p| shell_quote(p)).collect::<Vec<_>>().join(" ") + " ",
-        ("cd", Some(p)) => format!("cd -- {}\r", shell_quote(&p)),
-        _ => return Err(err(StatusCode::BAD_REQUEST, "bad_request", "insert needs paths, cd needs path")),
-    };
+    // quoted for the pane's shell; never Enter: the user runs the line (AC-12)
+    let text = termtext::line(&job, &action, &b.paths, b.path.as_deref()).map_err(|m| err(StatusCode::BAD_REQUEST, "not_typed", m))?;
     command(&app, json!({"action": "type", "session": session, "text": text}), &headers);
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -365,14 +346,6 @@ pub async fn health(State(app): State<Shared>) -> Json<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn quoting_and_controls() {
-        assert_eq!(shell_quote("src/db/pool.rs"), "src/db/pool.rs");
-        assert_eq!(shell_quote("my file's"), "'my file'\\''s'");
-        assert!(has_control("a\u{3}b") && has_control("x\r") && has_control("\u{7f}"));
-        assert!(!has_control("naïve file.txt"));
-    }
 
     #[test]
     fn bridge_errors_are_capped_and_addressed() {

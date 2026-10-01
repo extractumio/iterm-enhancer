@@ -57,8 +57,8 @@ class InstallTest(unittest.TestCase):
         self.healthy_builds = set()  # builds that come up when launched
         m = [mock.patch.object(self.live, "iterm_running", lambda: True),
              mock.patch.object(self.live, "launch", self.fake_launch),
-             mock.patch.object(self.live, "health", lambda: dict(self.running) or None),
-             mock.patch.object(self.live, "wait_healthy", lambda build, seconds=10.0: self.running.get("build") == build),
+             mock.patch.object(self.live, "health", lambda legacy=False: dict(self.running) or None),
+             mock.patch.object(self.live, "wait_healthy", lambda build, seconds=10.0, legacy=False: self.running.get("build") == build),
              mock.patch.object(self.inst, "say", lambda msg: self.said.append(msg))]
         self.said = []
         for p in m:
@@ -263,6 +263,12 @@ class InstallTest(unittest.TestCase):
         self.install("b")
         self.assertTrue((self.root / "builds/b/fbd").is_file())
         self.assertFalse((self.root / "builds/.b.tmp").exists())
+
+    def test_the_root_is_private(self):
+        self.root.mkdir(mode=0o755)
+        self.root.chmod(0o755)  # as an earlier install left it
+        os.close(self.inst.lock())
+        self.assertEqual(self.root.stat().st_mode & 0o777, 0o700)
 
     def test_one_install_at_a_time(self):
         fd = self.inst.lock()

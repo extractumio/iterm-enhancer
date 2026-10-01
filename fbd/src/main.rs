@@ -13,9 +13,11 @@ mod events;
 mod files;
 mod http;
 mod listing;
+mod local;
 mod ops;
 mod panels;
 mod remote;
+mod termtext;
 mod watcher;
 mod workspace;
 
@@ -165,14 +167,16 @@ fn env<T: std::str::FromStr>(key: &str, default: T) -> T {
     std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
+/// What the panel uses, over TCP (and an agent's socket): the token decides (auth.rs).
 fn routes(app: Shared) -> Router {
     use api_fs::*;
     use api_state::*;
     Router::new()
+        .route("/api/hello", get(local::hello))
         .route("/api/state", get(get_state))
         .route("/api/events", get(events))
         .route("/api/ls", get(ls))
-        .route("/api/file", get(file).put(save_file))
+        .route("/api/file", get(file).put(save_file).layer(axum::extract::DefaultBodyLimit::max(save_body_limit(app.cfg.text_max))))
         .route("/api/raw", get(raw))
         .route("/api/fs/mkdir", post(fs_mkdir))
         .route("/api/fs/touch", post(fs_touch))
@@ -191,16 +195,25 @@ fn routes(app: Shared) -> Router {
         .route("/api/ui/toolbelt-width", post(toolbelt_width))
         .route("/api/panel/claim", post(panels::panel_claim))
         .route("/api/panel/bind", post(panels::panel_bind))
+        .route("/ticket", get(ticket))
+        .fallback(http::ui)
+        .layer(middleware::from_fn_with_state(app.clone(), remote::route)) // after the auth guard
+        .layer(middleware::from_fn_with_state(app.clone(), auth::guard))
+        .with_state(app)
+}
+
+/// What the bridge and the installer use, only on the private socket (local.rs, AC-07).
+fn bridge_routes(app: Shared) -> Router {
+    use api_state::*;
+    Router::new()
+        .route("/health", get(health))
         .route("/internal/bound", post(panels::internal_bound))
         .route("/internal/remote", post(remote::internal_remote))
-        .route("/ticket", get(ticket))
         .route("/internal/viewer-open", post(internal_viewer_open))
         .route("/internal/error", post(internal_error))
         .route("/internal/state", post(internal_state))
         .route("/internal/commands", get(internal_commands))
-        .fallback(http::ui)
-        .layer(middleware::from_fn_with_state(app.clone(), remote::route)) // after the auth guard
-        .layer(middleware::from_fn_with_state(app.clone(), auth::guard))
+        .layer(middleware::from_fn_with_state(app.clone(), local::guard))
         .with_state(app)
 }
 
@@ -222,6 +235,7 @@ async fn main() {
         println!("{}", agent::AGENT_ID);
         return;
     }
+    unsafe { libc::umask(0o077) }; // what fbd writes (workspaces, logs, sockets) is the user's alone
     let agent = agent::socket_arg().map(|s| agent::start(&s));
     tracing_subscriber::fmt()
         .with_env_filter(std::env::var("FB_LOG").unwrap_or_else(|_| "info".into()))
@@ -231,6 +245,11 @@ async fn main() {
 
     let dir = agent.as_ref().map_or_else(auth::app_dir, |a| a.dir.clone());
     let port: u16 = env("FB_PORT", 47821);
+    // the port first: if another program held it, the token may have reached it (AC-07)
+    let (listener, foreign) = match agent {
+        Some(_) => (None, false),
+        None => local::bind_port(&dir, port).await.map_or((None, false), |(l, f)| (Some(l), f)),
+    };
     let bus = Bus::new();
     let cache = Cache::new(env("FB_LIST_CACHE_MB", if agent.is_some() { 32usize } else { 128 }) << 20);
     let watcher = Watcher::start(cache.clone(), bus.clone())
@@ -241,7 +260,7 @@ async fn main() {
             port,
             agent: agent.is_some(),
             host: if agent.is_some() { agent::HOST.to_string() } else { format!("127.0.0.1:{port}") },
-            token: agent.as_ref().map_or_else(|| auth::load_token(&dir), |a| a.token.clone()),
+            token: agent.as_ref().map_or_else(|| auth::load_token(&dir, foreign || std::env::var_os("FB_NEW_TOKEN").is_some()), |a| a.token.clone()),
             bridge_secret: std::env::var("FB_BRIDGE_SECRET").ok().filter(|s| s.len() >= 16),
             text_max: env("FB_TEXT_MAX_BYTES", 10u64 << 20),
         },
@@ -278,21 +297,12 @@ async fn main() {
         axum::serve(a.listener, routes(app)).await.unwrap();
         return;
     }
-    // a previous fbd may still be shutting down (it polls for its bridge every 2 s)
-    let mut attempt = 0;
-    let listener = loop {
-        match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
-            Ok(l) => break l,
-            Err(_) if attempt < 15 => {
-                attempt += 1;
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
-            Err(e) => {
-                eprintln!("error: port {port} in use (set FB_PORT): {e}");
-                std::process::exit(2);
-            }
-        }
-    };
+    let listener = listener.expect("bound above");
+    if foreign {
+        tracing::warn!(event = "token.renewed", reason = "another program held the port");
+    }
+    let bridge = local::bind(&dir);
+    tokio::spawn(axum::serve(bridge, bridge_routes(app.clone())).into_future());
     tracing::info!(event = "start", port, pid = std::process::id(), build = build_id(), bridge = app.cfg.bridge_secret.is_some());
     if app.cfg.bridge_secret.is_some() {
         // started by the bridge: exit with it (iTerm2 quit or the script was stopped)

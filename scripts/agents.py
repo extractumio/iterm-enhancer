@@ -97,9 +97,9 @@ def build(platforms):
             if p.startswith("linux-"):  # the same way on the Mac and on the Linux runner
                 if not (TOOLCHAIN / "bin/cargo-zigbuild").exists():
                     raise Failed("the Linux toolchain is missing: run make toolchain")
-                run(["cargo", "zigbuild", "--release", "--target", target], env=env)
+                run(["cargo", "zigbuild", "--locked", "--release", "--target", target], env=env)
             elif native().startswith("macos-"):
-                run(["cargo", "build", "--release", "--target", target], env=env)
+                run(["cargo", "build", "--locked", "--release", "--target", target], env=env)
             else:
                 raise Failed(f"{p} builds only on macOS")
             dest.parent.mkdir(parents=True, exist_ok=True)

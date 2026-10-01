@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-"""AC-40: `iterm-filebrowser upgrade` installs a release only when its checksum matches,
-from a fake release served as local files (no network)."""
+"""AC-40: `iterm-filebrowser upgrade` installs a release only when it is signed by the
+release key and its checksum matches, from a fake release served as local files (no
+network), signed with a throwaway key made for the test."""
 import hashlib
 import importlib
 import io
 import os
+import re
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -18,14 +21,31 @@ sys.path.insert(0, str(REPO / "bridge"))
 
 
 def tar_with(files):
+    """files: (name, text, mode), or a TarInfo for a link or a device."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as t:
-        for name, text, mode in files:
+        for f in files:
+            if isinstance(f, tarfile.TarInfo):
+                t.addfile(f)
+                continue
+            name, text, mode = f
             data = text.encode()
             info = tarfile.TarInfo(name)
             info.size, info.mode = len(data), mode
             t.addfile(info, io.BytesIO(data))
     return buf.getvalue()
+
+
+def keypair(d, name):
+    key = Path(d) / name
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", name, "-f", str(key)], check=True)
+    return key
+
+
+def link(name, target, kind=tarfile.SYMTYPE):
+    info = tarfile.TarInfo(name)
+    info.type, info.linkname = kind, target
+    return info
 
 
 class UpgradeTest(unittest.TestCase):
@@ -42,12 +62,20 @@ class UpgradeTest(unittest.TestCase):
         self.addCleanup(p.stop)
         import cli
         self.cli = importlib.reload(cli)
+        self.key = keypair(self.root, "release")
+        signers = self.root / "release-signers"
+        signers.write_text(f"{self.cli.NAMESPACE} namespaces=\"{self.cli.NAMESPACE}\" {self.key.with_suffix('.pub').read_text()}")
+        self.cli.SIGNERS = signers
 
-    def publish(self, files, checksum=None):
+    def publish(self, files, checksum=None, key=None, release="v9.0.0"):
         data = tar_with(files)
         (self.rel / "iterm-filebrowser-macos.tar.gz").write_bytes(data)
         digest = checksum or hashlib.sha256(data).hexdigest()
-        (self.rel / "SHA256SUMS").write_text(f"{digest}  iterm-filebrowser-macos.tar.gz\n")
+        sums = self.rel / "SHA256SUMS"
+        sums.write_text(f"# release {release}\n{digest}  iterm-filebrowser-macos.tar.gz\n")
+        (self.rel / "SHA256SUMS.sig").unlink(missing_ok=True)
+        if key is not False:
+            subprocess.run(["ssh-keygen", "-Y", "sign", "-q", "-f", str(key or self.key), "-n", self.cli.NAMESPACE, str(sums)], check=True)
 
     def package(self):
         return [("iterm-filebrowser/iterm-filebrowser", f"#!/bin/sh\necho \"$1\" > {self.marker}\n", 0o755),
@@ -73,6 +101,100 @@ class UpgradeTest(unittest.TestCase):
             self.cli.upgrade()
         self.assertFalse(self.marker.exists())
         self.assertFalse((self.root / "escape").exists())
+
+    def test_an_unsigned_release_installs_nothing(self):
+        self.publish(self.package(), key=False)
+        with self.assertRaises(SystemExit) as cm:
+            self.cli.upgrade()
+        self.assertIn("download failed", str(cm.exception.code))
+        self.assertFalse(self.marker.exists())
+
+    def test_a_release_signed_by_another_key_installs_nothing(self):
+        self.publish(self.package(), key=keypair(self.root, "attacker"))
+        with self.assertRaises(SystemExit) as cm:
+            self.cli.upgrade()
+        self.assertIn("not signed by the release key", str(cm.exception.code))
+        self.assertFalse(self.marker.exists())
+
+    def test_an_install_without_a_release_key_refuses(self):
+        self.publish(self.package())
+        self.cli.SIGNERS.write_text("# no key yet\n")
+        with self.assertRaises(SystemExit) as cm:
+            self.cli.upgrade()
+        self.assertIn("no release key", str(cm.exception.code))
+
+    def test_links_and_devices_are_refused(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        victim = outside / "victim"
+        victim.write_text("keep")
+        for bad in ([link("iterm-filebrowser/d", "../../outside"), ("iterm-filebrowser/d/planted", "x", 0o644)],
+                    [link("iterm-filebrowser/h", str(victim), tarfile.LNKTYPE), ("iterm-filebrowser/h", "owned", 0o644)],
+                    [link("iterm-filebrowser/null", "", tarfile.CHRTYPE)]):
+            self.publish(self.package() + bad)
+            with self.assertRaises(SystemExit) as cm:
+                self.cli.upgrade()
+            self.assertIn("not a plain file or folder", str(cm.exception.code))
+        self.assertEqual(victim.read_text(), "keep")
+        self.assertEqual(sorted(p.name for p in outside.iterdir()), ["victim"])
+        self.assertFalse(self.marker.exists())
+
+    def test_setuid_bits_are_stripped(self):
+        tar = self.root / "p.tar.gz"
+        tar.write_bytes(tar_with([("iterm-filebrowser/tool", "x", 0o6777)]))
+        self.cli.extract(tar, self.root / "x")
+        self.assertEqual((self.root / "x/iterm-filebrowser/tool").stat().st_mode & 0o7777, 0o755)
+
+    def install_sh(self, signers):
+        """Run a copy of install.sh that carries `signers` against the fake release."""
+        sh = self.root / "install.sh"
+        text = (REPO / "scripts/install.sh").read_text()
+        sh.write_text(re.sub(r"(?m)^SIGNERS='.*'$", lambda _: f"SIGNERS='{signers}'", text))
+        return subprocess.run(["sh", str(sh)], capture_output=True, text=True,
+                              env={**os.environ, "FB_RELEASE_URL": f"file://{self.root}/releases"})
+
+    def test_install_sh_checks_the_signature(self):
+        signers = self.cli.SIGNERS.read_text().strip()
+        self.publish(self.package(), key=keypair(self.root, "attacker"))
+        r = self.install_sh(signers)
+        self.assertIn("not signed by the release key", r.stderr)
+        self.assertFalse(self.marker.exists())
+        self.assertIn("carries no release key", self.install_sh("# no release key yet").stderr)
+        self.publish(self.package())
+        r = self.install_sh(signers)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.marker.read_text().strip(), "install")
+
+    def test_install_sh_and_release_signers_name_the_same_key(self):
+        key = lambda text: re.findall(r"ssh-\S+ \S+", text)
+        sh = re.search(r"(?m)^SIGNERS='(.*)'$", (REPO / "scripts/install.sh").read_text()).group(1)
+        self.assertEqual(key(sh), key((REPO / "release-signers").read_text()))
+
+    def test_an_older_release_is_not_installed_as_the_latest(self):
+        build = self.root / "BUILD"
+        build.write_text("v9.1.0\n")
+        with mock.patch.object(self.cli, "HERE", self.root / "scripts"):
+            self.publish(self.package(), release="v9.0.0")
+            with self.assertRaises(SystemExit) as cm:
+                self.cli.upgrade()
+            self.assertIn("older than the installed v9.1.0", str(cm.exception.code))
+            self.assertFalse(self.marker.exists())
+            (self.root / "releases/download/v9.0.0").mkdir(parents=True)
+            for f in self.rel.iterdir():
+                (self.root / "releases/download/v9.0.0" / f.name).write_bytes(f.read_bytes())
+            with self.assertRaises(SystemExit) as cm:
+                self.cli.upgrade("v9.0.0")  # on purpose, by name
+            self.assertEqual(cm.exception.code, 0)
+
+    def test_a_release_must_be_the_one_asked_for(self):
+        self.publish(self.package(), release="v8.0.0")
+        (self.root / "releases/download/v9.9.9").mkdir(parents=True)
+        for f in self.rel.iterdir():
+            (self.root / "releases/download/v9.9.9" / f.name).write_bytes(f.read_bytes())
+        with self.assertRaises(SystemExit) as cm:
+            self.cli.upgrade("v9.9.9")
+        self.assertIn("the release says v8.0.0", str(cm.exception.code))
+        self.assertFalse(self.marker.exists())
 
     def test_a_missing_release_says_so(self):
         with self.assertRaises(SystemExit) as cm:

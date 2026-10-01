@@ -210,9 +210,30 @@ never on GitHub-hosted runners, and never for pull requests (this repository is 
 fork must not run code on the runner); `bridge/tests/test_workflows.py` enforces it,
 with actions pinned to commits in `.github/actions-allowlist.json`. `ci.yml` runs the
 tests on Linux and builds the Linux agents on every push to `main`. A tag `v*` runs
-`release.yml`: tests, then the Linux agents and `SHA256SUMS-linux` attached to the GitHub
-release; `make release TAG=v…` on the Mac builds the package users install (all four
-helpers) and attaches it with `install.sh` and `SHA256SUMS`.
+`release.yml`: tests and the Linux agents, read-only: no workflow can write to the
+repository or a release, so code running on the runner cannot change what users install.
+`make release TAG=v…` on the Mac publishes the release: it builds the package users install
+(all four helpers) from the tag and attaches it with `install.sh`, `SHA256SUMS` and its
+signature (see "Signed releases").
+
+### Signed releases
+
+Installs and upgrades accept a release only if its `SHA256SUMS` is signed by the
+maintainer's release key (an ed25519 ssh key; `ssh-keygen -Y`, built into macOS). Its public
+half is in `release-signers` and in `scripts/install.sh`, and every package carries it, so
+`iterm-filebrowser upgrade` checks with the key of the build already installed. Once, in
+your own terminal (it asks for a passphrase):
+
+```bash
+make signing-key        # ~/.config/iterm-filebrowser/release-key (FB_RELEASE_KEY); writes the public half
+git add release-signers scripts/install.sh && git commit -m "Release key"
+```
+
+`make release TAG=v…` then refuses unless the tree is clean, `HEAD` is the tag's commit
+and the tag is on `origin/main`; it installs the UI's dependencies with `npm ci
+--ignore-scripts`, builds with `cargo --locked`, signs `SHA256SUMS` and checks the
+signature before uploading. Keep the key and its passphrase backed up: a new key makes
+existing installs refuse upgrades until they are installed again with the one-line installer.
 
 Set the runner up once on a Linux VM (as root; the token travels on stdin):
 

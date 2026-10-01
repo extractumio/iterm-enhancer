@@ -87,16 +87,33 @@ impl Roots {
     }
 }
 
+/// Open `path` for reading only if it is a regular file, judged on the open file: a FIFO or
+/// a device (`/dev/zero` linked from a README) would block or never end (AC-03).
+pub fn open_regular(path: &Path) -> Result<(fs::File, fs::Metadata), OpError> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let kind = |meta: &fs::Metadata| match () {
+        _ if meta.is_dir() => Err(OpError::BadName("Is a directory".into())),
+        _ if !meta.is_file() => Err(OpError::BadName("Not a regular file".into())),
+        _ => Ok(()),
+    };
+    // never open a device (opening a serial port has effects), then check again what was
+    // opened, non-blocking, in case the path was replaced meanwhile
+    kind(&fs::metadata(path).map_err(|e| io(e, path))?)?;
+    let f = fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(path).map_err(|e| io(e, path))?;
+    let meta = f.metadata().map_err(|e| io(e, path))?;
+    kind(&meta)?;
+    unsafe { libc::fcntl(f.as_raw_fd(), libc::F_SETFL, libc::fcntl(f.as_raw_fd(), libc::F_GETFL) & !libc::O_NONBLOCK) };
+    Ok((f, meta))
+}
+
 pub fn read_view(path: &Path, text_max: u64, roots: &Roots) -> Result<FileView, OpError> {
-    let meta = fs::metadata(path).map_err(|e| io(e, path))?;
-    if meta.is_dir() {
-        return Err(OpError::BadName("Is a directory".into()));
-    }
+    let (f, meta) = open_regular(path)?;
     let size = meta.len();
     let truncated = size > text_max;
     let want = if truncated { TRUNCATED_BYTES } else { size as usize };
     let mut buf = Vec::with_capacity(want.min(64 << 20));
-    fs::File::open(path).and_then(|f| f.take(want as u64).read_to_end(&mut buf)).map_err(|e| io(e, path))?;
+    f.take(want as u64).read_to_end(&mut buf).map_err(|e| io(e, path))?;
     let binary = buf[..buf.len().min(SNIFF_BYTES)].contains(&0);
     let mime = mime_guess::from_path(path).first().map(|m| m.essence_str().to_string());
     let (text, utf8) = if binary {
@@ -168,6 +185,21 @@ mod tests {
 
         assert!(matches!(read_view(&tmp("missing"), 1 << 20, &roots), Err(OpError::Missing(_))));
         assert_eq!(read_view(t.parent().unwrap(), 1 << 20, &roots).unwrap_err(), OpError::BadName("Is a directory".into()));
+    }
+
+    #[test]
+    fn only_regular_files_are_read() {
+        let roots = Roots::parse("/nonexistent");
+        let started = std::time::Instant::now();
+        let fifo = tmp("pipe");
+        let _ = fs::remove_file(&fifo);
+        let c = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        for p in [Path::new("/dev/zero"), Path::new("/dev/random"), fifo.as_path()] {
+            assert_eq!(read_view(p, 1 << 20, &roots).unwrap_err(), OpError::BadName("Not a regular file".into()), "{p:?}");
+            assert!(open_regular(p).is_err());
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(1), "nothing blocked or read forever");
     }
 
     #[test]

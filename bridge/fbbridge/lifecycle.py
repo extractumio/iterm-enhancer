@@ -52,9 +52,11 @@ def _signal(pid, sig):
 def take_lock(path, grace=3.0):
     """Hold `path` for the rest of this process, stopping the bridge that holds it (newest
     wins: macOS runs one iTerm2, and the bridge it launched last is the connected one).
-    Returns the fd; the kernel releases the lock on any exit, SIGKILL included."""
+    Returns (fd, whether a bridge held it); the kernel releases the lock on any exit,
+    SIGKILL included."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)  # not inherited by fbd
+    took_over = False
     if not _try_lock(fd):
         pid, cmd = _holder(fd)
         # a holder that is exiting, or has not written its pid yet, is judged a moment later
@@ -71,9 +73,10 @@ def take_lock(path, grace=3.0):
                     os.close(fd)
                     raise LockError(f"bridge pid {pid} keeps {path.name} after SIGKILL")
             log(f"took over from bridge pid {pid}")
+            took_over = True
     os.ftruncate(fd, 0)
     os.pwrite(fd, f"{os.getpid()}\n".encode(), 0)
-    return fd
+    return fd, took_over
 
 
 def connection_closed(ws):

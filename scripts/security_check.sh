@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 # security_check.sh — AC-07: refused requests against the installed fbd.
 port=${FB_PORT:-47821}; b="http://127.0.0.1:$port"
-tok=$(cat "${FB_APP_DIR:-$HOME/.iterm-filebrowser/state}/token")
+app=${FB_APP_DIR:-$HOME/.iterm-filebrowser/state}
+tok=$(cat "$app/token")
+sock() { curl -s -o /dev/null -w '%{http_code}' --unix-socket "$app/fbd.sock" "$@"; }
 fail=0
 check() { # name expected actual
   if [ "$2" = "$3" ]; then echo "ok   $1 → $3"; else echo "FAIL $1 → $3 (want $2)"; fail=1; fi; }
@@ -11,8 +13,13 @@ check "wrong token"       401 "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-FB
 check "bad host"          403 "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: evil.example:$port" -H "X-FB-Token: $tok" "$b/api/state")"
 check "bad origin"        403 "$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'Origin: http://evil.example' -H 'Content-Type: application/json' -H "X-FB-Token: $tok" -d '{}' "$b/api/prefs")"
 check "bad content type"  415 "$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: text/plain' -H "X-FB-Token: $tok" -d '{}' "$b/api/prefs")"
-check "internal w/o secret" 401 "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "X-FB-Token: $tok" -d '{}' "$b/internal/state")"
-check "error w/o secret"  401 "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "X-FB-Token: $tok" -d '{"message":"x"}' "$b/internal/error")"
+check "internal over TCP" 404 "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "X-FB-Token: $tok" -d '{}' "$b/internal/state")"
+check "socket: internal w/o secret" 401 "$(sock -X POST -H 'Content-Type: application/json' -d '{}' http://fbd/internal/state)"
+check "socket: error w/o secret" 401 "$(sock -X POST -H 'Content-Type: application/json' -d '{"message":"x"}' http://fbd/internal/error)"
+check "socket: health"    200 "$(sock http://fbd/health)"
+check "hello needs no token" 200 "$(curl -s -o /dev/null -w '%{http_code}' "$b/api/hello?n=00112233445566778899aabbccddeeff")"
+check "device file"       400 "$(curl -s -o /dev/null -w '%{http_code}' -m 2 -H "X-FB-Token: $tok" "$b/api/raw?path=/dev/zero")"
+check "private root"      700 "$(stat -f %Lp "$app/..")"
 check "token in query on PUT" 401 "$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -d '{}' "$b/api/prefs?t=$tok")"
 check "relative path"     400 "$(curl -s -o /dev/null -w '%{http_code}' -H "X-FB-Token: $tok" "$b/api/file?path=../../etc/passwd")"
 check "valid request"     200 "$(curl -s -o /dev/null -w '%{http_code}' -H "X-FB-Token: $tok" "$b/api/state")"

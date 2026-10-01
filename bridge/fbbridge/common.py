@@ -10,6 +10,7 @@ BASE = f"http://127.0.0.1:{PORT}"
 # everything the File Browser keeps is under one root (AC-40)
 ROOT = Path.home() / ".iterm-filebrowser"
 APP_DIR = Path(os.environ.get("FB_APP_DIR") or ROOT / "state")
+SOCKET = APP_DIR / "fbd.sock"  # the bridge talks to fbd only here (AC-07)
 # an installed build is <root>/builds/<build>/{fbd, bridge/fbbridge, BUILD} (AC-33); a checkout has no BUILD
 BUILD_DIR = Path(__file__).resolve().parents[2]
 BUILD = (BUILD_DIR / "BUILD").read_text().strip() if (BUILD_DIR / "BUILD").is_file() else "dev"

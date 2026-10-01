@@ -4,9 +4,13 @@
 import json
 import os
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bridge"))
+from fbbridge import unixhttp  # noqa: E402  (no paths: it is safe to import under a test's home)
 
 # read here, not imported from fbbridge.common: tests reload this module under a temporary
 # home, and an already imported fbbridge would keep the real paths
@@ -46,13 +50,18 @@ def launch():
     raise LaunchError(f"{API_FIX} ({err or f'osascript exited {r.returncode}'})")
 
 
-def health():
-    """fbd's /api/health, or None while it does not answer."""
+def health(legacy=False):
+    """fbd's health through its private socket (never the token over TCP: another program
+    may hold the port, AC-07), or None while it does not answer. `legacy`: a build from
+    before the socket (a rollback to it), asked the old way."""
     try:
-        token = (APP_DIR / "token").read_text().strip()
-        req = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/health", headers={"X-FB-Token": token})
-        with urllib.request.urlopen(req, timeout=1) as r:
-            return json.loads(r.read())
+        if legacy:
+            token = (APP_DIR / "token").read_text().strip()
+            req = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/health", headers={"X-FB-Token": token})
+            with urllib.request.urlopen(req, timeout=1) as r:
+                return json.loads(r.read())
+        status, body = unixhttp.request(APP_DIR / "fbd.sock", "GET", "/health", timeout=1)
+        return json.loads(body) if status == 200 else None
     except (OSError, ValueError):
         return None
 
@@ -62,12 +71,12 @@ def runs(h, build):
     return bool(h) and h.get("build") == build and h.get("bridge_connected") and h.get("bridge_build") == build
 
 
-def wait_healthy(build, seconds=30.0):
+def wait_healthy(build, seconds=30.0, legacy=False):
     """True once fbd of `build` answers with a connected bridge of the same build. A takeover
     (up to 5.5 s), fbd's start (up to 5 s) and the tool registration fit well within 30 s."""
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        if runs(health(), build):
+        if runs(health(legacy), build):
             return True
         time.sleep(0.25)
     return False

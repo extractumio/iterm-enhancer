@@ -1,0 +1,2 @@
+# The maintainer's release key (AC-40): installs and upgrades check that a release's
+# SHA256SUMS is signed by it. Written by `make signing-key`; until then releases are refused.

@@ -216,6 +216,11 @@ def drop_old_layout(kept):
                 old.unlink()
 
 
+def legacy(build):
+    """A build from before fbd's private socket (AC-07): its health is asked the old way."""
+    return bool(build) and (LIB / build).is_dir() and not (LIB / build / "bridge/fbbridge/unixhttp.py").is_file()
+
+
 def drop_unversioned():
     """Installs before versioned builds kept the bridge package in the app folder."""
     shutil.rmtree(APP_DIR / "bridge", ignore_errors=True)
@@ -233,8 +238,10 @@ def prune():
 
 def lock():
     """One install at a time; the lock goes with the process. It lives in the root, beside
-    what uninstall removes and outside state/, which the earlier layout's move creates."""
+    what uninstall removes and outside state/, which the earlier layout's move creates.
+    The root is private (0700): its state and logs are the user's alone (AC-07)."""
     LIB.mkdir(parents=True, exist_ok=True)
+    ROOT.chmod(0o700)
     fd = os.open(ROOT / "install.lock", os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -251,7 +258,7 @@ def go_live(build):
     if not live.iterm_running():
         return False
     live.launch()
-    if not live.wait_healthy(build):
+    if not live.wait_healthy(build, legacy=legacy(build)):
         raise Failed(f"build {build} did not report healthy within 30 s ({live.describe_health()})")
     return True
 
@@ -270,7 +277,7 @@ def install(pkg=REPO):
     move_old_layout()  # only once the package is known to be good
     old = target("current")
     if old == build:
-        if live.iterm_running() and live.runs(live.health(), build):
+        if live.iterm_running() and live.runs(live.health(legacy(build)), build):
             return say(f"{build} is already installed and running")
     copy_build(build, pkg)
     if old and old != build:
@@ -350,6 +357,7 @@ def main(argv=None):
         return print(build_id())
     if os.geteuid() == 0:
         sys.exit("Run as your user, not root: the install lives in your home folder")
+    os.umask(0o077)
     try:
         fd = lock()
         try:

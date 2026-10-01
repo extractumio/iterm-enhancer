@@ -13,6 +13,7 @@
 import argparse
 import hashlib
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -29,10 +30,14 @@ import install_launch as live  # noqa: E402
 
 RELEASES = os.environ.get("FB_RELEASE_URL", "https://github.com/extractumio/iterm-extension/releases")
 TARBALL = "iterm-filebrowser-macos.tar.gz"
+# the maintainer's release key, as this installed build carries it: an upgrade must be
+# signed by it (AC-40); `make signing-key` makes the key and writes this file
+SIGNERS = HERE.parent / "release-signers"
+NAMESPACE = "iterm-filebrowser-release"
 
 
 def status():
-    h = live.health()
+    h = live.health(install.legacy(install.target("current")))
     print(f"running:  {h.get('build') if h else 'no (iTerm2 not running, or its Python API is off)'}"
           + (f", bridge {'connected' if h.get('bridge_connected') else 'not connected'}" if h else ""))
     print(f"current:  {install.target('current') or '-'}")
@@ -47,26 +52,66 @@ def fetch(url, dest):
 
 
 def extract(tar, dest):
-    """Unpack a package; no member may leave `dest` (the data filter where Python has it)."""
+    """Unpack a package: plain files and folders inside `dest` only, never a link, a device
+    or a setuid bit, on every Python (3.9 has no data filter)."""
     with tarfile.open(tar) as t:
+        members = t.getmembers()
+        for m in members:
+            p = Path(m.name)
+            if not (m.isfile() or m.isdir()) or p.is_absolute() or ".." in p.parts:
+                sys.exit(f"refusing {m.name}: not a plain file or folder inside the package")
+            m.mode &= 0o755
         if hasattr(tarfile, "data_filter"):
-            return t.extractall(dest, filter="data")
-        for m in t.getmembers():
-            if m.name.startswith("/") or ".." in Path(m.name).parts or m.issym() and Path(m.linkname).is_absolute():
-                sys.exit(f"refusing {m.name}: outside the package")
-        t.extractall(dest)
+            return t.extractall(dest, members, filter="data")
+        t.extractall(dest, members)
+
+
+def verify(sums, sig):
+    """True if `sums` is signed by the release key this build carries."""
+    key = SIGNERS.read_text() if SIGNERS.is_file() else ""
+    if "ssh-" not in key:
+        sys.exit("this install carries no release key, so it cannot check a release: "
+                 "install with the one-line installer (README)")
+    r = subprocess.run(["ssh-keygen", "-Y", "verify", "-f", str(SIGNERS), "-I", NAMESPACE, "-n", NAMESPACE, "-s", str(sig)],
+                       stdin=open(sums, "rb"), capture_output=True)
+    return r.returncode == 0
+
+
+def version(text):
+    """(0, 15, 0) for "v0.15.0"; None for a build of a checkout."""
+    m = re.fullmatch(r"v(\d+(?:\.\d+)*)", (text or "").strip())
+    return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+def check_release(sums, tag):
+    """The signed SHA256SUMS names its release: the one asked for, and no older one than this
+    build unless asked for by name (a replayed old release, AC-40)."""
+    named = next((line.split()[2] for line in sums.read_text().splitlines() if line.startswith("# release ")), None)
+    if not named:
+        sys.exit("the release does not say which version it is: nothing installed")
+    if tag and named != tag:
+        sys.exit(f"asked for {tag}, the release says {named}: nothing installed")
+    here = (HERE.parent / "BUILD").read_text().strip() if (HERE.parent / "BUILD").is_file() else ""
+    if not tag and version(named) and version(here) and version(named) < version(here):
+        sys.exit(f"the latest release says {named}, older than the installed {here}: nothing installed "
+                 f"(to go back on purpose: iterm-filebrowser upgrade --to {named})")
 
 
 def upgrade(tag=None):
-    """Download a release's package and SHA256SUMS, check the checksum, install it."""
+    """Download a release's package, SHA256SUMS and its signature; check the signature with
+    the installed release key, then the checksum; install it."""
     base = f"{RELEASES}/download/{tag}" if tag else f"{RELEASES}/latest/download"
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         try:
             fetch(f"{base}/{TARBALL}", tmp / TARBALL)
             fetch(f"{base}/SHA256SUMS", tmp / "SHA256SUMS")
+            fetch(f"{base}/SHA256SUMS.sig", tmp / "SHA256SUMS.sig")
         except OSError as e:
             sys.exit(f"download failed ({base}): {e}")
+        if not verify(tmp / "SHA256SUMS", tmp / "SHA256SUMS.sig"):
+            sys.exit("the release is not signed by the release key: nothing installed")
+        check_release(tmp / "SHA256SUMS", tag)
         want = next((line.split()[0] for line in (tmp / "SHA256SUMS").read_text().splitlines()
                      if line.endswith(f"  {TARBALL}")), None)
         got = hashlib.sha256((tmp / TARBALL).read_bytes()).hexdigest()

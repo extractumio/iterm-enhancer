@@ -38,10 +38,13 @@ async def static_vars(session):
 TMUX_FMT = "#{host}\t#{socket_path}\t#{pane_id}\t#{pane_current_path}\t#{pane_current_command}"
 
 
-def tmux_result(mode, out):
+def tmux_result(mode, out, via_ssh=False):
+    """A tmux pane from `display -p TMUX_FMT`. Remote when its tmux -CC gateway runs ssh,
+    whatever the server calls itself (a host must not pose as this Mac, AC-37), or when
+    the server's host name is not this Mac's."""
     host, sock, pane, path, cmd = (out.strip().split("\t") + [""] * 5)[:5]
     key = f"tmux:{host.split('.')[0].lower()}:{sock}:{pane}"
-    if host.split(".")[0].lower() != LOCAL_HOST:  # its files are reached through an agent, if any (AC-37)
+    if via_ssh or host.split(".")[0].lower() != LOCAL_HOST:  # its files are reached through an agent, if any (AC-37)
         return {"mode": "remote", "key": key, "cwd": None, "note": f"remote host {host}", "job": cmd, "busy": True,
                 "remote_host": host.split(".")[0].lower(), "path": path or None, "idle": cmd in SHELLS}
     return {"mode": mode, "key": key, "cwd": path or None, "note": f"pane {pane}", "job": cmd,
@@ -63,9 +66,9 @@ async def resolve(conn, session):
         if tc is None or pane is None:
             return {"mode": "tmux -CC", "key": session.session_id, "cwd": None, "note": "tmux connection not found"}
         out = await tc.async_send_command(f"display -p -t %{pane} '{TMUX_FMT}'")
-        r = tmux_result("tmux -CC", out)
+        target = await gateway_target(tc)
+        r = tmux_result("tmux -CC", out, via_ssh=bool(target))
         if r["mode"] == "remote":
-            target = await gateway_target(tc)
             r.update(ssh=target, remote_key=ssh_key(target) if target else None)
         return r
 

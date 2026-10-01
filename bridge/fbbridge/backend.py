@@ -3,20 +3,20 @@
 import json
 import os
 import secrets
-import shutil
 import subprocess
 import threading
 import time
-import urllib.request
 from pathlib import Path
 
-from .common import BASE, BUILD, BUILD_DIR, LOG_DIR, PORT, UserError, log
+from . import unixhttp
+from .common import BUILD, BUILD_DIR, LOG_DIR, PORT, SOCKET, UserError, log
 
 
 def find_fbd():
     """fbd of this bridge's own build first, so a bridge never starts another build's
     backend after `current` was switched (AC-33)."""
-    for cand in (os.environ.get("FB_BIN"), str(BUILD_DIR / "fbd"), str(Path.home() / ".iterm-filebrowser/bin/fbd"), shutil.which("fbd")):
+    # never any `fbd` on PATH: an unrelated program of that name would get the bridge secret
+    for cand in (os.environ.get("FB_BIN"), str(BUILD_DIR / "fbd"), str(Path.home() / ".iterm-filebrowser/bin/fbd")):
         if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
             return cand
     raise SystemExit("fbd binary not found: run `make install`")
@@ -28,12 +28,16 @@ class Backend:
         self.proc = None
         self.failures = 0
 
-    def start(self):
+    def start(self, new_token=False):
+        """Start fbd; `new_token`: the token may have reached another program (AC-07)."""
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         logf = LOG_DIR / "fbd.log"
         if logf.exists() and logf.stat().st_size > 5 << 20:
             logf.replace(LOG_DIR / "fbd.log.1")
         env = dict(os.environ, FB_BRIDGE_SECRET=self.secret, FB_PORT=str(PORT))
+        env.pop("FB_NEW_TOKEN", None)
+        if new_token:
+            env["FB_NEW_TOKEN"] = "1"
         self.proc = subprocess.Popen([find_fbd()], env=env, stdout=subprocess.DEVNULL,
                                      stderr=open(logf, "a"), start_new_session=True)
         log(f"fbd started pid={self.proc.pid} build={BUILD}")
@@ -41,14 +45,20 @@ class Backend:
     def alive(self):
         return self.proc is not None and self.proc.poll() is None
 
-    def _headers(self):
-        return {"X-FB-Bridge": self.secret, "Host": f"127.0.0.1:{PORT}"}
-
     def post(self, path, body):
-        req = urllib.request.Request(BASE + path, data=json.dumps(body).encode(), method="POST",
-                                     headers={"Content-Type": "application/json", **self._headers()})
-        with urllib.request.urlopen(req, timeout=2) as r:
-            return r.status
+        """POST to fbd over its socket; ConnectionError unless it answers 2xx."""
+        status, data = unixhttp.request(SOCKET, "POST", path, json.dumps(body).encode(),
+                                        {"Content-Type": "application/json", "X-FB-Bridge": self.secret})
+        if not 200 <= status < 300:
+            raise ConnectionError(f"fbd answered {status} to {path}: {data[:200].decode(errors='replace')}")
+        return status
+
+    def answers(self):
+        """An fbd of this install runs: it answers on the private socket."""
+        try:
+            return unixhttp.request(SOCKET, "GET", "/health", timeout=1)[0] == 200
+        except OSError:
+            return False
 
     def wait_ready(self, seconds=5):
         deadline = time.monotonic() + seconds
@@ -76,15 +86,20 @@ class Backend:
         """Read GET /internal/commands (SSE) in a thread; hand each command to asyncio."""
         def run():
             while True:
+                c = unixhttp.Connection(SOCKET, timeout=None)
                 try:
-                    req = urllib.request.Request(BASE + "/internal/commands", headers=self._headers())
-                    with urllib.request.urlopen(req) as r:
-                        for raw in r:
-                            line = raw.decode(errors="replace").rstrip("\n")
-                            if line.startswith("data:"):
-                                loop.call_soon_threadsafe(queue.put_nowait, json.loads(line[5:]))
+                    c.request("GET", "/internal/commands", headers={"X-FB-Bridge": self.secret})
+                    r = c.getresponse()
+                    if r.status != 200:
+                        raise ConnectionError(f"fbd answered {r.status}")
+                    for raw in r:
+                        line = raw.decode(errors="replace").rstrip("\n")
+                        if line.startswith("data:"):
+                            loop.call_soon_threadsafe(queue.put_nowait, json.loads(line[5:]))
                 except Exception as e:
                     log(f"commands stream: {e}")
+                finally:
+                    c.close()
                 time.sleep(1)
         threading.Thread(target=run, daemon=True).start()
 

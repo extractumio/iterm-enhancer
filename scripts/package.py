@@ -30,7 +30,7 @@ OUT = REPO / "dist/package"
 NAME = "iterm-filebrowser"
 TARBALL = "iterm-filebrowser-macos.tar.gz"
 COPY = ["bridge/fb_bridge.py", "scripts/install.py", "scripts/install_launch.py", "scripts/cli.py",
-        "scripts/iterm-filebrowser", "LICENSE", "LICENSE-COMMERCIAL.md", "README.md"]
+        "scripts/iterm-filebrowser", "release-signers", "LICENSE", "LICENSE-COMMERCIAL.md", "README.md"]
 
 
 def build_macos(build):
@@ -40,7 +40,7 @@ def build_macos(build):
     out = {}
     for platform in ("macos-aarch64", "macos-x86_64"):
         target = agents.TARGETS[platform]
-        agents.run(["cargo", "build", "--release", "--target", target], env=env)
+        agents.run(["cargo", "build", "--locked", "--release", "--target", target], env=env)
         out[platform] = agents.FBD / "target" / target / "release/fbd"
     return out
 
@@ -74,7 +74,9 @@ def archive(pkg):
     with tarfile.open(tar, "w:gz") as t:
         t.add(pkg, arcname=NAME)
     shutil.copy2(REPO / "scripts/install.sh", OUT / "install.sh")
-    sums = "".join(f"{hashlib.sha256((OUT / f).read_bytes()).hexdigest()}  {f}\n" for f in (TARBALL, "install.sh"))
+    # the signed list names its release, so an older one cannot be served as the latest
+    sums = f"# release {(pkg / 'BUILD').read_text().strip()}\n" + "".join(
+        f"{hashlib.sha256((OUT / f).read_bytes()).hexdigest()}  {f}\n" for f in (TARBALL, "install.sh"))
     (OUT / "SHA256SUMS").write_text(sums)
     return [tar, OUT / "install.sh", OUT / "SHA256SUMS"]
 

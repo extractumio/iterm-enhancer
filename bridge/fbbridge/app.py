@@ -38,6 +38,11 @@ atexit.register(backend.stop)
 signal.signal(signal.SIGTERM, lambda *_: stop("SIGTERM"))  # Script Console, a newer bridge
 
 
+def typable(text):
+    """No C0, DEL or C1 character: each would act as a key (Enter, Ctrl-C, Meta)."""
+    return isinstance(text, str) and not any(ord(ch) < 0x20 or 0x7f <= ord(ch) <= 0x9f for ch in text)
+
+
 async def run_commands(conn, app, windows, queue):
     while True:
         c = await queue.get()
@@ -47,6 +52,8 @@ async def run_commands(conn, app, windows, queue):
                 s = app.get_session_by_id(c.get("session", ""))
                 if s is None:
                     raise UserError("The terminal pane is gone — command not sent")
+                if not typable(c["text"]):  # fbd never sends Enter or another key (AC-12)
+                    raise UserError("Text with control characters — not sent to the terminal")
                 await s.async_send_text(c["text"])
                 await s.async_activate()
             elif action == "viewer":
@@ -142,26 +149,40 @@ class Follower:
             await self.push(self.last)  # stay "connected"
 
 
+_registered = {"url": None}
+
+
+async def register(conn):
+    """Register the Files tool with fbd's current token, if that changed (AC-07)."""
+    url = f"{BASE}/?t={(APP_DIR / 'token').read_text().strip()}"
+    if url == _registered["url"]:
+        return
+    await iterm2.tool.async_register_web_view_tool(conn, "Files", TOOL_ID, False, url)
+    await heal(conn, url)
+    _registered["url"] = url
+    log("tool registered")
+
+
 async def main(conn):
     loop = asyncio.get_running_loop()
     # main runs once the API connection is up, so a bridge that cannot connect evicts nobody;
     # the lock is held until this process exits
+    # a handover (an upgrade, a relaunch: an fbd or a bridge of this install runs) keeps the
+    # token, so open panels keep unsaved edits; a cold start makes a new one, because panels
+    # restored at iTerm2's launch may have sent the old one to whatever held the port (AC-07)
+    ours = await loop.run_in_executor(None, backend.answers)
     try:
-        await loop.run_in_executor(None, take_lock, APP_DIR / "bridge.lock")
+        _, took_over = await loop.run_in_executor(None, take_lock, APP_DIR / "bridge.lock")
     except LockError as e:
         log(str(e))
         raise SystemExit(1)
     iterm = iterm_process()
     watch(stop, lambda: connection_closed(conn.websocket), iterm if iterm and iterm[1] else None)
-    backend.start()
+    backend.start(new_token=not (ours or took_over))
     if not await loop.run_in_executor(None, backend.wait_ready):
         stop("fbd did not start; see fbd.log", 1)
-    token = (APP_DIR / "token").read_text().strip()
-    url = f"{BASE}/?t={token}"
-    await iterm2.tool.async_register_web_view_tool(conn, "Files", TOOL_ID, False, url)
-    await heal(conn, url)
+    await register(conn)
     install_viewer_profile()
-    log("tool registered")
 
     app = await iterm2.async_get_app(conn)
     windows = Windows(app, backend)
@@ -177,9 +198,11 @@ async def main(conn):
                 backend.failures += 1
                 if backend.failures > 5:
                     stop("fbd keeps exiting; giving up", 1)
-                await asyncio.sleep(min(2 * backend.failures, 10))
+                # at once the first time: while no fbd listens, another program may take the port
+                await asyncio.sleep(min(2 * (backend.failures - 1), 10))
                 backend.start()
                 await loop.run_in_executor(None, backend.wait_ready)
+                await register(conn)  # fbd made a new token if it could not get its port
                 await loop.run_in_executor(None, remotes.reregister)
                 follower.last = None  # re-push state to the fresh process
             if not await bounded(follower.poll(), POLL_TIMEOUT):  # costs one poll, not the loop
@@ -192,4 +215,5 @@ async def main(conn):
 
 
 def run():
+    os.umask(0o077)  # logs, state and fbd (it inherits the mask) are the user's alone (AC-07)
     iterm2.run_forever(main, retry=True)

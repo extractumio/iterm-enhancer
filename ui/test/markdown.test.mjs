@@ -2,10 +2,23 @@
 // AC-04 / OQ-05: Markdown rendering is safe and resolves local resources.
 // Bundles src/markdown.ts for node (highlighting is DOM-only and not exercised here).
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { test } from "node:test";
 import { load } from "./bundle.mjs";
 
-const { mdToHtml } = await load("src/markdown.ts", { define: { "location.search": '"?t=tok123"' } });
+const { mdToHtml, proveServer } = await load("test/markdown-entry.mjs", { define: { "location.search": '"?t=tok123"' } });
+const IMG = "![arch](docs/arch.png)";
+
+test("no image URL carries the token before fbd proved itself (AC-07)", async () => {
+  assert.match(mdToHtml(IMG, "/Users/alex/work/api/README.md"), /src="data:,"/);
+  // fbd answers the proof for the panel's nonce (as fbd/src/local.rs does)
+  globalThis.fetch = async (url) => {
+    const n = new URL(url, "http://127.0.0.1").searchParams.get("n");
+    const proof = createHmac("sha256", "tok123").update(`fbd-hello-v1:${n}`).digest("hex");
+    return { ok: true, json: async () => ({ proof }) };
+  };
+  await proveServer();
+});
 
 const P = "/Users/alex/work/api/README.md";
 

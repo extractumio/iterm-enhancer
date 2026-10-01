@@ -4,12 +4,16 @@
 #
 #   curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/download/install.sh | sh
 #
-# Downloads the latest release's package and its SHA256SUMS into a temporary folder,
-# checks the checksum, and runs the package's own installer (a versioned build in
+# Downloads the latest release's package, its SHA256SUMS and their signature into a
+# temporary folder, checks the signature with the release key below, then the checksum,
+# and runs the package's own installer (a versioned build in
 # ~/.iterm-filebrowser/builds, the bridge in iTerm2's AutoLaunch, health check,
 # rollback when the new build does not come up). Nothing is run before the check passes.
 # Everything happens in main, called on the last line: a cut-off download does nothing.
 set -eu
+
+# the maintainer's release key (make signing-key writes it; the same as release-signers)
+SIGNERS='# no release key yet'
 
 fail() { echo "install.sh: $*" >&2; exit 1; }
 
@@ -22,6 +26,12 @@ main() {
     echo "Downloading the iTerm2 File Browser …"
     curl -fsSL "$base/iterm-filebrowser-macos.tar.gz" -o "$tmp/package.tar.gz" || fail "download failed: $base"
     curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" || fail "download failed: $base/SHA256SUMS"
+    curl -fsSL "$base/SHA256SUMS.sig" -o "$tmp/SHA256SUMS.sig" || fail "download failed: $base/SHA256SUMS.sig"
+    case $SIGNERS in *ssh-*) ;; *) fail "this installer carries no release key: nothing installed" ;; esac
+    printf '%s\n' "$SIGNERS" > "$tmp/signers"
+    ssh-keygen -Y verify -f "$tmp/signers" -I iterm-filebrowser-release -n iterm-filebrowser-release \
+        -s "$tmp/SHA256SUMS.sig" < "$tmp/SHA256SUMS" >/dev/null 2>&1 \
+        || fail "the release is not signed by the release key: nothing installed"
     want=$(awk '$2 == "iterm-filebrowser-macos.tar.gz" { print $1 }' "$tmp/SHA256SUMS")
     got=$(shasum -a 256 "$tmp/package.tar.gz" | awk '{ print $1 }')
     [ -n "$want" ] && [ "$want" = "$got" ] || fail "checksum mismatch: nothing installed"

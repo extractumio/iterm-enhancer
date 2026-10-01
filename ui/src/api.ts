@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Thin client for the fbd JSON API. The token comes from the tool URL (?t=…).
 
+import { hex, proof } from "./sha256";
+
 /** This web view's storage, which survives in-page reloads; private mode may refuse it. */
 export const session = {
   get: (k: string) => { try { return sessionStorage.getItem(k); } catch { return null; } },
@@ -27,7 +29,31 @@ export async function redeemTicket(code: string) {
   const body = await res.json().catch(() => null);
   if (!res.ok || !body?.token) throw new ApiError(res.status, body?.error ?? "bad_ticket", body?.message ?? "Viewer link expired", body);
   TOKEN = body.token;
+  forgetProof();
 }
+
+/** fbd proved, since the last time it was out of reach, that it knows the token: only then
+ *  does the token go out. While fbd is not running another program may hold its port; it
+ *  cannot answer the proof, so it never sees the token (AC-07). */
+let proven: Promise<void> | null = null;
+let isProven = false;
+export function proveServer(): Promise<void> {
+  if (!proven) {
+    const n = hex(crypto.getRandomValues(new Uint8Array(16)));
+    const mine: Promise<void> = fetch(`/api/hello?n=${n}`).then(async (res) => {  // a network error: not reachable
+      const body = await res.json().catch(() => null);
+      if (!res.ok || body?.proof !== proof(TOKEN, n)) {
+        throw new ApiError(401, "unproven", "fbd does not accept this panel's token, or another program holds its port", body);
+      }
+      if (proven === mine) isProven = true;  // not a proof that was forgotten while it ran
+    });
+    mine.catch(() => { if (proven === mine) forgetProof(); });
+    proven = mine;
+  }
+  return proven;
+}
+/** fbd went out of reach: prove it again before the token goes out. */
+export function forgetProof() { proven = null; isProven = false; }
 /** Names this panel in workspace events, so it can ignore the echo of its own writes. */
 export const CLIENT = Math.random().toString(36).slice(2, 10);
 
@@ -71,18 +97,24 @@ export class ApiError extends Error {
 
 type Query = Record<string, string | number | boolean | undefined>;
 
-export async function api<T>(method: string, path: string, opts: { query?: Query; body?: unknown; headers?: Record<string, string>; retry?: boolean } = {}): Promise<T> {
+/** `host`: the machine the request is for (null: this Mac); default the shown pane's. An
+ *  action that waited for the user (a dialog) passes the host it started on (AC-37). */
+export async function api<T>(method: string, path: string, opts: { query?: Query; body?: unknown; headers?: Record<string, string>; retry?: boolean; host?: string | null } = {}): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(opts.query ?? {})) if (v !== undefined) qs.set(k, String(v));
   const url = path + (qs.size ? `?${qs}` : "");
-  const headers: Record<string, string> = { "X-FB-Token": TOKEN, "X-FB-Client": CLIENT, ...(scope ? { "X-FB-Host": scope } : {}), ...opts.headers };
+  const host = opts.host === undefined ? scope : opts.host;
+  const headers: Record<string, string> = { "X-FB-Token": TOKEN, "X-FB-Client": CLIENT, ...(host ? { "X-FB-Host": host } : {}), ...opts.headers };
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   let res: Response;
   for (let waited = 0, step = 250; ; waited += step, step *= 2) {
     try {
+      await proveServer();
       res = await fetch(url, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
       break;
-    } catch {
+    } catch (e) {
+      if (e instanceof ApiError) throw e;  // not proven: the token is never sent, nor retried
+      forgetProof();
       // reads ride out a backend restart (AC-34); writes fail at once, never repeated behind the user
       if (method !== "GET" || opts.retry === false || waited >= 3000) throw new ApiError(0, "network", "Backend not reachable (restarting?)", null);
       await new Promise((r) => setTimeout(r, step));
@@ -99,7 +131,8 @@ export async function api<T>(method: string, path: string, opts: { query?: Query
 export let scope: string | null = null;
 export const setScope = (host: string | null) => { scope = host || null; };
 
-export const rawUrl = (path: string) =>
+/** An image's URL carries the token: none until fbd proved itself. */
+export const rawUrl = (path: string) => !isProven ? "data:," :
   `/api/raw?path=${encodeURIComponent(path)}&t=${encodeURIComponent(TOKEN)}${scope ? `&host=${encodeURIComponent(scope)}` : ""}`;
 export const eventsUrl = () => `/api/events?t=${encodeURIComponent(TOKEN)}&client=${CLIENT}`;
 

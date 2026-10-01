@@ -65,7 +65,7 @@ def main():
         sys.path.insert(0, str(REPO / "bridge"))
         sys.path.insert(0, str(REPO / "scripts"))
         import agents
-        from fbbridge import agentctl, common, hosts, remote
+        from fbbridge import agentctl, common, hosts, remote, unixhttp
         common.LOG_DIR = work / "logs"  # the bridge's log of this run, never the user's
         aid = agents.agent_id()
         record = hosts.enable(["fbtest"], binary_for=lambda p: agents.build([p])[p], agent_id=aid)
@@ -76,10 +76,10 @@ def main():
         time.sleep(1)
         token = (work / "app/token").read_text().strip()
 
-        def post(path, body):
-            req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", data=json.dumps(body).encode(), method="POST",
-                                         headers={"Content-Type": "application/json", "X-FB-Bridge": SECRET})
-            urllib.request.urlopen(req, timeout=5).read()
+        def post(path, body):  # as the bridge does: on fbd's private socket (AC-07)
+            status, _ = unixhttp.request(work / "app/fbd.sock", "POST", path, json.dumps(body).encode(),
+                                         {"Content-Type": "application/json", "X-FB-Bridge": SECRET}, timeout=5)
+            assert 200 <= status < 300, f"{path}: {status}"
 
         def api(method, path, body=None, headers=None):
             h = {"X-FB-Token": token, "X-FB-Host": "fbtest", **(headers or {})}

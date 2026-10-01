@@ -4,6 +4,7 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
@@ -12,6 +13,17 @@ const HERE = path.dirname(new URL(import.meta.url).pathname);
 export const FBD = process.env.FB_BIN ?? path.resolve(HERE, "../../fbd/target/debug/fbd");
 export const SB = fs.realpathSync(fs.mkdtempSync("/tmp/fb-e2e-")); // /tmp is a writable root; $TMPDIR is not
 const APP = fs.mkdtempSync(path.join(os.tmpdir(), "fb-e2e-app-"));   // private token + workspaces
+
+/** fbd's private socket: the only way the bridge talks to it (AC-07). */
+export const SOCKET = path.join(APP, "fbd.sock");
+/** A request on that socket: { status, text } (`fetch` cannot use a Unix socket). */
+export const onSocket = (method, p, body, headers = {}) => new Promise((resolve, reject) => {
+  const req = http.request({ socketPath: SOCKET, method, path: p, headers: { "Content-Type": "application/json", ...headers } }, (res) => {
+    let text = ""; res.on("data", (d) => (text += d)); res.on("end", () => resolve({ status: res.statusCode, text }));
+  });
+  req.on("error", reject);
+  req.end(body === undefined ? undefined : JSON.stringify(body));
+});
 
 // ── sandbox ──────────────────────────────────────────────────────────────────
 fs.mkdirSync(`${SB}/src`); fs.mkdirSync(`${SB}/docs`);
@@ -32,7 +44,7 @@ export const base = `http://127.0.0.1:${PORT}`;
 const UI_BUILD = fs.readFileSync(path.resolve(HERE, "../.build-id"), "utf8").trim();
 async function startFbd(env = {}) {
   const p = spawn(FBD, [], { env: { ...process.env, FB_PORT: String(PORT), FB_BRIDGE_SECRET: SECRET, FB_APP_DIR: APP, FB_LOG: "warn", FB_BUILD_ID: UI_BUILD, ...env }, stdio: ["ignore", "ignore", "inherit"] });
-  for (let i = 0; i < 50; i++) { try { await fetch(base + "/"); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+  for (let i = 0; i < 50; i++) { try { await fetch(base + "/"); await onSocket("GET", "/health"); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
   return p;
 }
 let fbd = await startFbd();
@@ -40,7 +52,7 @@ export const stopFbd = () => new Promise((r) => { fbd.once("exit", r); fbd.kill(
 export const TOKEN = fs.readFileSync(path.join(APP, "token"), "utf8").trim();
 let focus = null;
 /** A call only the bridge may make (the fake bridge's secret). */
-export const internal = (p, body) => fetch(base + p, { method: "POST", headers: { "Content-Type": "application/json", "X-FB-Bridge": SECRET }, body: JSON.stringify(body) });
+export const internal = (p, body) => onSocket("POST", p, body, { "X-FB-Bridge": SECRET });
 /** The fake bridge reports pane `key` in `cwd`, in iTerm2 window `window` (`panel`: it shows
  *  its Toolbelt), on remote `host` if given (AC-37). The heartbeat repeats the last one. */
 export const push = (key, cwd, window = "w1", panel = true, host = undefined, extra = {}) => (focus = [key, cwd, window, panel, host, extra],
@@ -49,18 +61,21 @@ await push("e2eA", SB);
 // the fake bridge's command stream: record commands, answer "which window is key" (AC-36)
 export const cmds = [];
 let commands = new AbortController();
-const listenCommands = () => void fetch(base + "/internal/commands", { headers: { "X-FB-Bridge": SECRET }, signal: commands.signal }).then(async (r) => {
-  const reader = r.body.getReader(); const dec = new TextDecoder();
-  for (;;) {
-    const { value, done } = await reader.read(); if (done) break;
-    for (const line of dec.decode(value).split("\n")) {
-      if (!line.startsWith("data:")) continue;
-      const c = JSON.parse(line.slice(5));
-      cmds.push(c);
-      if (c.action === "which-window") void internal("/internal/bound", { req: c.req, window: focus[2], panel: focus[3] });
-    }
-  }
-}).catch(() => {});
+const listenCommands = () => {
+  const req = http.get({ socketPath: SOCKET, path: "/internal/commands", headers: { "X-FB-Bridge": SECRET }, signal: commands.signal }, (res) => {
+    res.setEncoding("utf8");
+    res.on("data", (chunk) => {
+      for (const line of chunk.split("\n")) {
+        if (!line.startsWith("data:")) continue;
+        const c = JSON.parse(line.slice(5));
+        cmds.push(c);
+        if (c.action === "which-window") void internal("/internal/bound", { req: c.req, window: focus[2], panel: focus[3] });
+      }
+    });
+    res.on("error", () => {});
+  });
+  req.on("error", () => {});
+};
 listenCommands();
 /** fbd is back (`env`: as another build); so is the fake bridge. */
 export async function bringBack(env = {}) {

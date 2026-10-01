@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use axum::body::Body;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -65,11 +66,19 @@ const RAW_MAX: u64 = 64 << 20;
 /// Raw bytes for images; an SVG opened directly never runs script.
 pub async fn raw(Query(q): Query<PathQuery>) -> ApiResult {
     let path = abs(&q.path)?;
-    let meta = tokio::fs::metadata(&path).await.map_err(|e| op_err(ops::io(e, &path)))?;
-    if meta.is_dir() || meta.len() > RAW_MAX {
-        return Err(err(StatusCode::BAD_REQUEST, "too_large", "Not a file or larger than 64 MB"));
+    let p = path.clone();
+    let bytes = blocking(move || -> Result<Vec<u8>, OpError> {
+        use std::io::Read;
+        let (f, _) = files::open_regular(&p)?;
+        let mut buf = Vec::new();
+        f.take(RAW_MAX + 1).read_to_end(&mut buf).map_err(|e| ops::io(e, &p))?;
+        Ok(buf)
+    })
+    .await?
+    .map_err(op_err)?;
+    if bytes.len() as u64 > RAW_MAX {
+        return Err(err(StatusCode::BAD_REQUEST, "too_large", "Larger than 64 MB"));
     }
-    let bytes = tokio::fs::read(&path).await.map_err(|e| op_err(ops::io(e, &path)))?;
     let mime = mime_guess::from_path(&path).first_or_octet_stream();
     let mut res = Response::new(Body::from(bytes));
     let h = res.headers_mut();
@@ -83,8 +92,18 @@ pub struct SaveBody {
     text: String,
 }
 
-pub async fn save_file(State(app): State<Shared>, Query(q): Query<PathQuery>, headers: HeaderMap, Json(b): Json<SaveBody>) -> ApiResult {
+/// Room for a text of the text limit as JSON: escaping can make it up to 6 times larger.
+pub fn save_body_limit(text_max: u64) -> usize {
+    (text_max as usize).saturating_mul(6) + (64 << 10)
+}
+
+pub async fn save_file(State(app): State<Shared>, Query(q): Query<PathQuery>, headers: HeaderMap, body: Result<Json<SaveBody>, JsonRejection>) -> ApiResult {
     let path = abs(&q.path)?;
+    // a body over the limit is refused as JSON like every other error (AC-08)
+    let Json(b) = body.map_err(|e| err(e.status(), "bad_body", e.body_text()))?;
+    if b.text.len() as u64 > app.cfg.text_max {
+        return Err(err(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "Larger than the text limit — not saved"));
+    }
     let if_match = headers
         .get(header::IF_MATCH)
         .and_then(|v| v.to_str().ok())

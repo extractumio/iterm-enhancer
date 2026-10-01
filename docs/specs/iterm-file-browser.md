@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.14.0 |
+| Version | 0.15.0 |
 | Date | 2026-10-01 |
 | Status | approved |
 | Author | Project maintainers |
@@ -28,6 +28,7 @@ Change log:
 | 0.12.0 | 2026-10-01 | Planned (Stage 8): AC-37 (browse the files of a remote host's tmux -CC pane through an fbd agent on that host, reached through ssh), AC-38 (one command makes a host ready: detects its platform, builds or takes the matching agent, installs it over ssh), AC-39 (one way to build the agent for macOS arm64/x86_64 and Linux x86_64/arm64, and a release built on the owner's own runner). The "remote file systems" non-goal is narrowed to hosts without an agent. Fable review (pragmatic agent): an explicit host on requests, workspaces and tabs instead of `//host` path prefixes (the prefix leaked into local file access: Rust collapses `//`), agents keyed by an agent id (fbd sources only), agent mode without desktop assumptions, host-name collisions refused, release hardened for a public repository, a trial tunnel at setup; kept against its advice: the release workflow and the macOS x86_64 build (owner's request). Implementation review (Fable): the agent takes no existing folder (removing it on exit could have wiped a home given by hand), a recorded host's pane always carries its host (a disconnected host must not read the same path on the Mac), a failed registration no longer leaves "connecting…" and a live ssh, hosts are registered again after fbd restarts, Trash on a macOS host uses the file manager (no Finder over ssh), an agent exits after 90 s without the Mac's event stream (sshd may not notice a dropped link), the runner keeps its toolchain and builds with 2 jobs, the relay buffer is capped, agent ids are checked before a remote shell sees them, banner lines are skipped, socket names are short; noticed, not fixed: the runner tarball is not checksum-verified, macOS hosts are not tested yet |
 | 0.13.0 | 2026-10-01 | Planned (Stage 9), from the owner: a user who installs a package never runs `make` and should not need any step on the remote host. AC-38 becomes "enable a host from the panel": one click, once per host; the ssh destination comes from the command iTerm2's tmux gateway runs; the agent installs over that ssh into `~/.iterm-filebrowser/bin/` and logs into `~/.iterm-filebrowser/logs/` on the host (owner: easy to find). AC-40: a Mac package installed with one line, carrying fbd for both Mac architectures and the agents of all platforms, and a command `iterm-filebrowser` for upgrade, rollback, uninstall and hosts. No pairing: ssh is the authentication. Fable review: exact ssh arguments from the kernel (sysctl), `-o` options by allowlist; hosts keyed by their ssh destination (the name a host reports only labels it; cloud images share names); "Not now" lasts until the bridge restarts (a permanent refusal would contradict its label; the menu enables later); four thin binaries instead of a universal one (no lipo on a fresh Mac; the Mac's fbd is the macOS agent); the installer and the command use iTerm2's Python when the Command Line Tools are missing; install.sh downloads and checks in a temp folder with stable asset names; the Mac builds and uploads the package. Implementation review (Fable): Enable cleans up only Stage 8's `agent` folder (the whole `~/.local/lib/iterm-filebrowser` would have removed a Mac host's own install), the gateway cache checks the gateway session (iTerm2 reuses tmux connection ids), `host=` is percent-decoded and an unreadable host is refused (never local), Remove forgets at once and a connection finished meanwhile is dropped, one shape of `FB_RELEASE_URL`, Homebrew's python3 used when the Command Line Tools are missing, the Mac's architecture from `hw.optional.arm64` (Rosetta), `-o ""` and non-ASCII arguments handled |
 | 0.14.0 | 2026-10-01 | From the owner: one root `~/.iterm-filebrowser/` everywhere, on the Mac and on hosts, for the command, builds, logs and state (was `~/.local/lib`, `~/.local/bin`, `~/Library/Application Support`, `~/Library/Logs`). The host helper becomes `bin/fbd-agent`, so a Mac host's own `bin/fbd` is untouched, and Remove deletes only the helper's files. The earlier layout is moved on upgrade (the token survives; old folders stay as links while a kept build uses them). Pragmatic review (approved with conditions): fixed a state folder created before the move (by the install lock or a new fbd) skipping the move for good and leaving the token behind — the lock moved to the root, an existing folder is merged and a clash refused; the move runs under the lock and after the package check, and for rollback and uninstall too; move errors are messages; a log recreated mid-move is merged; only our own `~/.local/bin/fbd` is removed; the PATH tip comes from the installer; the command stays the newest build's after a rollback; a marker file, not source text, says a build came from the old layout. |
+| 0.15.0 | 2026-10-01 | Planned (Stage 10), from the owner after a security audit (four independent reviewers: backend, remote, panel and bridge, supply chain): "Open Terminal Here" types `cd` without Enter (a half-typed line ran with it); quoting follows the pane's shell (fish broke out of POSIX quotes) and refuses names a shell cannot take safely, invisible characters and option-like names; an action confirmed after the pane switched hosts is dropped, a document saves to its own host; a tmux -CC pane with an ssh gateway is remote whatever its server calls itself; only regular files are read (a README `![](/dev/zero)` grew fbd to 3 GB); saves up to the text limit; private file modes; `/internal` moves to a Unix socket and the token is renewed whenever another program may have held the port (a squatter on 47821 received the bridge secret and the token); the runner never writes to releases; releases are signed and built from the tag with locked dependencies; archive members other than files and folders are refused. Design review of the port fix (approved with changes): the server proof (`/api/hello`) is required, not optional, because the restart gap of an upgrade or a crash hands reconnecting panels' tokens to a spin-binding squatter; a handover is recognized by an fbd answering on the socket or a running bridge holding the lock (the first upgrade from a build without the socket must not renew the token, or open panels would be recreated and lose unsaved edits); the bridge registers again when fbd's token changed (a failed bind renews it); the first crash restart is immediate; fbd is the only writer of the token; a second fbd on the same app folder exits; the agent serves no `/internal`; a rollback to a build without the socket asks its health the old way. Rejected: the bridge holding the listening socket and passing it to fbd (an upgrade would still need passing it between two fbds), launchd socket activation (a LaunchAgent and a Background Items prompt for a gap of seconds), the token in the URL fragment (the squatter's page reads it). Left, documented: a panel that loads or reloads exactly while another program holds the port runs that program's page. Not verified live: whether `crypto.subtle` exists in the Toolbelt web view (the panel ships its own SHA-256, so it does not matter). Implementation review (approved with changes): a port another program held while fbd waited for it now renews the token (a crash, a squatter that lets go within fbd's 3 s wait, the user reopening the panel meanwhile); a second fbd on the same folder no longer deletes the running one's token; zsh's `=cmd` is quoted; a proof forgotten while it ran cannot mark the server proven; the latest reason decides the notice and retries back off to 2 s, and a panel that did not get a proof keeps asking (without its token) and comes back by itself; device files are refused before they are opened; the signed SHA256SUMS names its release (no older one as the latest); the trust in the first `curl \| sh` is stated in SECURITY.md; `make release` fetches main first. Left: a mosh or et gateway that reports this Mac's host name is still taken for local; an image drawn during a gap stays blank until the document is shown again |
 
 ## 1. Overview
 
@@ -218,6 +219,10 @@ Scenario: AC-03 error — file deleted before open
   Given "old.txt" was deleted by another program
   When the user clicks it
   Then the tab shows "⚠ No such file or directory (os error 2)" and no other tab changes
+
+Scenario: AC-03 security — only regular files are read
+  Given a document links "/dev/zero", or the user opens a FIFO or a device
+  Then /api/file and /api/raw answer 400 "Not a regular file" at once, without reading or waiting
 ```
 
 ### AC-04 — Markdown rendered and source views [MUST / P0]
@@ -314,6 +319,20 @@ Scenario: AC-07 happy path — the Files tool works
   Given the tool URL "http://127.0.0.1:47821/?t=<token>"
   When the panel loads
   Then GET /api/state returns 200
+
+Scenario: AC-07 security — the bridge never talks to another program on the port
+  Given another program, possibly another user's, holds 127.0.0.1:47821
+  Then fbd exits with "port 47821 is in use by another program" and the bridge says so in bridge.log
+  And the bridge talks to fbd only through the Unix socket "~/.iterm-filebrowser/state/fbd.sock" (in a 0700 folder): it never sends the bridge secret over TCP and takes terminal commands only from that socket; "/internal/*" over TCP answers 404
+  And the installer checks health through that socket, never with the token over TCP
+
+Scenario: AC-07 security — a token that may have leaked is replaced
+  Given the panel may have sent the token to another program on the port (fbd was not running while a panel loaded, or fbd could not bind its port)
+  Then the next fbd that starts creates a new token and the bridge registers the new link (panels reload as after an iTerm2 restart)
+  But a handover between two fbds of this install (an upgrade, a bridge restart while fbd ran, verified through the socket) keeps the token, so open panels keep unsaved edits (AC-34)
+
+Scenario: AC-07 security — private files
+  Then "~/.iterm-filebrowser" is mode 0700 and everything fbd, the bridge and the installer create in it is 0600 (files) or 0700 (folders); an existing install is tightened on the next install
 ```
 
 ### AC-08 — Edit and save [SHOULD / P1]
@@ -339,6 +358,11 @@ Scenario: AC-08 edge — close a dirty tab
   Given "app.py" has unsaved changes
   When the user closes the tab (⌘W)
   Then a prompt asks "Save changes to app.py?" with "Save", "Don't save", "Cancel"
+
+Scenario: AC-08 edge — a large text file
+  Given a 9 MB text file (below the 10 MB text limit) opened for editing
+  When the user saves it
+  Then the save succeeds; a request body larger than the limit allows for (6 × the text limit, JSON escaping) answers 413 as JSON
 ```
 
 ### AC-09 — Create file or folder [SHOULD / P1]
@@ -420,12 +444,31 @@ Scenario Outline: AC-12 happy path — context menu actions
     | Reveal in Finder        | Finder opens "src/db" with "pool.rs" selected                |
     | Open with Default App   | macOS opens the file with its default app                    |
     | Insert Path in Terminal | the focused pane receives the text "src/db/pool.rs " (no Enter) |
-    | Open Terminal Here      | the focused pane receives "cd 'src/db'" + Enter              |
+    | Open Terminal Here      | the focused pane receives "cd /Users/alex/work/api/src/db" (no Enter: the user presses Return) |
 
 Scenario: AC-12 error — pane runs a full-screen program
   Given the focused pane runs "vim"
   When the user picks "Open Terminal Here"
   Then a toast shows "Terminal is busy (vim) — command not sent" and nothing is typed
+
+Scenario: AC-12 security — nothing runs without the user's Return
+  Given the command line already holds "rm -rf " (or a recalled history line)
+  When the user picks "Open Terminal Here" or "Insert Path in Terminal"
+  Then the text is added to the line and nothing runs; fbd never sends Enter, and the bridge refuses to type any control character
+
+Scenario Outline: AC-12 security — quoting follows the pane's shell
+  Given the pane's shell is "<shell>" and the name is "<name>"
+  When the user picks "Insert Path in Terminal"
+  Then "<typed>" is typed, or the toast "<refused>" shows and nothing is typed
+
+  Examples:
+    | shell              | name          | typed                 | refused |
+    | zsh, bash, sh, dash, ksh | it's a\b | 'it'\''s a\b'     |         |
+    | fish               | it's a\b     | 'it\'s a\\b'       |         |
+    | tcsh, csh, nu, xonsh, unknown | my file | 'my file'      |         |
+    | tcsh, csh, nu, xonsh, unknown | it's    |               | Name cannot be typed safely into tcsh |
+    | any                | -rf           | ./-rf                 |         |
+    | any                | a‮b (U+202E)  |                       | Name contains control or invisible characters — not sent to the terminal |
 ```
 
 ### AC-13 — Live refresh from disk [SHOULD / P1]
@@ -882,14 +925,14 @@ Scenario: AC-33 happy path — first install while iTerm2 runs
   Then the build lands in "~/.iterm-filebrowser/builds/<build>/" (fbd, bridge package, BUILD file) and "current" links to it
   And "<build>/fbd --version" prints the same id as BUILD before anything is switched
   And "~/.iterm-filebrowser/bin/fbd" links to "current/fbd", and the AutoLaunch "fb_bridge.py" loads the bridge from the resolved "current"
-  And the bridge is launched, and within 10 s "/api/health" reports "build": "<build>" and "bridge_connected": true
+  And the bridge is launched, and within 10 s fbd's health (asked on its private socket, AC-07) reports "build": "<build>" and "bridge_connected": true
   And the command prints "Installed <build>; the Files panel is live (View → Toolbelt → Files)"
 
 Scenario: AC-33 happy path — upgrade with the same command
   Given build "A" runs
   When the user runs "make install" ("make upgrade" is the same command)
   Then "previous" links to "A", "current" links to "B" (one rename each), and bridge "A" hands over to bridge "B" (AC-30)
-  And within 10 s "/api/health" reports "build": "B"; the command prints "Upgraded A → B"
+  And within 10 s fbd's health reports "build": "B"; the command prints "Upgraded A → B"
   And only then are build folders other than "current" and "previous" removed
 
 Scenario: AC-33 edge — upgrade from the unversioned layout
@@ -917,7 +960,7 @@ Scenario: AC-33 failure — iTerm2 refuses the launch
 
 Scenario: AC-33 failure — the new build does not come up
   Given "current" was switched to "B" and the launch succeeded
-  When "/api/health" does not report "build": "B" with "bridge_connected": true within 10 s
+  When fbd's health does not report "build": "B" with "bridge_connected": true within 10 s
   Then "current" is switched back to "A", the bridge is launched again and "A" is live within 10 s
   And the command exits non-zero with "Upgrade to B failed (<reason>); rolled back to A — see ~/.iterm-filebrowser/logs/"
 
@@ -981,7 +1024,7 @@ Scenario: AC-34 failure — the gap lasts longer
 Scenario: AC-35 happy path — rollback
   Given "current" links to "B" and "previous" to "A"
   When the user runs "make rollback"
-  Then "current" links to "A", "previous" to "B", the bridge is relaunched and "/api/health" reports "build": "A" within 10 s; panels follow (AC-34)
+  Then "current" links to "A", "previous" to "B", the bridge is relaunched and fbd's health reports "build": "A" within 10 s (a build from before the private socket is asked the old way); panels follow (AC-34)
 
 Scenario: AC-35 failure — nothing to roll back to
   Given there is no "previous" link (first install, or after an uninstall)
@@ -1081,6 +1124,16 @@ Scenario: AC-37 failure — the host refuses
   When ssh fails (unknown host, needs a password: BatchMode, socket forwarding disabled on the host)
   Then the panel shows REMOTE with the note "devbox: <ssh's message>", nothing is retried faster than the back-off, and bridge.log has the full message
 
+Scenario: AC-37 edge — the pane changes while a dialog is open
+  Given "Move to Trash?" (or another confirmation) is open for files of "devbox"
+  When the user focuses a pane of another host or of this Mac, then confirms
+  Then nothing is trashed and the toast says "The panel switched to another pane — nothing changed"
+  And a document always saves to the host it was opened from, whichever pane is shown when the save (or "Overwrite") runs
+
+Scenario: AC-37 security — a remote pane cannot pose as local
+  Given a tmux -CC pane whose gateway session runs ssh
+  Then the pane is remote, even if its tmux server reports this Mac's host name; without an ssh gateway the host name decides as before
+
 Scenario: AC-37 security
   Then the agent listens only on a Unix socket with a random name in a 0700 directory on the host (removed on exit), accepts only a per-connection token given on ssh's stdin (never on a command line), exits when stdin closes or on SIGHUP, and writes only under its roots ($HOME, /tmp on the host)
   And on the Mac the forwarded socket lives in the app folder (0700); only fbd connects to it; the panel never talks to the host directly
@@ -1160,6 +1213,15 @@ Scenario: AC-40 failure — the new folder already has the same file
 Scenario: AC-40 failure — a bad download
   When the checksum does not match or the release has no package
   Then nothing is installed and the line exits non-zero with the reason
+
+Scenario: AC-40 security — signed releases
+  Given the maintainer's release key (ssh-keygen ed25519, namespace "iterm-filebrowser-release"); its public half is in "release/allowed_signers", in install.sh and in every package
+  When "make release TAG=v…" runs
+  Then it refuses unless the tree is clean, HEAD is the tag's commit and the tag is on main; it builds with "npm ci" and "cargo --locked" and signs SHA256SUMS ("SHA256SUMS.sig")
+  And install.sh and "iterm-filebrowser upgrade" verify the signature with the key they carry (upgrade: the installed package's) before the checksum, and install nothing on a missing or wrong signature
+
+Scenario: AC-40 security — unpacking
+  Then an archive member other than a regular file or a folder (links, devices), a path outside the package, or setuid/setgid bits are refused or stripped on every Python the command runs on (3.9 included)
 ```
 
 ### AC-39 — One build for every platform, released from the owner's runner [SHOULD / P1]
@@ -1172,13 +1234,14 @@ Scenario: AC-39 happy path — build on the Mac
 
 Scenario: AC-39 happy path — release on the owner's runner
   When the maintainer pushes a tag "v0.12.0"
-  Then the workflow runs on the owner's self-hosted Linux runner (never a GitHub-hosted one), runs the Rust and UI tests on Linux, builds both Linux agents with the same script, and attaches them with SHA256SUMS to the GitHub release "v0.12.0"
-  And "make release" on the Mac adds both macOS agents to that release (Apple targets build only on macOS)
+  Then the workflow runs on the owner's self-hosted Linux runner (never a GitHub-hosted one), runs the Rust and UI tests on Linux and builds both Linux agents with the same script, read-only: the runner never writes to the repository or a release
+  And "make release" on the Mac publishes the release (the package carries all four agents; Apple targets build only on macOS)
 
 Scenario: AC-39 security — a public repository
   Then the workflows run only on pushes to main, tags "v*" and manual dispatch, never on pull requests (a fork could run code on the runner)
-  And the token has no permissions by default; the test job is read-only; only the upload job has contents: write and runs after the tests pass, for a tag whose commit is on main
-  And actions are pinned to commits and listed in .github/actions-allowlist.json; a test fails on a hosted runner, a pull-request trigger or an unpinned action
+  And every job is read-only (contents: read at most, no GH_TOKEN), so code running on the runner cannot change a release
+  And fork pull requests need the owner's approval (repository setting), and workflows have no pull-request, workflow_run, issue_comment or review triggers
+  And actions are pinned to commits and listed in .github/actions-allowlist.json; a test fails on a hosted runner, a forbidden trigger, a write permission, a GH_TOKEN or an unpinned action
 ```
 
 ## 6. Flow and sequence diagrams
@@ -1330,7 +1393,7 @@ State when this spec was written: a Python prototype in `demo/` (removed in 0.3.
 ## 8. Recommendation and ownership
 
 **Recommended approach.** Three pieces, one direction of data each:
-1. `fb_bridge.py`, an iTerm2 AutoLaunch script (the Python API has no Rust client). It starts `fbd` as a child, registers the Toolbelt web-view tool, tracks the focused session with a 500 ms poll of that one session (10 s timeout per poll), and POSTs `{session, cwd, mode, theme}` to `fbd` when anything changes. It listens on `GET /internal/commands` (SSE) to type text into the terminal (AC-12). It generates a fresh bridge secret on each start and passes it to `fbd` in the `FB_BRIDGE_SECRET` environment variable; `/internal/*` accepts only that secret, so the panel token cannot drive the terminal. If `fbd` exits, the bridge restarts it within 2 s. One bridge runs at a time (`bridge.lock`, newest wins) and it exits with its iTerm2 instance or its API connection, taking `fbd` with it (AC-30).
+1. `fb_bridge.py`, an iTerm2 AutoLaunch script (the Python API has no Rust client). It starts `fbd` as a child, registers the Toolbelt web-view tool, tracks the focused session with a 500 ms poll of that one session (10 s timeout per poll), and POSTs `{session, cwd, mode, theme}` to `fbd` when anything changes. It listens on `GET /internal/commands` (SSE) to type text into the terminal (AC-12). It talks to `fbd` only through the Unix socket `fbd.sock` in the private app folder (AC-07), never over TCP. It generates a fresh bridge secret on each start and passes it to `fbd` in the `FB_BRIDGE_SECRET` environment variable; `/internal/*` accepts only that secret, so the panel token cannot drive the terminal. If `fbd` exits, the bridge restarts it at once the first time, then after 2, 4 … 10 s. One bridge runs at a time (`bridge.lock`, newest wins) and it exits with its iTerm2 instance or its API connection, taking `fbd` with it (AC-30).
 2. `fbd`, a single Rust binary (axum + tokio). It owns the listing cache, the FSEvents watcher, file reads and writes, the per-pane workspaces (JSON on disk) and the SSE stream. The UI bundle is embedded with `rust-embed`, so there is one file to install.
 3. The UI, plain TypeScript bundled by esbuild: a virtual-list tree, CodeMirror 6 for viewing and editing (one engine for highlighting in both), and markdown-it for rendered Markdown, with fenced code highlighted by the same CodeMirror language parsers.
 
@@ -1378,7 +1441,7 @@ bridge: starts ssh + agent, POST /internal/remote {host, socket, token}      car
 | Tunnel | the bridge runs `ssh -T -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -L <app>/agents/<alias>.sock:<remote socket> <alias> <agent> --agent --socket <remote socket>` (the user's ssh config applies, ControlMaster included), writes the token to stdin, waits for the ready line, registers the host; back-off 1, 2, 4 … 30 s; lives until the bridge exits |
 | Host identity | a host is the ssh arguments its tmux -CC gateway runs (read exactly from the gateway's `ssh` process, connection options kept by allowlist); `agents.json` is keyed by them; the name the host reports (`#{host}`) only labels it in the panel (AC-38) |
 | Builds | `scripts/agents.py` on the Mac and the runner: aarch64-apple-darwin is the local fbd; x86_64-apple-darwin with cargo; Linux x86_64/arm64 musl with cargo-zigbuild and zig from the `ziglang` wheel, pinned in `./.toolchain`; output `dist/agents/<agent id>/<os>-<arch>/fbd`, reused while the id is unchanged |
-| CI and release | `ci.yml` and `release.yml` on `[self-hosted, linux, x64]`; tests on Linux; on a tag: Linux agents + SHA256SUMS to the GitHub release; `make release` adds the macOS agents |
+| CI and release | `ci.yml` and `release.yml` on `[self-hosted, linux, x64]`; tests on Linux; on a tag: tests and the Linux agents, read-only (no workflow writes); `make release` on the Mac publishes the signed package |
 
 ### Interfaces
 
@@ -1398,7 +1461,9 @@ All `/api/*` calls need header `X-FB-Token: <token>` (or `?t=<token>` on GET, us
 | `POST /api/os/{reveal,open}` | Finder, default app | AC-12 |
 | `POST /api/terminal/{insert,cd}` | `{key, paths}` / `{key, path}`; fbd quotes, refuses control characters, a changed focus and a busy shell | AC-12 |
 | `GET/PUT /api/workspace?key` | per-pane state, `PUT` carries `rev` (409 if stale) and `X-FB-Client` | AC-05 |
-| `POST /internal/state`, `GET /internal/commands` | bridge only, header `X-FB-Bridge: <FB_BRIDGE_SECRET>`; a bridge silent for 10 s turns `state` into `bridge: false` (AC-30) | AC-01, AC-12, AC-30 |
+| `GET /api/hello?n=<nonce>` | no token: `{"proof": hex HMAC-SHA256(token, "fbd-hello-v1:" + nonce)}`; the panel sends its token only after checking it (AC-07) | AC-07 |
+| `GET /health` (socket only) | the health below without a token, for the installer and `iterm-filebrowser status` | AC-33 |
+| `POST /internal/state`, `GET /internal/commands` | bridge only, on the Unix socket `<app dir>/fbd.sock` (never TCP), header `X-FB-Bridge: <FB_BRIDGE_SECRET>`; a bridge silent for 10 s turns `state` into `bridge: false` (AC-30) | AC-01, AC-12, AC-30 |
 | `POST /internal/error {message, by}` | bridge only (same secret): a command failed; fbd relays it as `bridge-error` to the panel `by` (the `X-FB-Client` that asked; every command carries it); message capped at 300 characters | AC-26 |
 | `GET /api/health` | counters for diagnostics | all |
 
@@ -1455,7 +1520,9 @@ Environment variables of `fbd` (set by the bridge; defaults shown):
 | `FB_TEXT_MAX_BYTES` | `10485760` | `5242880` | Above this, files open read-only, first 1 MB only. |
 | `FB_WORKSPACE_TTL_DAYS` | `14` | `30` | Idle pane state is removed after this (OQ-06). |
 | `FB_LOG` | `info` | `debug` | Log level. |
-| `FB_APP_DIR` | `~/.iterm-filebrowser/state` | `/tmp/fb-test-app` | Token and workspace folder; tests use a private one so they never touch the live state. |
+| `FB_APP_DIR` | `~/.iterm-filebrowser/state` | `/tmp/fb-test-app` | Token, workspaces and the bridge's socket `fbd.sock` (path ≤ 103 bytes); made 0700; tests use a private one so they never touch the live state. |
+| `FB_NEW_TOKEN` | unset | `1` | Set by the bridge at a cold start: fbd makes a new token (AC-07). |
+| `FB_RELEASE_KEY` | `~/.config/iterm-filebrowser/release-key` | — | The maintainer's release signing key (`make signing-key`, `make release`). |
 
 ### Performance
 
@@ -1492,7 +1559,9 @@ Measured on a MacBook (Apple Silicon, APFS SSD).
 - Writes (`PUT`, `POST`): `Content-Type: application/json` and `Origin` either absent or `http://127.0.0.1:<port>`. No CORS headers are ever sent.
 - Writes only under `FB_WRITABLE_ROOTS`, after `realpath` (a symlink cannot escape). `..` in names is rejected.
 - Delete only moves to Trash.
-- `/internal/*` requires `X-FB-Bridge: <FB_BRIDGE_SECRET>` (per-launch secret known only to the bridge and fbd).
+- `/internal/*` exists only on the Unix socket `<app dir>/fbd.sock` (the app folder is 0700 and must belong to the user, or fbd does not start) and requires `X-FB-Bridge: <FB_BRIDGE_SECRET>` (per-launch secret known only to the bridge and fbd). fbd refuses to start if another fbd answers on that socket, replaces a stale one, and exits if the path is longer than 103 bytes.
+- The token is kept across a handover (the bridge found an fbd answering on the socket, or took the lock from a running bridge) and renewed at a cold start (`FB_NEW_TOKEN=1`) and after fbd could not bind its port (it deletes the token before exiting); fbd writes it atomically; the bridge registers the tool again only when the URL changed.
+- The panel proves the server (`/api/hello`) before any request with the token, again after every network failure; EventSource is closed on error and opened again only after a proof; image URLs carry no token before the proof.
 - UI response headers: `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'`, `X-Content-Type-Options: nosniff`.
 - Markdown: `markdown-it` with `html: false`; links with `javascript:` are dropped; web links go to `POST /api/os/open` (default browser), so the panel never navigates away and the token never leaves in a Referer. SVG is shown only through an image tag.
 - The bridge types into the terminal only for explicit user actions (AC-12), never Enter for "Insert Path".
@@ -1538,6 +1607,7 @@ The panel shows a red dot in the header when `bridge_connected` is false or SSE 
 | Stage 7 | AC-33, AC-34, AC-35 | One command installs or upgrades; a bad build never replaces a good one; panels move to the new build without losing work. | — |
 | Stage 8 | AC-37, AC-38, AC-39 | Remote tmux -CC panes browse their host's files; one command readies a host; agents build for four platforms and release from the owner's runner. | — |
 | Stage 9 | AC-38 (panel), AC-40 | A user installs one package with one line, enables a host with one click, and runs one command for upgrades and hosts. | — |
+| Stage 10 | AC-03, AC-07, AC-08, AC-12, AC-37, AC-39, AC-40 (security) | Nothing in a file, a file name, a remote host, another local account or a fork can run a command, act on the wrong machine, take the backend's place or change a release. | — |
 | Backlog | AC-21, AC-22 | Git colors, drag and drop. | M |
 
 ### Stage 7 plan (AC-33, AC-34, AC-35)
@@ -1583,22 +1653,34 @@ Order: 0, 1 and 2 first (independent), then 3 → 4 for install and 5 → 6 for 
 | 8 | Docs, SECURITY.md, Definition of Done | 1–7 | `make test`, `e2e_panel`, container end to end, live on ai4 |
 | 9 | One root `~/.iterm-filebrowser/{bin,builds,logs,state}` on the Mac and hosts; the host helper is `bin/fbd-agent`; move the earlier layout, keeping links for a kept older build | 1, 5 | `test_install.py` (fresh layout, migration, rollback into an old build, links dropped), `test_agents.py`, container end to end; live upgrade keeps the token |
 
+### Stage 10 plan (security audit of 2026-10-01)
+
+| Step | Work | Depends on | Exit criteria |
+|---|---|---|---|
+| 1 | Runner read-only: the release workflow builds and tests, never uploads; workflow test forbids write permissions, GH_TOKEN and more triggers | — | `test_workflows.py` |
+| 2 | Terminal: no Enter, quoting per shell, refusals (invisible characters, unsafe names), `./` for option-like names; the bridge refuses control characters | — | `cargo test` (round trip through bash, zsh, fish when installed), `e2e_panel` |
+| 3 | Host-bound actions in the panel; ssh gateway means remote | — | `e2e_panel` (dialog, pane switch, nothing trashed), `test_resolve` |
+| 4 | Regular files only for `/api/file` and `/api/raw`; body limit; private modes (root 0700, umask 077) | — | `cargo test` (`/dev/zero`, FIFO, 9 MB save), `test_install.py` |
+| 5 | Strict unpacking; signed releases; release from the tag with locked builds | — | `test_cli.py` (links, hardlinks, setuid, bad or missing signature) on 3.14 and 3.9 |
+| 6 | `/internal` on a Unix socket, health over the socket, token renewal (after an independent review of the design) | — | `cargo test`, bridge tests with a fake squatter, `e2e_panel`, live upgrade keeps unsaved edits |
+| 7 | SECURITY.md, Definition of Done | 1–6 | `make test`, `e2e_panel`, `e2e_remote`, `security_check.sh` |
+
 ## 11. Checklist with Definition of Done
 
 Results of 2026-09-30 on a MacBook (Apple Silicon) (iTerm2 3.6.11, tmux 3.6a). `e2e_panel` = `cd ui && node test/e2e_panel.mjs` (41 browser checks against a private fbd, green in repeated runs).
 
 - [x] AC-01 — Verified by: `python3 scripts/e2e_cwd.py 8` → `bash p95=399ms`, `tmux p95=467ms`, `tmux -CC p95=493ms`, all `PASS`; remote tmux -CC (ssh devbox) shows `REMOTE` with key `tmux:devbox:…:%77` (live). Test tmux servers use `-f /dev/null`: with a `tmux-continuum` setup (`@continuum-restore on`) every new server restores session `main`, which switches the client and makes iTerm2 refuse a second `-CC` attach ("Cannot Attach").
 - [x] AC-02 — Verified by: `scripts/bench_ls.sh <500K dir>` → `cold_p95_ms=317 page_p95_ms=9 rss_mb=31 PASS`; 61 DOM rows while scrolled to 80 %.
-- [x] AC-03 — Verified by: `cargo test files` (text, binary, 2 MB truncated, non-UTF-8, missing, directory) → pass; `.rs`/`.py`/`.md` highlighted in the panel (screenshots).
+- [x] AC-03 — Verified by: `cargo test files` (text, binary, 2 MB truncated, non-UTF-8, missing, directory) → pass; `.rs`/`.py`/`.md` highlighted in the panel (screenshots). Stage 10: `cargo test only_regular_files_are_read` (`/dev/zero`, `/dev/random`, a FIFO refused in < 1 s, never opened); `e2e_panel` `/api/raw?path=/dev/zero` → 400 at once.
 - [x] AC-04 — Verified by: `cd ui && npm test` → 6 pass (tables, task lists, fences, raw HTML escaped, `javascript:` dropped, relative image via `/api/raw`, remote image not loaded, GitHub slugs); `e2e_panel` image + raw-HTML checks.
 - [x] AC-05 — Verified by: `cargo test workspace` → pass; `e2e_panel` "switch pane … back: tabs restored, expanded folders restored".
 - [x] AC-06 — Verified by: `make install && make restart` → `/api/health` shows `"bridge_connected": true`; the Files tool appears in View → Toolbelt.
-- [x] AC-07 — Verified by: `scripts/security_check.sh` → 9 ok, `PASS`.
-- [x] AC-08 — Verified by: `cargo test ops::tests::save` (etag conflict, mode kept, symlink target written, `*` recreates) → pass; `e2e_panel` dirty marker, ⌘S, conflict dialog, overwrite.
+- [x] AC-07 — Verified by: `scripts/security_check.sh` → 9 ok, `PASS`. Stage 10: `cargo test` (`/api/hello` HMAC = RFC 4231 vectors and a shared vector, stale socket replaced, a port another program held → new token, our previous fbd → kept); `test_bridge_socket.py` 5 (a squatter on the port gets nothing from the bridge or the installer; the real fbd renews its token after a squatter; a second fbd on the same folder exits and keeps the token); `test_lifecycle.py` (takeover = handover); `ui/test/sha256.test.mjs` 3; `e2e_panel` (`/internal` over TCP → 404; a squatter answering or forging the proof receives only the tokenless hello, the panel says "another program holds port" after 3 s and comes back with its unsaved edit); `test_install.py` root 0700.
+- [x] AC-08 — Verified by: `cargo test ops::tests::save` (etag conflict, mode kept, symlink target written, `*` recreates) → pass; `e2e_panel` dirty marker, ⌘S, conflict dialog, overwrite. Stage 10: `e2e_panel` a 9 MB file is writable and saves; a body over the limit → 413 as JSON.
 - [x] AC-09 — Verified by: `cargo test create_rename_validate` → pass; `e2e_panel` new file opens, duplicate name inline error, `db/migrations`.
 - [x] AC-10 — Verified by: `e2e_panel` F2 preselects "hello", rename on disk, tab follows and keeps content.
 - [x] AC-11 — Verified by: `e2e_panel` "Move 4 items to Trash?" → files gone from disk and tree; `cargo test trash_reports_missing`.
-- [x] AC-12 — Verified by: `python3 scripts/e2e_terminal.py` → insert path (no Enter), `cd` into a path with a space, busy terminal → `409 Terminal is busy (sleep)`.
+- [x] AC-12 — Verified by: `python3 scripts/e2e_terminal.py` → insert path (no Enter), `cd` into a path with a space, busy terminal → `409 Terminal is busy (sleep)`. Stage 10: `cargo test termtext` (quoting per shell, `=ls`, `-rf` → `./-rf`, bidi and zero-width refused, no Enter; a round trip through bash, zsh, sh, dash, tcsh runs nothing); `test_resolve.py` (the bridge types no control character). `e2e_terminal.py` updated (cd typed after a pre-typed line runs nothing) — not run here: it opens an iTerm2 window.
 - [x] AC-13 — Verified by: `e2e_panel` clean tab reload ≈180 ms, new/deleted file in tree ≈780 ms, dirty tab banner "Changed on disk".
 - [ ] AC-14 — Verified by: manual: panel colors and JetBrains Mono follow the profile (seen in the real Toolbelt); live profile edit not yet re-checked.
 - [ ] AC-15 — Verified by: manual in the real Toolbelt: ⌘S, ⌘⌫, ⌥⌘C reach the panel and not iTerm2 (OQ-07).
@@ -1617,10 +1699,10 @@ Results of 2026-09-30 on a MacBook (Apple Silicon) (iTerm2 3.6.11, tmux 3.6a). `
 - [ ] AC-30 — Verified by: `make test` → bridge `unittest` 14 pass (takeover by SIGTERM < 3 s, SIGKILL when ignored, holder exiting before the signal, holder caught before writing its pid, non-bridge holder left alone, stale pid ignored, failing watchdog check logged, old and new websocket clients, exit on iTerm2 gone / reused pid / closed connection, a never-answered call abandoned), `cargo test` 12 pass incl. `bridge_silence_is_announced_once`; `e2e_panel` 64/64 (×2): silent fake bridge → "Not following iTerm2" in 11.4 s, `/api/state` `bridge: false`, tree usable, note clears in 6 ms; live 2026-10-01: `make restart` with a bridge running → "exit: SIGTERM", "took over from bridge pid 73818" in the same second, one bridge and one fbd, `bridge_connected: true`; `kill -STOP` 13 s → `event="bridge.silent"`, `kill -CONT` → connected; `e2e_cwd.py 5`, `e2e_terminal.py`, `e2e_windows.py`, `security_check.sh` PASS. Open: owner quits and restarts iTerm2 and sees one bridge, one fbd and the Toolbelt in a new window.
 - [x] AC-26 (0.8.0) — Verified by: live 2026-10-01, iTerm2 3.7.3: after an iTerm2 restart the stored profile read `Custom Command = No` and the viewer session had a tty (bash); rewriting the same file reloaded it as `Browser` in 0.5 s and the viewer opened with no tty. `make test` → bridge 22 pass (`test_viewer`: left alone, reloaded, written when missing, fails loud after one rewrite, error reaches the asking panel), cargo 13 pass (`bridge_errors_are_capped_and_addressed`); `e2e_panel` 86/86 (×2): command carries `by`, another panel's error not shown, the asking panel's shown, path bar shows and follows the active tab, page title is the path, copy puts it on the clipboard; `security_check.sh` against a private fbd 10/10 incl. `/internal/error` without secret → 401. Live after `make install && make restart` (one bridge, one fbd, takeover in 1 s): `scripts/e2e_windows.py` flips the stored profile to a terminal, then ⌘-click opens a browser viewer (`tty=None`, `Browser`; bridge.log "viewer profile reloaded as a browser profile"), reused for a second file, focus kept on the terminal pane; `e2e_terminal.py` PASS; `e2e_cwd.py 5` PASS (bash p95 203 ms, tmux 443 ms, tmux -CC 503 ms). AC-25 failed once in the first run right after the restart and passed in the next 3 runs (timing, open).
 - [ ] AC-36 — Verified by: `cargo test panels` (claim levels, collision and contested windows, a late-closing stream keeps the claim, asks answered once); `e2e_panel` 95/95 (×2) with 9 AC-36 checks (acting binds, a window without a panel and another window's panel do not move it, a new panel claims and shows its window, an in-page reload keeps the window, two load guesses fall); live after `make install`: claims logged in fbd.log (`event="panel.claim"`), a window without a Toolbelt reported `panel: false`, the first window's last state kept. Open: the owner's own check of the reported scenario; `scripts/e2e_windows.py` AC-36 needs iTerm2 on screen (a hidden window's Toolbelt never loads, AS-09).
-- [ ] AC-37 — Verified by: `e2e_panel` 122/122 (×3) with 16 AC-37 checks against a real agent on this Mac registered as host "e2ehost" serving the same folder: listings carry `X-FB-Host`, a local unsaved tab stays out of the remote pane and comes back with its edit, the remote file opens with the host's content, the agent's watcher reports a change, no Finder actions (menu and fbd 400), an unknown host 404, the agent exits with its connection leaving no folder, a disconnected host fails loud and never lists local files; `scripts/e2e_remote.py` PASS on Debian 12 sshd containers, arm64 and amd64 (bridge connects in 0.3–0.5 s, list, create, save, stale save 409, outside roots 403, change tagged with the host, Linux Trash, agent gone afterwards); `bridge/tests/test_agents.py` 11 pass (probe, ssh errors, install keeps two and refuses a bad id, tunnel errors, host-name collision, back-off, outdated agent replaced or explained). Open: a live tmux -CC pane on the owner's VM; a macOS host.
+- [ ] AC-37 — Verified by: `e2e_panel` 122/122 (×3) with 16 AC-37 checks against a real agent on this Mac registered as host "e2ehost" serving the same folder: listings carry `X-FB-Host`, a local unsaved tab stays out of the remote pane and comes back with its edit, the remote file opens with the host's content, the agent's watcher reports a change, no Finder actions (menu and fbd 400), an unknown host 404, the agent exits with its connection leaving no folder, a disconnected host fails loud and never lists local files; `scripts/e2e_remote.py` PASS on Debian 12 sshd containers, arm64 and amd64 (bridge connects in 0.3–0.5 s, list, create, save, stale save 409, outside roots 403, change tagged with the host, Linux Trash, agent gone afterwards); `bridge/tests/test_agents.py` 11 pass (probe, ssh errors, install keeps two and refuses a bad id, tunnel errors, host-name collision, back-off, outdated agent replaced or explained). Open: a live tmux -CC pane on the owner's VM; a macOS host. Stage 10: `e2e_panel` a Trash dialog confirmed after a switch to this Mac trashes nothing ("nothing changed"); `test_resolve.py` a host reporting this Mac's name behind ssh is remote; `e2e_remote.py` PASS over the socket.
 - [ ] AC-38 — Verified by: `e2e_panel` 130/130 (×2): the offer names the host, Enable sends `host-enable` with the panel's client, "Setting up…" disables both buttons, Not now sends `host-dismiss` and the offer goes, the menu offers "Browse Files of …" and, when up, "Remove Helper from …" behind a confirmation; `scripts/e2e_remote.py` PASS (Debian sshd container): Enable through `hosts.enable` puts `fbd-agent-<agent id>` and the `fbd-agent` link in `~/.iterm-filebrowser/bin` (0700), the agent logs to `~/.iterm-filebrowser/logs/agent.log`, Remove leaves no `~/.iterm-filebrowser`; `test_sshargs.py` 8 (tms, ProxyCommand kept whole, -F/-J/-p/-l, session options dropped, autossh, mosh, odd arguments); `test_agents.py` 14 (a Mac host's own `bin/fbd` and logs survive Enable and Remove, keys by destination, two "ubuntu" hosts apart, Stage 8 records read, offer states, failed Enable retried with a toast, back-off, remove, remove while connecting, outdated helper replaced); live: the owner's running `tms` gateway resolved to `['ai4']`. Open: the owner clicks Enable for ai4.
-- [ ] AC-40 — Verified by: `make package` → 9.7 MB tarball with four thin binaries, the macOS fbd's `--version` equals `BUILD`; `test_cli.py` 4 (good release installs, wrong checksum installs nothing, a member outside the package refused, a missing release says so) on Python 3.14 and 3.9; `test_install.py` (installs from a package folder, the Mac's fbd linked to its macOS helper, `~/.iterm-filebrowser/bin/iterm-filebrowser` from the installed build; one root: the earlier layout moved with the token kept, old `current` and `previous` copied, rollback into the old build keeps the new command, old-folder links dropped after two more installs, merge into an existing state folder, a token in both places refused with nothing installed, uninstall before install keeps the token, a bad package moves nothing, a log written while moving merged, an unrelated `~/.local/bin/fbd` kept). Live, the owner's Mac: `make install` upgraded 0109d71 → 8086707 from the earlier layout; the token (unchanged since Sep 30) and workspaces moved to `~/.iterm-filebrowser/state`, logs to `logs/`, both builds in `builds/` (previous 0109d71), the old folders left as links (0109d71 uses them), `~/.local/lib/iterm-filebrowser` and our `~/.local/bin` links gone, `iterm-filebrowser status` shows the new build running with the bridge connected; `security_check.sh` PASS.
-- [ ] AC-39 — Verified by: `make toolchain && make agents` on the Mac → four binaries in 50 s (Mach-O arm64/x86_64, static ELF aarch64/x86-64); the Linux ones run on Debian 11/12 and Ubuntu 24.04 containers; fbd's 18 tests pass in a Debian container; `test_workflows.py` 6 pass (owner runner only, no pull-request trigger, pinned and allowed actions, no GitHub storage, write only after the tag check). Open: registering the runner on the owner's VM (`scripts/runner/setup.sh`) and its first CI and release runs.
+- [ ] AC-40 — Verified by: `make package` → 9.7 MB tarball with four thin binaries, the macOS fbd's `--version` equals `BUILD`; `test_cli.py` 4 (good release installs, wrong checksum installs nothing, a member outside the package refused, a missing release says so) on Python 3.14 and 3.9; `test_install.py` (installs from a package folder, the Mac's fbd linked to its macOS helper, `~/.iterm-filebrowser/bin/iterm-filebrowser` from the installed build; one root: the earlier layout moved with the token kept, old `current` and `previous` copied, rollback into the old build keeps the new command, old-folder links dropped after two more installs, merge into an existing state folder, a token in both places refused with nothing installed, uninstall before install keeps the token, a bad package moves nothing, a log written while moving merged, an unrelated `~/.local/bin/fbd` kept). Live, the owner's Mac: `make install` upgraded 0109d71 → 8086707 from the earlier layout; the token (unchanged since Sep 30) and workspaces moved to `~/.iterm-filebrowser/state`, logs to `logs/`, both builds in `builds/` (previous 0109d71), the old folders left as links (0109d71 uses them), `~/.local/lib/iterm-filebrowser` and our `~/.local/bin` links gone, `iterm-filebrowser status` shows the new build running with the bridge connected; `security_check.sh` PASS. Stage 10: `test_cli.py` 13 on Python 3.14 and 3.9 (unsigned and wrongly signed releases refused, an install without a key refuses, an older release not taken as the latest, a release must be the one asked for, symlink, hardlink and device members refused, setuid stripped; the real `install.sh` checks the signature against a local release; `install.sh` and `release-signers` name the same key). Open: the maintainer's key (`make signing-key`).
+- [ ] AC-39 — Verified by: `make toolchain && make agents` on the Mac → four binaries in 50 s (Mach-O arm64/x86_64, static ELF aarch64/x86-64); the Linux ones run on Debian 11/12 and Ubuntu 24.04 containers; fbd's 18 tests pass in a Debian container; `test_workflows.py` 6 pass (owner runner only, no pull-request trigger, pinned and allowed actions, no GitHub storage, write only after the tag check). Open: registering the runner on the owner's VM (`scripts/runner/setup.sh`) and its first CI and release runs. Stage 10: `test_workflows.py` 7 (no write permission, no GitHub token, no fork-reachable trigger, `cargo --locked`); the release workflow only tests and builds.
 - [ ] AC-33 — Verified by: `bridge/tests/test_install.py` 19 pass on a temporary home with iTerm2 faked (fresh install, upgrade, same build not relaunched, prune to two, unhealthy build rolled back, refused launch keeps the switch, iTerm2 not running waits and prunes nothing, wrong binary refused before any change, unversioned layout migrated, half-copied build never linked, one install at a time, uninstall keeps token and workspaces, build id covers the bridge); `fbd --version` prints the id. Live: see the owner's install below.
 - [x] AC-34 — Verified by: `e2e_panel` 107/107 (×2) with 12 AC-34 checks: fbd stopped 1.2 s → no "Backend not running", a file created meanwhile appears; a save while fbd is away says "Not saved: backend restarting — save again" and keeps the tab dirty; fbd back as another build → the dirty panel shows "Update ready" and does not reload, after ⌘S it reloads in place with tree, tabs and window binding, the saved text is on disk, and it does not reload again. Not covered by a test: a 404 chunk triggering the reload (the handler matches WebKit's and Chromium's messages).
 - [ ] AC-35 — Verified by: `cargo test workspace` (a file with unknown fields and missing ones loads, not treated as corrupt); `test_install.py` rollback and "No previous build to roll back to". Live: `make rollback` on the owner's Mac (open).

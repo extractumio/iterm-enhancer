@@ -9,6 +9,7 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { base, bringBack, check, cleanup, cmds, FBD, internal, PORT, push, restartFbd, results, resume, SB, silence, stopFbd, TOKEN, within } from "./e2e_harness.mjs";
@@ -288,12 +289,12 @@ try {
   await push("e2eA", SB);
 
   // AC-34 a short restart: an amber dot, no error, and what changed meanwhile shows up
-  let noticed = false;
-  const watchNotice = setInterval(() => void page.isVisible("#notice.on").then((v) => { noticed ||= v; }).catch(() => {}), 100);
+  let noticed = "";
+  const watchNotice = setInterval(() => void page.textContent("#notice.on", { timeout: 50 }).then((t) => { noticed ||= t ?? ""; }).catch(() => {}), 100);
   await restartFbd(1200, () => fs.writeFileSync(`${SB}/during-gap.txt`, "x"));
   await within("AC-34 a file created during the gap appears", (ms) => page.waitForSelector(row("during-gap.txt"), { timeout: ms }));
   clearInterval(watchNotice);
-  check("AC-34 no 'Backend not running' for a short gap", !noticed);
+  check("AC-34 no 'Backend not running' for a short gap", !noticed, noticed);
   // a save while fbd is away fails loud and keeps the edit
   await page.click(row("greet.py"));
   await page.waitForSelector(".cm-content");
@@ -316,6 +317,45 @@ try {
   await page.evaluate(() => { window.__after = 1; });
   await page.waitForTimeout(2500);
   check("AC-34 one reload per build (a page that still differs does not loop)", (await page.evaluate(() => window.__after)) === 1);
+
+  // AC-07 another program on the port while fbd is away: it never sees the token, whether
+  // it answers nothing useful or forges the proof; the panel comes back to fbd with its edits
+  const internalOverTcp = await fetch(`${base}/internal/state`, { method: "POST", headers: { "Content-Type": "application/json", "X-FB-Bridge": "x" }, body: "{}" });
+  check("AC-07 /internal is not served over TCP", internalOverTcp.status === 404);
+  await page.click(row("greet.py")); await page.waitForSelector(".cm-content");
+  await page.click(".cm-content"); await page.keyboard.type("# kept through a squatter\n");
+  for (const forge of [false, true]) {
+    const seen = [];
+    await stopFbd();
+    const squatter = http.createServer((req, res) => {
+      seen.push(`${req.url} ${JSON.stringify(req.headers)}`);
+      const body = forge && req.url.startsWith("/api/hello") ? JSON.stringify({ proof: "0".repeat(64) }) : "{}";
+      res.writeHead(200, { "Content-Type": "application/json" }); res.end(body);
+    });
+    await new Promise((r) => squatter.listen(PORT, "127.0.0.1", r));
+    await page.waitForTimeout(forge ? 4000 : 2500);
+    if (forge) check("AC-07 … the panel says it cannot trust the port", (await page.textContent("#notice")).includes("another program holds port"));
+    await new Promise((r) => { squatter.close(r); squatter.closeAllConnections(); });
+    await bringBack();
+    check(`AC-07 a program on the port${forge ? " forging the proof" : ""} never gets the token`, seen.length > 0 && !seen.some((x) => x.includes(TOKEN)), `${seen.length} requests`);
+    await within("AC-07 … and the panel is back on fbd", (ms) => page.waitForSelector("#dot:not(.off):not(.wait)", { timeout: ms }), 8000);
+  }
+  check("AC-07 … with the unsaved edit", (await page.textContent(".cm-content")).includes("# kept through a squatter"));
+
+  // AC-03 only regular files are read; AC-08 a large text file saves
+  const t0 = Date.now();
+  const zero = await fetch(`${base}/api/raw?path=/dev/zero&t=${TOKEN}`);
+  check("AC-03 /dev/zero is refused at once", zero.status === 400 && Date.now() - t0 < 1000 && (await zero.json()).message === "Not a regular file");
+  fs.writeFileSync(`${SB}/big.txt`, "x".repeat(9 << 20));
+  const big = await (await fetch(`${base}/api/file?path=${encodeURIComponent(`${SB}/big.txt`)}`, { headers: { "X-FB-Token": TOKEN } })).json();
+  const put = (text) => fetch(`${base}/api/file?path=${encodeURIComponent(`${SB}/big.txt`)}`, { method: "PUT",
+    headers: { "X-FB-Token": TOKEN, "Content-Type": "application/json", "If-Match": "*" }, body: JSON.stringify({ text }) });
+  const saved = await put("y".repeat(9 << 20));
+  check("AC-08 a 9 MB text file is editable and saves", big.writable && saved.status === 200, `${saved.status}`);
+  const huge = await put("\u0001".repeat(11 << 20));
+  check("AC-08 a body over the limit is refused as JSON", huge.status === 413 && !!(await huge.json().catch(() => null))?.error, `${huge.status}`);
+  fs.rmSync(`${SB}/big.txt`);
+  await page.waitForSelector(row("big.txt"), { state: "detached", timeout: 5000 }); // the tree caught up before AC-37 records
 
   // AC-37 a remote host's files through an agent (here: an agent on this Mac, host "e2ehost",
   // serving the same folder, so local and remote paths are the same strings)
@@ -348,6 +388,19 @@ try {
   await page.waitForSelector(".ctx .mi");
   check("AC-37 no Finder actions for remote files", !(await page.$('.ctx .mi:has-text("Reveal in Finder")')) && !!(await page.$('.ctx .mi:has-text("Copy Path")')));
   await page.keyboard.press("Escape");
+  // a confirmation answered after the pane switched hosts acts on nothing (the same path
+  // exists on this Mac here, as on a Mac host)
+  await page.click(row("remote-live.txt"));
+  await page.focus("#tree"); await page.keyboard.press("Meta+Backspace");
+  await page.waitForSelector(".modal");
+  await push("e2eA", SB);
+  await page.waitForFunction(() => !document.getElementById("crumbs").textContent.startsWith("e2ehost:"), null, { timeout: 3000 });
+  await page.click(".modal button[data-id=trash]");
+  await page.waitForTimeout(400);
+  check("AC-37 a dialog confirmed after a host switch trashes nothing", fs.existsSync(`${SB}/remote-live.txt`)
+    && (await page.textContent("#toast")).includes("nothing changed"), await page.textContent("#toast"));
+  await push("e2eR", SB, "w1", true, "e2ehost");
+  await page.waitForFunction(() => document.getElementById("crumbs").textContent.startsWith("e2ehost:"), null, { timeout: 3000 });
   const reveal = await fetch(base + "/api/os/reveal", { method: "POST", headers: { "X-FB-Token": TOKEN, "X-FB-Host": "e2ehost", "Content-Type": "application/json" }, body: JSON.stringify({ path: SB }) });
   check("AC-37 fbd refuses Finder actions on remote files", reveal.status === 400);
   const gone = await fetch(`${base}/api/ls?path=${encodeURIComponent(SB)}`, { headers: { "X-FB-Token": TOKEN, "X-FB-Host": "nohost" } });

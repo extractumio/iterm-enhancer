@@ -7,7 +7,8 @@
 #   make uninstall  remove builds and scripts (keeps workspaces.json and token)
 #   make toolchain  the pinned cross toolchain (zig, cargo-zigbuild) for the Linux helpers
 #   make package    the release package in dist/package (tarball, install.sh, SHA256SUMS)
-#   make release TAG=v…   build the package as that release and upload it
+#   make release TAG=v…   build the package from that tag, sign it and upload it
+#   make signing-key       the maintainer's release key (once)
 #   make test       unit tests (Rust, bridge, installer) + typecheck and unit tests (UI)
 
 ifeq ($(shell id -u),0)
@@ -21,22 +22,23 @@ export FB_BUILD := $(BUILD)
 # which fbd sources: an agent on a remote host works with this fbd when the ids match (AC-37)
 export FB_AGENT_ID := $(shell python3 scripts/agents.py id)
 
-.PHONY: all ui fbd install upgrade rollback uninstall test restart clean-registrations toolchain agents package release
+.PHONY: all ui fbd install upgrade rollback uninstall test restart clean-registrations toolchain agents package release signing-key
 
 all: fbd
 
-ui/node_modules: ui/package.json
-	cd ui && npm install --no-fund --no-audit
+# exactly the lockfile, no install scripts (AC-40)
+ui/node_modules: ui/package.json ui/package-lock.json
+	cd ui && npm ci --ignore-scripts --no-fund --no-audit
 	touch $@
 
 ui: ui/node_modules
 	cd ui && npm run -s build
 
 fbd: ui
-	cd fbd && cargo build --release
+	cd fbd && cargo build --locked --release
 
 test: ui
-	cd fbd && cargo test
+	cd fbd && cargo test --locked
 	python3 -m unittest discover -s bridge/tests
 	cd ui && npx tsc -p . && npm test
 
@@ -58,6 +60,10 @@ package: ui
 release: ui
 	@test -n "$(TAG)" || { echo "usage: make release TAG=v0.13.0"; exit 2; }
 	python3 scripts/release.py $(TAG)
+
+# the maintainer's release key, once (run it in your own terminal: it asks for a passphrase)
+signing-key:
+	python3 scripts/signing_key.py
 
 upgrade: install
 
