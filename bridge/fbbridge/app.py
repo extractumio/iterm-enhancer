@@ -12,12 +12,13 @@ import urllib.error
 import iterm2
 
 from .backend import Backend
-from .common import APP_DIR, BASE, HEARTBEAT, POLL, POLL_TIMEOUT, THEME_EVERY, TOOL_ID, log
+from .common import APP_DIR, BASE, HEARTBEAT, POLL, POLL_TIMEOUT, THEME_EVERY, TOOL_ID, UserError, log
 from .lifecycle import LockError, bounded, connection_closed, take_lock, watch
 from .procinfo import iterm_process
 from .registry import heal
 from .resolve import resolve, static_vars, theme_of
-from .windows import Windows, install_viewer_profile
+from .viewer_profile import install_viewer_profile
+from .windows import Windows
 
 backend = Backend()
 
@@ -42,8 +43,7 @@ async def run_commands(conn, app, windows, queue):
             if action == "type":
                 s = app.get_session_by_id(c.get("session", ""))
                 if s is None:
-                    log(f"command for unknown session {c.get('session')}")
-                    continue
+                    raise UserError("The terminal pane is gone — command not sent")
                 await s.async_send_text(c["text"])
                 await s.async_activate()
             elif action == "viewer":
@@ -51,7 +51,7 @@ async def run_commands(conn, app, windows, queue):
             elif action == "default-width":
                 await windows.set_default_width(conn)
         except Exception as e:
-            log(f"command {c.get('action')} failed: {type(e).__name__}: {e}")
+            await asyncio.get_running_loop().run_in_executor(None, backend.report_failure, c, e)
 
 
 async def is_terminal(sess, windows):

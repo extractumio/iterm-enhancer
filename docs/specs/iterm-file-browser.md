@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.7.0 |
+| Version | 0.8.0 |
 | Date | 2026-10-01 |
 | Status | approved |
 | Author | Project maintainers |
@@ -21,6 +21,7 @@ Change log:
 | 0.5.0 | 2026-10-01 | AC-25 (Toolbelt shown in new windows), AC-26 (⌘-click opens a viewer window; supersedes AC-20), AC-27 (layout defaults for new windows, own layout per open window), AC-28 (outdated panel link explained); Stage 4 |
 | 0.6.0 | 2026-10-01 | AC-29: HTML documents render (sandboxed, no scripts) and links between Markdown and HTML documents open them, with `#anchor` |
 | 0.7.0 | 2026-10-01 | AC-30 (P0): one bridge per iTerm2 — it exits with its iTerm2 or its API connection, a new bridge takes over from a leftover one (`bridge.lock`), a hung iTerm2 call cannot freeze the loop, and a panel nobody follows says so. Found when an iTerm2 restart left the old bridge and fbd running: the new bridge failed on the busy port, new windows got no Toolbelt and the panel showed an old directory as current. AS-08 added. Pragmatic review: lock taken only after the API connection is up, silence keyed on `bridge` (not `stale`), `make restart` exercises the takeover, Python unit tests join `make test`. Implementation review: a holder that exits during the takeover is not an error, a holder is judged again after 0.5 s, the silence event is sent under the state lock, a failing watchdog check is logged and the watch goes on; rejected: `make install` stopping a lockless bridge (no release has shipped one; the single local instance is stopped once by hand) |
+| 0.8.0 | 2026-10-01 | AC-26: the viewer window opened as a terminal after an iTerm2 restart (iTerm2 3.7.3 loads dynamic profiles before its browser plugin, so "Files Viewer" was stored as a terminal profile); the bridge now checks and reloads the profile, closes a non-browser window, and every failed bridge command is shown in the panel that asked (`bridge-error`). The viewer window shows the file's full path with a copy button. AC-31 (expand and collapse all), AC-32 (file-type icons, Tabler Icons, MIT). Pragmatic review: failure message names no unverified cause, errors go only to the asking panel, expand all is cancelled by any re-root or collapse, icons vendored instead of an npm dependency; rejected: a profile "Title Components" change for the window title (iTerm2 browser windows compose their title themselves; not observable through the API). Implementation review: a window that fails its checks is never kept as the viewer; a folder dropped by a disk refresh no longer cancels expand all; expand all leaves folders the user had open; found and fixed: "Collapse all" left cached folders' children open (re-opening one showed them again) and a `/` root never restored its expanded folders |
 
 ## 1. Overview
 
@@ -113,6 +114,8 @@ Open questions:
 | AC-28 | [SHOULD / P1] | The user whose panel holds an outdated link sees what is wrong and how to fix it instead of an endless "connecting…". |
 | AC-29 | [SHOULD / P1] | The user reads HTML files rendered (scripts never run) and follows links inside Markdown and HTML documents to other documents, including `#anchors`. |
 | AC-30 | [MUST / P0] | The user finds the panel following the terminal again after iTerm2 quits, restarts or the bridge is relaunched, with no manual cleanup; a panel that nothing follows says so instead of showing an old directory as current. |
+| AC-31 | [SHOULD / P1] | The user can expand every folder below the root or a chosen folder in one action, bounded so large trees stay responsive, and collapse them all again. |
+| AC-32 | [SHOULD / P1] | The user recognizes a file's type by its icon in the tree and the tabs. |
 
 ## 5. BDD scenarios
 
@@ -632,6 +635,31 @@ Scenario: AC-26 failure — bridge not connected
   Given the bridge is not running
   When the user ⌘-clicks a file
   Then a toast shows "iTerm2 bridge not connected" and nothing opens
+
+Scenario: AC-26 edge — profile loaded as a terminal
+  Given iTerm2 started and holds "Files Viewer" with "Custom Command" other than "Browser" (it loads dynamic profiles before its browser plugin)
+  When the user ⌘-clicks a file
+  Then the bridge rewrites the profile file, iTerm2 reloads it as a browser profile within 3 s, and the viewer window opens as a browser
+
+Scenario: AC-26 failure — the profile does not become a browser profile
+  Given "Files Viewer" is still not a browser profile 3 s after the rewrite, or the created window holds a terminal session
+  When the user ⌘-clicks a file
+  Then any terminal window the bridge created is closed
+  And the panel that asked shows the toast "Viewer window failed: the 'Files Viewer' profile did not load as a browser (is the iTerm2 browser plugin installed?)"
+
+Scenario: AC-26 failure — any bridge command fails
+  Given a panel asked the bridge to act (viewer, insert into the terminal, cd)
+  When the iTerm2 call fails
+  Then only that panel shows a toast with the bridge's message, and bridge.log has the same line
+
+Scenario: AC-26 happy path — full path with copy
+  Given the viewer window shows "/Users/alex/proj/README.md" and "app.py" in tabs
+  Then a bar above the content shows "/Users/alex/proj/README.md" in full, selectable, and the page title is that path
+  When the user activates the "app.py" tab
+  Then the bar shows "/Users/alex/proj/app.py"
+  When the user clicks the copy button in the bar
+  Then the clipboard holds "/Users/alex/proj/app.py" and a toast says "Copied /Users/alex/proj/app.py"
+  And iTerm2's own address bar still shows the page URL (iTerm2 offers no way to hide it); it never holds the token
 ```
 
 ### AC-27 — Layout defaults and per-window layout [SHOULD / P1]
@@ -740,6 +768,88 @@ Scenario: AC-30 edge — fbd left without its bridge
   Given fbd was started by a bridge (FB_BRIDGE_SECRET set)
   When that bridge is killed with SIGKILL
   Then fbd saves the workspaces and exits within 3 s with "event=stop reason=\"bridge exited\"", freeing the port
+```
+
+### AC-31 — Expand and collapse all [SHOULD / P1]
+
+```gherkin
+Scenario: AC-31 happy path — expand all from the header
+  Given the root holds "src/a/b", "docs", "node_modules/x" and ".git/objects"
+  When the user clicks "Expand all" in the header
+  Then "src", "src/a", "src/a/b" and "docs" are expanded, "node_modules" and ".git" stay collapsed
+  And one workspace write stores the expanded folders (AC-05)
+  And a toast says "Expanded 4 folders · skipped 2 (node_modules, .git)"
+
+Scenario: AC-31 happy path — one folder, macOS keys
+  Given "src" is selected
+  When the user presses ⌥→ (or ⌥-clicks the chevron of "src")
+  Then every folder below "src" expands with the same limits
+  When the user presses ⌥← (or ⌥-clicks the chevron again)
+  Then "src" and every folder below it collapse
+
+Scenario: AC-31 happy path — collapse all
+  When the user clicks "Collapse all" in the header
+  Then every folder collapses and the root's entries remain
+
+Scenario Outline: AC-31 edge — limits
+  Given "<folder>" is below the start
+  When the user expands all
+  Then "<result>"
+
+  Examples:
+    | folder                                    | result                                                     |
+    | node_modules, .git, target, dist, build, .venv, venv, __pycache__, .next, .cache, Pods, DerivedData | stays collapsed, named in the toast |
+    | a symlink to a folder                     | stays collapsed (no cycles)                                |
+    | a folder with more than 500 entries       | stays collapsed, counted as "too large"                    |
+    | depth 9 below the start                   | stays collapsed; the toast says "depth limit"             |
+    | the 201st folder                          | stays collapsed; the toast says "limit 200 folders"        |
+
+Scenario: AC-31 edge — interrupted
+  Given an "Expand all" is still loading folders
+  When the user switches panes, the tree re-roots, or the user collapses a folder or all
+  Then the expansion stops within one folder load, nothing more expands, and no workspace write happens for it
+
+Scenario: AC-31 failure — a folder cannot be read
+  Given "src/secret" is not readable
+  When the user expands all
+  Then "src/secret" shows its error row (as when expanded by hand) and the other folders expand
+```
+
+### AC-32 — File-type icons [SHOULD / P1]
+
+```gherkin
+Scenario Outline: AC-32 happy path — icon by name
+  Given the tree shows "<name>"
+  Then its row shows the "<icon>" icon in the "<color>" color of the theme
+
+  Examples:
+    | name               | icon      | color  |
+    | main.rs, app.py    | code      | code   |
+    | package.json       | braces    | config |
+    | Cargo.toml, .env   | settings  | config |
+    | README.md          | markdown  | doc    |
+    | notes.txt          | text      | doc    |
+    | logo.png, a.svg    | photo     | image  |
+    | report.pdf         | pdf       | image  |
+    | dist.tar.gz        | zip       | archive|
+    | index.html, a.css  | web       | web    |
+    | build.sh           | terminal  | code   |
+    | Cargo.lock         | lock      | config |
+    | .gitignore         | git       | config |
+    | id.pem, tls.key    | key       | config |
+    | data.csv           | table     | doc    |
+    | db.sqlite, q.sql   | database  | code   |
+    | song.mp3           | music     | image  |
+    | clip.mp4           | movie     | image  |
+    | font.woff2         | font      | doc    |
+    | a.out, lib.dylib   | binary    | faint  |
+    | LICENSE            | file      | faint  |
+
+Scenario: AC-32 edge — names win over extensions
+  Then "Makefile", "Dockerfile" use the settings icon and "id_ed25519" uses the key icon
+
+Scenario: AC-32 edge — folders and tabs
+  Then folders show a folder icon (open while expanded), and each viewer tab shows its file's icon
 ```
 
 ## 6. Flow and sequence diagrams
@@ -880,6 +990,8 @@ State when this spec was written: a Python prototype in `demo/` (removed in 0.3.
 | AC-27 | One global split in prefs, applied to every panel at load. | Default for new windows, per-window value in each panel. | `ui/src/main.ts` |
 | AC-29 | HTML opens as highlighted source only; links work in Markdown only and lose `#anchor`. | Sandboxed HTML view, shared link routing, anchors. | `ui/src/viewer.ts` |
 | AC-28 | A rejected token shows "connecting…" forever (seen with the prototype's stale registration). | Clear message, no retry loop. | `ui/src/main.ts` |
+| AC-31 | Collapse all only (header button). | Expand all (header, ⌥→/⌥←, ⌥-click), limits, cancellation. | `ui/src/tree.ts` |
+| AC-32 | One page outline for every file, colored by category. | An icon per category from Tabler Icons (MIT), vendored in `ui/src/icons/`. | `ui/src/icons.ts` |
 | AC-30 | After an iTerm2 restart the old bridge and fbd run on (ppid 1, loop stuck on a dead call); the new bridge exits on the busy port ("fbd did not start"); a silent bridge still shows as followed (`stale: false`, green dot, no event when it goes silent). | Exit with iTerm2 or the connection, lock and takeover, poll timeout, `bridge: false` event and header note. | `bridge/fbbridge/app.py`, `fbd/src/api_state.rs`, `ui/src/main.ts` |
 
 ## 8. Recommendation and ownership
@@ -909,7 +1021,7 @@ All `/api/*` calls need header `X-FB-Token: <token>` (or `?t=<token>` on GET, us
 | `GET /` | UI (embedded) | all |
 | `GET /api/state` | the focused pane's state (also the first SSE event) | AC-01, AC-14 |
 | `GET/PUT /api/prefs` | panel preferences: `{hidden, split}` | AC-18 |
-| `GET /api/events` | SSE: `state`, `workspace {key, rev, by}`, `fs-change {dirs, files: [{path, etag}], moved: [{from, to}]}` | AC-01, AC-05, AC-13 |
+| `GET /api/events` | SSE: `state`, `workspace {key, rev, by}`, `fs-change {dirs, files: [{path, etag}], moved: [{from, to}]}`, `viewer-open {path}`, `bridge-error {message, by}` | AC-01, AC-05, AC-13, AC-26 |
 | `GET /api/ls?path&offset&limit&filter&hidden&locate` | page of a folder, with `writable` for the folder and `located` index of a name | AC-02, AC-16, AC-18 |
 | `GET /api/file?path` | text content + meta; `If-None-Match: "<etag>"` → 304 when unchanged | AC-03, AC-04, AC-13 |
 | `GET /api/raw?path` | raw bytes with MIME type (images) | AC-04, AC-17 |
@@ -919,6 +1031,7 @@ All `/api/*` calls need header `X-FB-Token: <token>` (or `?t=<token>` on GET, us
 | `POST /api/terminal/{insert,cd}` | `{key, paths}` / `{key, path}`; fbd quotes, refuses control characters, a changed focus and a busy shell | AC-12 |
 | `GET/PUT /api/workspace?key` | per-pane state, `PUT` carries `rev` (409 if stale) and `X-FB-Client` | AC-05 |
 | `POST /internal/state`, `GET /internal/commands` | bridge only, header `X-FB-Bridge: <FB_BRIDGE_SECRET>`; a bridge silent for 10 s turns `state` into `bridge: false` (AC-30) | AC-01, AC-12, AC-30 |
+| `POST /internal/error {message, by}` | bridge only (same secret): a command failed; fbd relays it as `bridge-error` to the panel `by` (the `X-FB-Client` that asked; every command carries it); message capped at 300 characters | AC-26 |
 | `GET /api/health` | counters for diagnostics | all |
 
 Example — a page of a big folder:
@@ -1053,6 +1166,7 @@ The panel shows a red dot in the header when `bridge_connected` is false or SSE 
 | Stage 3 | AC-14, AC-15, AC-16, AC-17, AC-18 | Polish: terminal theme, full keyboard, filter in huge folders, images, hidden files. | M (est. 1 day) |
 | Stage 4 | AC-25, AC-26, AC-27, AC-28, AC-29 | The panel is there in every window, files open in a big window, the layout is remembered, broken links explain themselves. | M (est. 1 day) |
 | Stage 5 | AC-30 | iTerm2 restarts, crashes and manual relaunches leave exactly one working bridge; a panel nothing follows says so. | — |
+| Stage 6 | AC-26 (fix), AC-31, AC-32 | ⌘-click reliably opens the viewer window and shows the full path; whole trees expand in one click; files are recognizable by icon. | — |
 | Backlog | AC-21, AC-22 | Git colors, drag and drop. | M |
 
 ## 11. Checklist with Definition of Done
@@ -1087,4 +1201,7 @@ Results of 2026-09-30 on a MacBook (Apple Silicon) (iTerm2 3.6.11, tmux 3.6a). `
 - [x] AC-28 — Verified by: `e2e_panel` → wrong token shows "Outdated panel link" in 11 ms and 0 requests in the next 2.5 s.
 - [x] AC-29 — Verified by: `e2e_panel` → md link opens page.html rendered at `#sec2`, its image loads, its script does not run, its link opens README.md; Source toggle present.
 - [ ] AC-30 — Verified by: `make test` → bridge `unittest` 14 pass (takeover by SIGTERM < 3 s, SIGKILL when ignored, holder exiting before the signal, holder caught before writing its pid, non-bridge holder left alone, stale pid ignored, failing watchdog check logged, old and new websocket clients, exit on iTerm2 gone / reused pid / closed connection, a never-answered call abandoned), `cargo test` 12 pass incl. `bridge_silence_is_announced_once`; `e2e_panel` 64/64 (×2): silent fake bridge → "Not following iTerm2" in 11.4 s, `/api/state` `bridge: false`, tree usable, note clears in 6 ms; live 2026-10-01: `make restart` with a bridge running → "exit: SIGTERM", "took over from bridge pid 73818" in the same second, one bridge and one fbd, `bridge_connected: true`; `kill -STOP` 13 s → `event="bridge.silent"`, `kill -CONT` → connected; `e2e_cwd.py 5`, `e2e_terminal.py`, `e2e_windows.py`, `security_check.sh` PASS. Open: owner quits and restarts iTerm2 and sees one bridge, one fbd and the Toolbelt in a new window.
+- [x] AC-26 (0.8.0) — Verified by: live 2026-10-01, iTerm2 3.7.3: after an iTerm2 restart the stored profile read `Custom Command = No` and the viewer session had a tty (bash); rewriting the same file reloaded it as `Browser` in 0.5 s and the viewer opened with no tty. `make test` → bridge 22 pass (`test_viewer`: left alone, reloaded, written when missing, fails loud after one rewrite, error reaches the asking panel), cargo 13 pass (`bridge_errors_are_capped_and_addressed`); `e2e_panel` 86/86 (×2): command carries `by`, another panel's error not shown, the asking panel's shown, path bar shows and follows the active tab, page title is the path, copy puts it on the clipboard; `security_check.sh` against a private fbd 10/10 incl. `/internal/error` without secret → 401. Live after `make install && make restart` (one bridge, one fbd, takeover in 1 s): `scripts/e2e_windows.py` flips the stored profile to a terminal, then ⌘-click opens a browser viewer (`tty=None`, `Browser`; bridge.log "viewer profile reloaded as a browser profile"), reused for a second file, focus kept on the terminal pane; `e2e_terminal.py` PASS; `e2e_cwd.py 5` PASS (bash p95 203 ms, tmux 443 ms, tmux -CC 503 ms). AC-25 failed once in the first run right after the restart and passed in the next 3 runs (timing, open).
+- [x] AC-31 — Verified by: `npm test` `tree-expand` 5 pass (breadth-first, skip list, symlinks, > 500 entries collapsed again, depth 8, 200 folders, cancel, unreadable folder); `e2e_panel`: header expand opens `src/a/b`, `node_modules` and `.git` stay closed, toast "Expanded 6 folders · skipped 2 (.git, node_modules)", 6 folders saved, collapse all, a folder re-opens one level after collapse all, ⌥→, ⌥←, ⌥-click on the arrow.
+- [x] AC-32 — Verified by: `npm test` `icons` 3 pass (every spec example, names before extensions, every icon a Tabler SVG, tinted strings reused); `e2e_panel`: code, text and folder icons in their theme colors, tabs carry icons; screenshot checked.
 - [x] AC-24 — Verified by: `e2e_panel` local `.md` link opens a tab, `../README.md#sandbox` back, panel URL unchanged.

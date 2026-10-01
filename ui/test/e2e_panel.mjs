@@ -29,6 +29,7 @@ fs.writeFileSync(`${SB}/docs/page.html`, '<!doctype html><title>Page</title><h1>
 fs.writeFileSync(`${SB}/src/main.rs`, 'fn main() {\n    println!("hi");\n}\n');
 fs.writeFileSync(`${SB}/app.py`, "print(1)\n");
 for (const f of "abcde") fs.writeFileSync(`${SB}/${f}.log`, f);
+for (const d of ["src/a/b", "node_modules/x", ".git/objects"]) fs.mkdirSync(`${SB}/${d}`, { recursive: true });
 // a 1×1 PNG
 fs.writeFileSync(`${SB}/docs/logo.png`, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
 
@@ -38,10 +39,10 @@ const base = `http://127.0.0.1:${PORT}`;
 for (let i = 0; i < 50; i++) { try { await fetch(base + "/"); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
 const TOKEN = fs.readFileSync(path.join(APP, "token"), "utf8").trim();
 let focus = null;
-const push = (key, cwd) => (focus = [key, cwd], fetch(base + "/internal/state", {
-  method: "POST", headers: { "Content-Type": "application/json", "X-FB-Bridge": SECRET },
-  body: JSON.stringify({ key, session: key, cwd, mode: "bash", title: `e2e ${key}`, note: "fake bridge", stale: false }),
-}));
+/** A call only the bridge may make (the fake bridge's secret). */
+const internal = (p, body) => fetch(base + p, { method: "POST", headers: { "Content-Type": "application/json", "X-FB-Bridge": SECRET }, body: JSON.stringify(body) });
+const push = (key, cwd) => (focus = [key, cwd],
+  internal("/internal/state", { key, session: key, cwd, mode: "bash", title: `e2e ${key}`, note: "fake bridge", stale: false }));
 await push("e2eA", SB);
 // like the real bridge: repeat the state every 3 s, or fbd reports it silent after 10 s (AC-30)
 const heartbeat = setInterval(() => void push(...focus).catch(() => {}), 3000);
@@ -59,6 +60,9 @@ const page = await browser.newPage({ viewport: { width: 520, height: 900 } });
 const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
 page.on("dialog", (d) => { errors.push("dialog: " + d.message()); void d.dismiss(); });
+let client = "";                                     // the panel's X-FB-Client (errors are addressed to it)
+page.on("request", (r) => { client ||= r.headers()["x-fb-client"] ?? ""; });
+const toastText = () => page.textContent("#toast");
 const outside = [], blocked = [];
 const external = (u) => !u.startsWith(`http://127.0.0.1:${PORT}`) && !/^(data|about):/.test(u);
 // a CSP-blocked load still emits "request" and then fails with "csp": only finished ones left the machine
@@ -218,6 +222,44 @@ try {
   await within("AC-16 filter narrows the tree", (ms) => page.waitForFunction(() => document.querySelectorAll("#tree .row[data-p]").length === 1, null, { timeout: ms }));
   await page.fill("#filter", "");
 
+  // AC-32 file-type icons
+  await page.waitForSelector(`${row("greet.py")} svg.ico`);   // app.py went to the Trash above
+  const color = async (p) => (await page.waitForSelector(`${row(p)} svg.ico`, { state: "attached", timeout: 3000 })).getAttribute("style");
+  check("AC-32 code icon in the code color", (await color("greet.py")) === "color:var(--k-code)", await color("greet.py"));
+  check("AC-32 text icon in the doc color", (await color("d.log")) === "color:var(--k-doc)", await color("d.log"));
+  check("AC-32 folders use the folder color", (await color("src")) === "color:var(--folder)");
+  check("AC-32 tabs carry the file's icon", !!(await page.$(".tab svg.ico")));
+
+  // AC-31 expand all, skipping heavy folders; ⌥→ / ⌥← / ⌥-click; collapse all
+  await page.click("#collapse");
+  await page.click("#expand");
+  await within("AC-31 expand all opens nested folders", (ms) => page.waitForSelector(row("src/a/b"), { timeout: ms }));
+  const said = await toastText();
+  check("AC-31 heavy folders stay collapsed", !(await page.$(`${row("node_modules")} .chev.open`)) && !(await page.$(`${row(".git")} .chev.open`)));
+  check("AC-31 toast names the skipped folders", /^Expanded \d+ folders · skipped 2 \((node_modules, \.git|\.git, node_modules)\)$/.test(said), said);
+  await page.waitForTimeout(800);
+  const wsNow = await (await fetch(`${base}/api/workspace?key=e2eA`, { headers: { "X-FB-Token": TOKEN } })).json();
+  check("AC-31 expanded folders are saved", wsNow.expanded.includes(`${SB}/src/a/b`), `${wsNow.expanded.length} saved`);
+  await page.click("#collapse");
+  await within("AC-31 collapse all", (ms) => page.waitForFunction(() => !document.querySelector("#tree .chev.open"), null, { timeout: ms }));
+  await page.click(row("src"));                       // expands src one level and selects it
+  await within("AC-31 after collapse all a folder opens one level", (ms) => page.waitForSelector(row("src/a"), { timeout: ms }));
+  check("AC-31 … and not its old subfolders", !(await page.$(row("src/a/b"))));
+  await page.focus("#tree"); await page.keyboard.press("Alt+ArrowRight");
+  await within("AC-31 ⌥→ expands below the folder", (ms) => page.waitForSelector(row("src/a/b"), { timeout: ms }));
+  await page.keyboard.press("Alt+ArrowLeft");
+  await within("AC-31 ⌥← collapses it all", (ms) => page.waitForSelector(row("src/a"), { state: "detached", timeout: ms }));
+  await page.click(`${row("src")} .chev`, { modifiers: ["Alt"] });
+  await within("AC-31 ⌥-click on the arrow expands below", (ms) => page.waitForSelector(row("src/a/b"), { timeout: ms }));
+
+  // AC-26 a failed bridge command is shown only in the panel that asked
+  const error = (by) => internal("/internal/error", { message: `bridge says no (${by})`, by });
+  await error("someone-else");
+  await page.waitForTimeout(400);
+  check("AC-26 another panel's error is not shown", !(await toastText()).includes("bridge says no"));
+  await error(client);
+  await within("AC-26 the asking panel shows the bridge error", (ms) => page.waitForFunction((c) => document.getElementById("toast").textContent === `bridge says no (${c})`, client, { timeout: ms }));
+
   // AC-26 ⌘-click → the bridge gets a "viewer" command with a one-time code
   const cmds = [];
   const ctl = new AbortController();
@@ -232,6 +274,7 @@ try {
   await page.waitForTimeout(500);
   const cmd = cmds.find((c) => c.action === "viewer");
   check("AC-26 ⌘-click asks the bridge for a viewer window", cmd?.path === `${SB}/README.md` && /^[0-9a-f]{24}$/.test(cmd?.code ?? ""), JSON.stringify(cmd));
+  check("AC-26 the command names the asking panel", cmd?.by === client && client !== "", `${cmd?.by} vs ${client}`);
   ctl.abort();
   // the viewer page: trades the code, hides the tree, keeps no secret in the URL
   const vp = await browser.newPage({ viewport: { width: 1200, height: 800 } });
@@ -242,6 +285,18 @@ try {
   check("AC-26 URL keeps no code or token", !/[?&](v|t)=/.test(vp.url()), vp.url());
   const again = await fetch(`${base}/ticket?v=${cmd.code}`);
   check("AC-26 the code works once", again.status === 401);
+  // the full path, selectable, copied with one click; it follows the active tab
+  const barText = () => vp.textContent("#pathbar .path");
+  check("AC-26 path bar shows the full path", (await barText()) === `${SB}/README.md`, await barText());
+  check("AC-26 page title is the full path", (await vp.title()) === `${SB}/README.md`, await vp.title());
+  await internal("/internal/viewer-open", { path: `${SB}/app.py` });
+  await within("AC-26 path bar follows the active tab", (ms) => vp.waitForFunction((p) => document.querySelector("#pathbar .path")?.textContent === p, `${SB}/app.py`, { timeout: ms }));
+  await vp.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
+  await vp.click("#pathbar button");
+  await vp.waitForTimeout(200);
+  const clip = await vp.evaluate(() => navigator.clipboard.readText());
+  check("AC-26 copy puts the full path on the clipboard", clip === `${SB}/app.py`, clip);
+  check("AC-26 copy says so", (await vp.textContent("#toast")) === `Copied ${SB}/app.py`, await vp.textContent("#toast"));
   await vp.close();
 
   // AC-27 a new panel starts from the latest split; an open one keeps its own

@@ -12,6 +12,7 @@ check "bad host"          403 "$(curl -s -o /dev/null -w '%{http_code}' -H "Host
 check "bad origin"        403 "$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'Origin: http://evil.example' -H 'Content-Type: application/json' -H "X-FB-Token: $tok" -d '{}' "$b/api/prefs")"
 check "bad content type"  415 "$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: text/plain' -H "X-FB-Token: $tok" -d '{}' "$b/api/prefs")"
 check "internal w/o secret" 401 "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "X-FB-Token: $tok" -d '{}' "$b/internal/state")"
+check "error w/o secret"  401 "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "X-FB-Token: $tok" -d '{"message":"x"}' "$b/internal/error")"
 check "token in query on PUT" 401 "$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -d '{}' "$b/api/prefs?t=$tok")"
 check "relative path"     400 "$(curl -s -o /dev/null -w '%{http_code}' -H "X-FB-Token: $tok" "$b/api/file?path=../../etc/passwd")"
 check "valid request"     200 "$(curl -s -o /dev/null -w '%{http_code}' -H "X-FB-Token: $tok" "$b/api/state")"

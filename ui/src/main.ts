@@ -12,6 +12,7 @@ import { ask, menu, type MenuEntry } from "./dialogs";
 import { applyTheme } from "./theme";
 import { Tree, type EditMode } from "./tree";
 import { Viewer } from "./viewer";
+import { PathBar } from "./viewer-path";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -118,9 +119,9 @@ function renderHeader(s: TermState) {
 
 async function onState(s: TermState) {
   term = s;
-  applyTheme(s.theme);
+  const restyled = applyTheme(s.theme);
   if (VIEW) return; // the viewer window only takes the theme
-  tree.themeChanged();
+  if (restyled) tree.themeChanged(); // row height follows the font size
   renderHeader(s);
   // fbd answers, but nothing tells it where the terminal is: say so, the tree stays usable (AC-30)
   if (!s.bridge) notice(NOT_FOLLOWING, "Bridge not running: Scripts → AutoLaunch → fb_bridge.py, or restart iTerm2.");
@@ -154,6 +155,7 @@ function connect() {
   on("workspace", ({ key: k, rev, by }) => { if (k === key && by !== CLIENT && (!ws || rev > ws.rev)) void loadWorkspace(k); });
   on("fs-change", onFsChange);
   on("viewer-open", ({ path }) => { if (VIEW) viewer.open(path); });
+  on("bridge-error", ({ message, by }) => { if (by === CLIENT) toast(message); }); // only the panel that asked
   es.onerror = () => {
     $("dot").className = "dot off";
     // EventSource hides the status: ask once whether the token or the backend is the problem
@@ -304,13 +306,16 @@ const tree = new Tree($("tree"), {
   changed: scheduleSave,
   context: (p, isDir, ev) => void contextMenu(p, isDir, ev),
   commit,
+  notify: toast,
 });
 
 const viewer = new Viewer($("tabs"), $("tools"), $("vbody"), {
   changed: scheduleSave,
   layout: (has) => $("app").classList.toggle("has-tabs", has),
   reveal: (p) => { tree.selected = new Set([p]); void tree.reveal(p); scheduleSave(); },
+  active: (p) => pathBar?.show(p),
 });
+let pathBar: PathBar | null = null; // viewer window only
 
 const filterEl = $<HTMLInputElement>("filter");
 filterEl.addEventListener("input", () => {
@@ -324,6 +329,7 @@ filterEl.addEventListener("keydown", (e) => {
 const newItem = (mode: "file" | "folder") => { const d = tree.targetDir(); if (d) void tree.startCreate(d, mode); };
 $("refresh").onclick = () => { tree.reload(); viewer.reloadAll(); };
 $("collapse").onclick = () => tree.collapseAll();
+$("expand").onclick = () => void tree.expandAll().then((m) => { if (m) toast(m); });
 $("new-file").onclick = () => newItem("file");
 $("new-folder").onclick = () => newItem("folder");
 $("hidden").onclick = () => {
@@ -383,7 +389,8 @@ function watchToolbeltWidth() {
 
 async function startViewer(path: string) {
   document.documentElement.classList.add("viewer-mode");
-  document.title = basename(path);
+  pathBar = new PathBar($("pathbar"), copyText);
+  pathBar.show(path);
   const code = params.get("v");
   if (code && !TOKEN) {
     try { await redeemTicket(code); } catch { return authFailed(); }

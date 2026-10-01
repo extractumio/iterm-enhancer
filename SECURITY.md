@@ -11,6 +11,7 @@ only by the Files panel:
 | The panel page itself (a malicious README or SVG) | Markdown raw HTML disabled, `javascript:` links dropped, remote images not loaded, CSP `script-src 'self'`, SVG only through `<img>`, `Referrer-Policy: no-referrer`, links never navigate the panel |
 | Writes outside your files | writes only under `FB_WRITABLE_ROOTS` (`$HOME:/tmp`), symlinks resolved; deletion moves to the Trash |
 | The viewer window's URL (visible in its address bar) | holds a one-time code, valid 60 s, traded once for the token; never the token itself |
+| A forged error toast | bridge errors arrive only through `/internal/error` with the per-launch bridge secret; the text is capped at 300 characters, control characters are dropped, and the panel shows it as plain text |
 | Typing into the wrong terminal | terminal commands need a per-launch bridge secret inside fbd, the key of the pane the panel shows, an idle shell for `cd`, and no control characters |
 
 Report a vulnerability privately through the repository's security advisories

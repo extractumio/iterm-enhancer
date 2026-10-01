@@ -17,6 +17,7 @@ const ctx = await esbuild.context({
   minify: !watch,
   sourcemap: watch ? "inline" : false,
   target: ["safari16"],
+  loader: { ".svg": "text" },  // icons are inlined as markup (src/icons.ts)
   logLevel: "info",
 });
 if (watch) await ctx.watch();

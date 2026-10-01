@@ -1,38 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Virtual file tree. Folders are paged from the backend (500 rows per page), so a
 // folder with 500,000 entries costs one scrollbar and ~40 DOM rows. Expanded folders
-// are spliced into their parent by index: the row count of a folder is its total plus
-// the row counts of its expanded children (plus one row while a new item is being named).
-// Row counts are memoized per structural version, so rendering a frame is cheap.
+// are spliced into their parent by index (row arithmetic in tree-rows.ts, row HTML in
+// tree-render.ts, "expand all" in tree-expand.ts).
 
-import { api, basename, dirname, esc, fmtSize, isDirKind, isUnder, join, rebase, type Page, type Row } from "./api";
-import { fileIcon, folderIcon, chevron } from "./icons";
+import { api, basename, dirname, isDirKind, isUnder, join, rebase, type Page } from "./api";
+import { rowHtml, type RowView } from "./tree-render";
+import { PAGE, indexOf, rowAt, rowsOf, type DirNode, type RowDesc, type RowsHost } from "./tree-rows";
+import { expandAll, summary } from "./tree-expand";
 import { InlineEdit, type EditMode } from "./tree-edit";
 
 export type { EditMode } from "./tree-edit";
 
-const PAGE = 500;
 const OVERSCAN = 12;
-
-interface DirNode {
-  path: string;
-  loaded: boolean;
-  writable: boolean;
-  error?: string;
-  total: number;
-  gen: number;
-  pages: Map<number, Row[]>;
-  pending: Set<number>;
-  /** expanded children with their index in this folder's (filtered) listing */
-  children: Map<string, { idx: number; node: DirNode }>;
-  sorted?: { idx: number; node: DirNode }[];
-  memo?: { v: number; rows: number };
-}
-
-type RowDesc =
-  | { kind: "entry"; dir: DirNode; idx: number; depth: number; row?: Row }
-  | { kind: "note"; dir: DirNode; depth: number; text: string; spin?: boolean }
-  | { kind: "edit"; dir: DirNode; depth: number };
 
 export interface TreeCallbacks {
   open(path: string): void;                              // file activated
@@ -40,6 +20,7 @@ export interface TreeCallbacks {
   changed(): void;                                       // expanded/selected changed → persist
   context(path: string | null, isDir: boolean, ev: MouseEvent): void;
   commit(mode: EditMode, dir: string, name: string, path?: string): Promise<string | null>;
+  notify(message: string): void;                         // e.g. what "expand all" did
 }
 
 export class Tree {
@@ -55,9 +36,19 @@ export class Tree {
   private version = 0;               // bumps on every structural change; invalidates memos
   private renderQueued = false;
   private epoch = 0;                 // bumps on re-root; stale async results are dropped
+  private expandRun = 0;             // bumps on expand all and any collapse; cancels a running one
   private spacer = document.createElement("div");
   private layer = document.createElement("div");
   private edit: InlineEdit;
+  /** The tree's state as the row arithmetic reads it. */
+  private rows: RowsHost = ((t: Tree) => ({
+    get version() { return t.version; },
+    get filter() { return t.filter; },
+    get root() { return t.root; },
+    nodes: t.nodes,
+    creatingIn: (p: string) => t.edit.creatingIn(p),
+    load: (n: DirNode, page: number) => void t.load(n, page),
+  }))(this);
 
   constructor(private el: HTMLElement, private cb: TreeCallbacks) {
     this.spacer.className = "spacer";
@@ -85,10 +76,16 @@ export class Tree {
     this.root = this.node(root);
     const epoch = this.epoch;
     await this.load(this.root, 0);
-    // restore expanded folders parent-first so each can be located in its parent
-    for (const p of [...expanded].sort((a, b) => a.length - b.length)) {
+    // restore expanded folders level by level: each is located in its (already open) parent
+    const levels = new Map<number, string[]>();
+    for (const p of expanded) {
+      if (!isUnder(p, root) || p === root) continue;                    // also for root "/"
+      const depth = p.split("/").length;
+      levels.set(depth, [...(levels.get(depth) ?? []), p]);
+    }
+    for (const depth of [...levels.keys()].sort((a, b) => a - b)) {
       if (epoch !== this.epoch) return;
-      if (p.startsWith(root + "/")) await this.expand(p, false);
+      await Promise.all(levels.get(depth)!.map((p) => this.expand(p, false)));
     }
     if (epoch !== this.epoch) return;
     this.render();
@@ -135,9 +132,35 @@ export class Tree {
     this.touch();
   }
 
+  /** Expand every folder below `start` (the root by default), bounded (AC-31). Returns
+   *  what was done, or null when cancelled by a re-root, a collapse or another expand. */
+  async expandAll(start = this.root?.path): Promise<string | null> {
+    if (!this.root || !start) return null;
+    const run = ++this.expandRun, epoch = this.epoch, root = this.root.path;
+    const alive = () => run === this.expandRun && epoch === this.epoch;
+    const wasOpen = new Set(this.expanded);           // the user's open folders stay open
+    const r = await expandAll(start, root, {
+      alive,
+      expand: async (p) => {
+        if (p !== root && !this.expanded.has(p)) await this.expand(p, false);
+        const n = this.nodes.get(p);
+        return alive() && n?.loaded && !n.error && (p === root || this.expanded.has(p)) ? { total: n.total, rows: n.pages.get(0) ?? [] } : null;
+      },
+      collapse: (p) => { if (!wasOpen.has(p)) this.collapse(p, false, false); },
+    });
+    if (r.cancelled) return null;
+    this.cb.changed();
+    return summary(r);
+  }
+
+  private expandAllFrom(p: string) { void this.expandAll(p).then((m) => { if (m) this.cb.notify(m); }); }
+
   collapseAll() {
+    this.expandRun++;
     this.expanded.clear();
-    this.root?.children.clear();
+    // every cached folder forgets its open children, or re-opening one shows them again
+    for (const n of this.nodes.values()) { n.children.clear(); n.sorted = undefined; }
+    if (this.edit.edit) this.edit.cancel();
     this.cb.changed();
     this.touch();
   }
@@ -220,7 +243,7 @@ export class Tree {
     for (const [name, c] of [...n.children]) {
       const idx = await this.locate(n, name).catch(() => null);
       if (epoch !== this.epoch) return;
-      if (idx == null || idx >= n.total) this.collapse(join(n.path, name), false);
+      if (idx == null || idx >= n.total) this.collapse(join(n.path, name), false, false); // not the user: expand all goes on
       else c.idx = idx;
     }
     n.sorted = undefined;
@@ -253,7 +276,8 @@ export class Tree {
     if (persist) this.cb.changed();
   }
 
-  private collapse(path: string, persist = true) {
+  private collapse(path: string, persist = true, cancelExpand = true) {
+    if (cancelExpand) this.expandRun++;
     for (const p of [...this.expanded]) {
       if (!isUnder(p, path)) continue;
       this.expanded.delete(p);
@@ -269,70 +293,10 @@ export class Tree {
     if (this.expanded.has(path)) this.collapse(path); else void this.expand(path);
   }
 
-  // ── row arithmetic ──────────────────────────────────────────────────────────
-
-  private rowsOf(n: DirNode): number {
-    if (n.memo?.v === this.version) return n.memo.rows;
-    const extra = this.edit.creatingIn(n.path);
-    let rows = 1 + extra;
-    if (n.loaded && !n.error && n.total > 0) {
-      rows = n.total + extra;
-      for (const c of n.children.values()) rows += this.rowsOf(c.node);
-    }
-    n.memo = { v: this.version, rows };
-    return rows;
-  }
-
-  private rowAt(n: DirNode, i: number, depth: number): RowDesc {
-    if (this.edit.creatingIn(n.path)) {
-      if (i === 0) return { kind: "edit", dir: n, depth };
-      i--;
-    }
-    if (!n.loaded) return { kind: "note", dir: n, depth, text: "reading…", spin: true };
-    if (n.error) return { kind: "note", dir: n, depth, text: `⚠ ${n.error}` };
-    if (n.total === 0) return { kind: "note", dir: n, depth, text: this.filter ? "no matches" : "empty" };
-    let pos = i, consumed = 0;
-    n.sorted ??= [...n.children.values()].sort((a, b) => a.idx - b.idx);
-    for (const c of n.sorted) {
-      const block = c.idx - consumed + 1;
-      if (pos < block) return this.entry(n, consumed + pos, depth);
-      pos -= block;
-      consumed = c.idx + 1;
-      const sub = this.rowsOf(c.node);
-      if (pos < sub) return this.rowAt(c.node, pos, depth + 1);
-      pos -= sub;
-    }
-    return this.entry(n, consumed + pos, depth);
-  }
-
-  private entry(n: DirNode, idx: number, depth: number): RowDesc {
-    // a stale child index can point past the end until relocate() runs: never fetch there
-    if (idx >= n.total) return { kind: "note", dir: n, depth, text: "" };
-    const page = Math.floor(idx / PAGE);
-    const row = n.pages.get(page)?.[idx - page * PAGE];
-    if (!row && !n.pending.has(page)) void this.load(n, page);
-    return { kind: "entry", dir: n, idx, depth, row };
-  }
-
-  /** Global row index of entry `idx` in folder `n`, or -1 if an ancestor is collapsed. */
-  private indexOf(n: DirNode, idx: number): number {
-    let base = 0;
-    if (n !== this.root) {
-      const parent = this.nodes.get(dirname(n.path));
-      const me = parent?.children.get(basename(n.path));
-      const at = parent && me ? this.indexOf(parent, me.idx) : -1;
-      if (at < 0) return -1;
-      base = at + 1;
-    }
-    let offset = idx + this.edit.creatingIn(n.path);
-    for (const c of n.children.values()) if (c.idx < idx) offset += this.rowsOf(c.node);
-    return base + offset;
-  }
-
   async reveal(path: string) {
     const parent = this.nodes.get(dirname(path));
     const idx = parent ? await this.locate(parent, basename(path)) : null;
-    const at = parent && idx != null ? this.indexOf(parent, idx) : -1;
+    const at = parent && idx != null ? indexOf(parent, idx, this.rows) : -1;
     if (at < 0) return;
     this.cursor = this.anchor = at;
     this.scrollIntoView(at);
@@ -355,14 +319,14 @@ export class Tree {
 
   private render() {
     if (!this.root) { this.layer.innerHTML = ""; return; }
-    const total = this.rowsOf(this.root);
+    const total = rowsOf(this.root, this.rows);
     this.spacer.style.height = `${total * this.rowH}px`;
     const first = Math.max(0, Math.floor(this.el.scrollTop / this.rowH) - OVERSCAN);
     const last = Math.min(total, Math.ceil((this.el.scrollTop + this.el.clientHeight) / this.rowH) + OVERSCAN);
     const html: string[] = [];
     let editRow = -1, editDepth = 0;
     for (let i = first; i < last; i++) {
-      const d = this.rowAt(this.root, i, 0);
+      const d = rowAt(this.root, i, 0, this.rows);
       if (d.kind === "edit" || (d.kind === "entry" && d.row && this.edit.renaming(join(d.dir.path, d.row.n)))) {
         editRow = i; editDepth = d.depth;
       }
@@ -374,32 +338,10 @@ export class Tree {
   }
 
   private rowHtml(d: RowDesc, i: number): string {
-    const guides = `<span class="guides">${"<i></i>".repeat(d.depth)}</span>`;
-    if (d.kind === "edit") {
-      const icon = this.edit.edit?.mode === "folder" ? folderIcon(false) : fileIcon(this.edit.value);
-      return `<div class="row editing" data-i="${i}">${guides}<span class="chev"></span>${icon}</div>`;
-    }
-    if (d.kind === "note")
-      return `<div class="row note" data-i="${i}">${guides}<span class="chev"></span>${d.spin ? '<span class="spin"></span>' : ""}<span class="muted">${esc(d.text)}</span></div>`;
-    if (!d.row)
-      return `<div class="row" data-i="${i}">${guides}<span class="chev"></span><span class="skeleton"></span></div>`;
-    const r = d.row, p = join(d.dir.path, r.n), isDir = isDirKind(r.k);
-    const open = isDir && this.expanded.has(p);
-    const renaming = this.edit.renaming(p);
-    const cls = ["row", this.selected.has(p) ? "sel" : "", i === this.cursor ? "cursor" : "", renaming ? "editing" : ""].join(" ");
-    return `<div class="${cls}" data-i="${i}" data-p="${esc(p)}" data-d="${isDir ? 1 : 0}" title="${esc(r.n)}">${guides}` +
-      `<span class="chev${open ? " open" : ""}">${isDir ? chevron : ""}</span>` +
-      (isDir ? folderIcon(open) : fileIcon(r.n)) +
-      (renaming ? "" : `<span class="name${isDir ? " dir" : ""}${r.n.startsWith(".") ? " hidden" : ""}">${this.highlight(r.n)}</span>` +
-        (r.k === "l" || r.k === "L" ? '<span class="link" title="symlink">↪</span>' : "") +
-        (isDir ? "" : `<span class="size">${fmtSize(r.s)}</span>`)) + "</div>";
-  }
-
-  private highlight(name: string) {
-    const i = this.filter ? name.toLowerCase().indexOf(this.filter.toLowerCase()) : -1;
-    if (i < 0) return esc(name);
-    const j = i + this.filter.length;
-    return esc(name.slice(0, i)) + "<mark>" + esc(name.slice(i, j)) + "</mark>" + esc(name.slice(j));
+    const view: RowView = d.kind === "entry" ? { kind: "entry", dir: d.dir.path, depth: d.depth, row: d.row }
+      : d.kind === "note" ? d
+      : { kind: "edit", depth: d.depth, folder: this.edit.edit?.mode === "folder", name: this.edit.value };
+    return rowHtml(view, i, { expanded: this.expanded, selected: this.selected, cursor: this.cursor, filter: this.filter, renaming: (p) => this.edit.renaming(p) });
   }
 
   private isHiddenPath(p: string) {
@@ -433,6 +375,10 @@ export class Tree {
     if (!row) return;
     const p = row.dataset.p!, i = Number(row.dataset.i), isDir = row.dataset.d === "1";
     if (e.shiftKey) return this.select(p, i, "range");
+    if (e.altKey && isDir && (e.target as HTMLElement).closest(".chev")) { // macOS: ⌥-click the disclosure arrow
+      this.select(p, i);
+      return this.expanded.has(p) ? this.collapse(p) : this.expandAllFrom(p);
+    }
     if (e.metaKey && !isDir) { this.select(p, i); return this.cb.openWindow(p); }
     if (e.metaKey || e.altKey) return this.select(p, i, "toggle");
     this.select(p, i);
@@ -450,13 +396,19 @@ export class Tree {
 
   private descAt(i: number) {
     if (!this.root || i < 0) return null;
-    const d = this.rowAt(this.root, i, 0);
+    const d = rowAt(this.root, i, 0, this.rows);
     return d.kind === "entry" && d.row ? { d, p: join(d.dir.path, d.row.n), isDir: isDirKind(d.row.k) } : null;
   }
 
   private onKey(e: KeyboardEvent) {
-    if (!this.root || e.metaKey || e.ctrlKey || e.altKey) return;
-    const total = this.rowsOf(this.root);
+    if (!this.root || e.metaKey || e.ctrlKey) return;
+    if (e.altKey) {                                       // macOS: ⌥→ / ⌥← on a folder, recursively
+      const cur = this.descAt(this.cursor);
+      if (!cur?.isDir || (e.key !== "ArrowRight" && e.key !== "ArrowLeft")) return;
+      e.preventDefault();
+      return e.key === "ArrowRight" ? this.expandAllFrom(cur.p) : this.collapse(cur.p);
+    }
+    const total = rowsOf(this.root, this.rows);
     const move = (to: number) => {
       to = Math.max(0, Math.min(total - 1, to));
       const x = this.descAt(to);

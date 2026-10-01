@@ -1,28 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 """AC-25 / AC-26 end-to-end in iTerm2: a new window gets the Toolbelt, ⌘-click opens one
-viewer window and reuses it, and the viewer never becomes "the focused pane".
+viewer window (a browser, even when iTerm2 holds the profile as a terminal profile, as after
+a restart) and reuses it, and the viewer never becomes "the focused pane".
 Needs the installed bridge (make install && make restart). Closes what it opens."""
 import asyncio
-import json
-import os
-import urllib.request
-from pathlib import Path
 
 import iterm2
 
-PORT = int(os.environ.get("FB_PORT", "47821"))
-APP_DIR = Path(os.environ.get("FB_APP_DIR") or Path.home() / "Library/Application Support/iterm-filebrowser")
-TOKEN = (APP_DIR / "token").read_text().strip()
-REPO = Path(__file__).resolve().parent.parent
-
-
-def call(method, path, body=None):
-    req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method,
-                                 data=json.dumps(body).encode() if body is not None else None,
-                                 headers={"X-FB-Token": TOKEN, "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=3) as r:
-        return r.status, json.loads(r.read() or b"null")
+from e2e_common import REPO, call
+from fbbridge.viewer_profile import VIEWER_GUID, VIEWER_PROFILE
 
 
 async def main(conn):
@@ -53,6 +40,9 @@ async def main(conn):
         await term.current_tab.current_session.async_send_text(f"cd {REPO}\r")
         await asyncio.sleep(1.2)
         terminal_key = call("GET", "/api/state")[1].get("key")
+        # what iTerm2 does at launch: the dynamic profile is held as a terminal profile
+        for pp in await iterm2.PartialProfile.async_query(conn, guids=[VIEWER_GUID]):
+            await (await pp.async_get_full_profile())._async_simple_set("Custom Command", "No")
         count = len(app.terminal_windows)
         call("POST", "/api/view/open", {"path": str(REPO / "README.md")})
         viewer = None
@@ -66,9 +56,16 @@ async def main(conn):
         print(f"{'PASS' if passed else 'FAIL'} AC-26 ⌘-click opens a viewer window")
         if viewer:
             opened.append(viewer)
-            prof = await viewer.current_tab.current_session.async_get_variable("profileName")
-            print(f"{'PASS' if prof == 'Files Viewer' else 'FAIL'} AC-26 viewer uses the 'Files Viewer' profile ({prof})")
-            ok &= prof == "Files Viewer"
+            session = viewer.current_tab.current_session
+            prof = await session.async_get_variable("profileName")
+            print(f"{'PASS' if prof == VIEWER_PROFILE else 'FAIL'} AC-26 viewer uses the '{VIEWER_PROFILE}' profile ({prof})")
+            ok &= prof == VIEWER_PROFILE
+            await asyncio.sleep(0.5)
+            tty = await session.async_get_variable("tty")
+            kind = (await session.async_get_profile()).all_properties.get("Custom Command")
+            passed = tty is None and kind == "Browser"
+            ok &= passed
+            print(f"{'PASS' if passed else 'FAIL'} AC-26 viewer is a browser after the profile was held as a terminal (tty={tty}, {kind})")
             await asyncio.sleep(1.5)  # focused: the bridge must keep following the terminal
             key_now = call("GET", "/api/state")[1].get("key")
             passed = key_now == terminal_key

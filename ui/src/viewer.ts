@@ -24,6 +24,7 @@ export interface ViewerCallbacks {
   changed(): void;                 // tabs / active / view mode changed → persist
   layout(hasTabs: boolean): void;  // show or hide the viewer area
   reveal(path: string): void;      // select the file in the tree
+  active?(path: string | null): void; // the active tab changed (the viewer window's path bar)
 }
 
 interface Doc {
@@ -121,9 +122,7 @@ export class Viewer {
   activate(i: number) {
     this.remember();
     this.active = i;
-    this.renderTabs();
-    this.show();
-    this.cb.changed();
+    this.tabsChanged();
     void this.revalidate(this.tabs[i].path);
   }
 
@@ -143,9 +142,7 @@ export class Viewer {
     this.docs.delete(t.path);
     if (this.active != null && (at < this.active || this.active >= this.tabs.length)) this.active--;
     if (!this.tabs.length) this.active = null;
-    this.renderTabs();
-    this.show();
-    this.cb.changed();
+    this.tabsChanged();
     return true;
   }
 
@@ -158,7 +155,7 @@ export class Viewer {
 
   /** Unsaved files under `prefix` (for "trash" confirmations). */
   dirtyUnder(prefix: string): string[] {
-    return [...this.docs].filter(([p, d]) => d.dirty && (p === prefix || p.startsWith(prefix + "/"))).map(([p]) => p);
+    return [...this.docs].filter(([p, d]) => d.dirty && isUnder(p, prefix)).map(([p]) => p);
   }
 
   /** Tabs follow a rename of a file or of a folder above them. */
@@ -172,25 +169,21 @@ export class Viewer {
       return [move(p), d];
     }));
     this.shown = null;
-    this.renderTabs();
-    void this.show();
-    this.cb.changed();
+    this.tabsChanged();
   }
 
   /** Close tabs of trashed files (no prompt: the user already confirmed). */
   removed(paths: string[]) {
     const gone = (p: string) => paths.some((x) => isUnder(p, x));
     const before = this.tabs.length;
-    const cur = this.active != null ? this.tabs[this.active] : null;
+    const cur = this.activeTab;
     this.tabs = this.tabs.filter((t) => !gone(t.path));
     for (const p of [...this.docs.keys()]) if (gone(p)) this.docs.delete(p);
     if (this.tabs.length === before) return;
     const i = cur ? this.tabs.indexOf(cur) : -1;
     this.active = this.tabs.length ? (i >= 0 ? i : Math.min(this.active ?? 0, this.tabs.length - 1)) : null;
     this.shown = null;
-    this.renderTabs();
-    this.show();
-    this.cb.changed();
+    this.tabsChanged();
   }
 
   /** Files changed on disk (etag now, null = gone): clean tabs reload, dirty tabs get a
@@ -208,13 +201,19 @@ export class Viewer {
   /** Forget cached contents except unsaved ones (refresh button). */
   reloadAll() {
     for (const [p, d] of this.docs) if (!d.dirty) this.docs.delete(p);
-    this.shown = null;
-    void this.show();
+    this.reshow();
   }
 
   get hasDirty() { return [...this.docs.values()].some((d) => d.dirty); }
 
-  private activePath() { return this.active != null ? this.tabs[this.active]?.path : null; }
+  private get activeTab(): Tab | null { return this.active != null ? this.tabs[this.active] ?? null : null; }
+  private activePath() { return this.activeTab?.path ?? null; }
+
+  /** Show the active tab again from scratch (its file or view changed). */
+  private reshow() { this.shown = null; void this.show(); }
+
+  /** The tab strip changed: draw it and the active tab, and persist. */
+  private tabsChanged() { this.renderTabs(); void this.show(); this.cb.changed(); }
 
   /** Apply `update` to `path` and show it again, keeping the scroll position. The screen
    *  is remembered first, so the update is not overwritten by the editor's old state. */
@@ -222,7 +221,7 @@ export class Viewer {
     const onScreen = this.activePath() === path;
     if (onScreen) this.remember();
     update?.();
-    if (onScreen) { this.shown = null; void this.show(); }
+    if (onScreen) this.reshow();
   }
 
   private renderTabs() {
@@ -234,6 +233,7 @@ export class Viewer {
         `<span class="close" title="Close">${dirty ? "●" : "×"}</span></div>`;
     }).join("");
     this.tabsEl.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    this.cb.active?.(this.activePath());
   }
 
   // ── content ─────────────────────────────────────────────────────────────────
@@ -291,7 +291,7 @@ export class Viewer {
   }
 
   private async show() {
-    const tab = this.active != null ? this.tabs[this.active] : null;
+    const tab = this.activeTab;
     if (!tab) { this.body.innerHTML = ""; this.tools.innerHTML = ""; this.shown = null; return; }
     const mode = this.modeOf(tab);
     const d = this.doc(tab.path);
@@ -442,7 +442,7 @@ export class Viewer {
     if (!d) return;
     d.dirty = false; d.diskChanged = false; d.loading = undefined; d.file = undefined; d.state = undefined;
     this.renderTabs();
-    if (this.activePath() === path) { this.shown = null; void this.show(); }
+    if (this.activePath() === path) this.reshow();
   }
 
   private renderTools(tab: Tab, d: Doc) {
@@ -466,7 +466,7 @@ export class Viewer {
     if (!path) return;
     if (t.closest("[data-open-app]")) return void this.openWithApp(path);
     if (t.closest("[data-close-tab]") && this.active != null) return void this.close(this.active);
-    if (t.closest("[data-retry]")) { this.docs.delete(path); this.shown = null; return void this.show(); }
+    if (t.closest("[data-retry]")) { this.docs.delete(path); return this.reshow(); }
     const disk = t.closest<HTMLElement>("[data-disk]");
     if (disk) {
       if (disk.dataset.disk === "reload") this.discard(path);

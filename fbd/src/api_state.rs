@@ -86,10 +86,24 @@ pub async fn get_workspace(State(app): State<Shared>, Query(q): Query<KeyQuery>)
     Json(app.store.get(&q.key, cwd.as_deref()))
 }
 
-/// `X-FB-Client` names the writing panel, so its own echo event can be ignored.
+/// `X-FB-Client` names the panel that asked: it ignores the echo of its own workspace
+/// writes, and only it is told when the bridge fails its command.
+fn client(headers: &HeaderMap) -> Option<String> {
+    headers.get("x-fb-client").and_then(|v| v.to_str().ok()).map(str::to_string)
+}
+
+/// A command for the bridge, addressed back to the panel that asked (its errors go there).
+fn command(app: &App, mut cmd: Value, headers: &HeaderMap) {
+    cmd["by"] = json!(client(headers));
+    let _ = app.commands.send(cmd);
+}
+
+fn no_bridge() -> Response {
+    err(StatusCode::SERVICE_UNAVAILABLE, "no_bridge", "iTerm2 bridge not connected")
+}
+
 pub async fn put_workspace(State(app): State<Shared>, Query(q): Query<KeyQuery>, headers: HeaderMap, Json(pane): Json<Pane>) -> Response {
-    let by = headers.get("x-fb-client").and_then(|v| v.to_str().ok()).map(str::to_string);
-    match app.store.put(&q.key, pane, by) {
+    match app.store.put(&q.key, pane, client(&headers)) {
         Ok(rev) => {
             app.refresh_watch();
             Json(json!({"rev": rev})).into_response()
@@ -131,14 +145,14 @@ fn shell_quote(s: &str) -> String {
     }
 }
 
-pub async fn terminal(State(app): State<Shared>, UrlPath(action): UrlPath<String>, Json(b): Json<TermBody>) -> ApiResult {
+pub async fn terminal(State(app): State<Shared>, UrlPath(action): UrlPath<String>, headers: HeaderMap, Json(b): Json<TermBody>) -> ApiResult {
     if b.paths.iter().chain(&b.path).any(|s| has_control(s)) {
         return Err(err(StatusCode::BAD_REQUEST, "control_chars", "Name contains control characters — not sent to the terminal"));
     }
     let session = {
         let t = app.term.lock();
         let Some(session) = t.state["session"].as_str().filter(|_| t.bridge_alive()).map(str::to_string) else {
-            return Err(err(StatusCode::SERVICE_UNAVAILABLE, "no_bridge", "iTerm2 bridge not connected"));
+            return Err(no_bridge());
         };
         if t.state["key"].as_str() != Some(b.key.as_str()) {
             return Err(err(StatusCode::CONFLICT, "focus_changed", "Focus moved to another terminal — command not sent"));
@@ -154,7 +168,7 @@ pub async fn terminal(State(app): State<Shared>, UrlPath(action): UrlPath<String
         ("cd", Some(p)) => format!("cd -- {}\r", shell_quote(&p)),
         _ => return Err(err(StatusCode::BAD_REQUEST, "bad_request", "insert needs paths, cd needs path")),
     };
-    let _ = app.commands.send(json!({"action": "type", "session": session, "text": text}));
+    command(&app, json!({"action": "type", "session": session, "text": text}), &headers);
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -165,13 +179,13 @@ pub struct ViewBody {
 
 /// Open a file in the large viewer window (AC-26). The bridge creates the window with a
 /// one-time code in its URL, or reuses the open one (then fbd relays `viewer-open`).
-pub async fn view_open(State(app): State<Shared>, Json(b): Json<ViewBody>) -> ApiResult {
+pub async fn view_open(State(app): State<Shared>, headers: HeaderMap, Json(b): Json<ViewBody>) -> ApiResult {
     crate::http::abs(&b.path)?;
     if !app.term.lock().bridge_alive() {
-        return Err(err(StatusCode::SERVICE_UNAVAILABLE, "no_bridge", "iTerm2 bridge not connected"));
+        return Err(no_bridge());
     }
     let code = app.tickets.issue();
-    let _ = app.commands.send(json!({"action": "viewer", "path": b.path, "code": code}));
+    command(&app, json!({"action": "viewer", "path": b.path, "code": code}), &headers);
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -186,14 +200,36 @@ pub async fn internal_viewer_open(State(app): State<Shared>, Json(b): Json<ViewB
     StatusCode::NO_CONTENT
 }
 
+#[derive(Deserialize)]
+pub struct ErrorBody {
+    message: String,
+    by: Option<String>,
+}
+
+const ERROR_MAX: usize = 300;
+
+/// A bridge command failed: tell the panel that asked (fail loud, AC-26).
+pub async fn internal_error(State(app): State<Shared>, Json(b): Json<ErrorBody>) -> StatusCode {
+    app.bus.send(bridge_error(&b.message, b.by));
+    StatusCode::NO_CONTENT
+}
+
+fn bridge_error(message: &str, by: Option<String>) -> Event {
+    let mut message: String = message.chars().filter(|c| !c.is_control()).take(ERROR_MAX).collect();
+    if message.is_empty() {
+        message = "iTerm2 bridge command failed".into();
+    }
+    Event::BridgeError { message, by }
+}
+
 /// The viewer page takes the files sent while it was still loading (then they are gone).
 pub async fn view_pending(State(app): State<Shared>) -> Json<Vec<String>> {
     Json(std::mem::take(&mut *app.viewer_pending.lock()))
 }
 
 /// A panel's Toolbelt was resized by the user: make it the default for new windows (AC-27).
-pub async fn toolbelt_width(State(app): State<Shared>) -> StatusCode {
-    let _ = app.commands.send(json!({"action": "default-width"}));
+pub async fn toolbelt_width(State(app): State<Shared>, headers: HeaderMap) -> StatusCode {
+    command(&app, json!({"action": "default-width"}), &headers);
     StatusCode::NO_CONTENT
 }
 
@@ -241,5 +277,18 @@ mod tests {
         assert_eq!(shell_quote("my file's"), "'my file'\\''s'");
         assert!(has_control("a\u{3}b") && has_control("x\r") && has_control("\u{7f}"));
         assert!(!has_control("naïve file.txt"));
+    }
+
+    #[test]
+    fn bridge_errors_are_capped_and_addressed() {
+        let e = bridge_error(&format!("bad\n{}", "x".repeat(400)), Some("p1".into()));
+        assert_eq!(e.name(), "bridge-error");
+        let v: Value = serde_json::from_str(&e.data()).unwrap();
+        assert_eq!(v["by"], "p1");
+        let m = v["message"].as_str().unwrap();
+        assert!(m.starts_with("badx") && m.chars().count() == ERROR_MAX, "controls dropped, capped");
+        let v: Value = serde_json::from_str(&bridge_error("", None).data()).unwrap();
+        assert_eq!(v["message"], "iTerm2 bridge command failed");
+        assert!(v["by"].is_null());
     }
 }

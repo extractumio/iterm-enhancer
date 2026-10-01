@@ -92,7 +92,7 @@ impl Tickets {
     const TTL: Duration = Duration::from_secs(60);
 
     fn issue(&self) -> String {
-        let code: String = rand::random::<[u8; 12]>().iter().map(|b| format!("{b:02x}")).collect();
+        let code = auth::random_hex::<12>();
         let mut t = self.0.lock();
         t.retain(|(_, at)| at.elapsed() < Self::TTL);
         t.push((code.clone(), Instant::now()));
@@ -152,6 +152,7 @@ fn routes(app: Shared) -> Router {
         .route("/api/ui/toolbelt-width", post(toolbelt_width))
         .route("/ticket", get(ticket))
         .route("/internal/viewer-open", post(internal_viewer_open))
+        .route("/internal/error", post(internal_error))
         .route("/internal/state", post(internal_state))
         .route("/internal/commands", get(internal_commands))
         .fallback(http::ui)

@@ -21,7 +21,9 @@
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.5 3.5h4l1.5 1.5h7.5v4M1.5 3.5v9.5h7M12 9.5v5M9.5 12h5"/></svg></button>
       <button class="icon" id="hidden" title="Hide dotfiles">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg></button>
-      <button class="icon" id="collapse" title="Collapse all folders">
+      <button class="icon" id="expand" title="Expand all folders (⌥→ on a folder)">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 3l4 3 4-3M4 10l4 3 4-3"/></svg></button>
+      <button class="icon" id="collapse" title="Collapse all folders (⌥← on a folder)">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4-3 4 3M4 13l4-3 4 3"/></svg></button>
       <button class="icon" id="refresh" title="Re-read folders and files">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5V5h-2.5"/></svg></button>
@@ -35,6 +37,7 @@
   <div id="tree" tabindex="0"></div>
   <div id="splitter" title="Drag to resize · double-click to reset"></div>
   <div id="viewer">
+    <div id="pathbar"></div>
     <div class="vbar">
       <div id="tabs"></div>
       <div id="tools"></div>

@@ -4,31 +4,26 @@ large viewer window (AC-26) with its remembered size (AC-27)."""
 import asyncio
 import json
 import urllib.parse
-from pathlib import Path
 
 import iterm2
 
-from .common import APP_DIR, AUTO_TOOLBELT, BASE, log
+from .common import APP_DIR, AUTO_TOOLBELT, BASE, UserError, log
 from .procinfo import iterm_uptime
+from .viewer_profile import BROWSER, NOT_BROWSER, VIEWER_GUID, VIEWER_PROFILE, ensure_browser, install_viewer_profile
 
-VIEWER_PROFILE = "Files Viewer"
-VIEWER_GUID = "9F7C4C2B-5E21-4B0F-A6C2-F11E5B0A0C01"
-DYNAMIC_PROFILE = Path.home() / "Library/Application Support/iTerm2/DynamicProfiles/iterm-filebrowser.json"
 STATE_FILE = APP_DIR / "bridge.json"
 
 
-def install_viewer_profile():
-    """A browser profile for viewer windows (users need not have one). iTerm2 watches the
-    DynamicProfiles folder, so writing the file is enough."""
-    profile = {"Profiles": [{"Name": VIEWER_PROFILE, "Guid": VIEWER_GUID, "Custom Command": "Browser",
-                             "Show Status Bar": False, "Tags": ["iterm-filebrowser"]}]}
-    text = json.dumps(profile, indent=2)
-    try:
-        if not DYNAMIC_PROFILE.exists() or DYNAMIC_PROFILE.read_text() != text:
-            DYNAMIC_PROFILE.parent.mkdir(parents=True, exist_ok=True)
-            DYNAMIC_PROFILE.write_text(text)
-    except OSError as e:
-        log(f"viewer profile not written: {e}")
+async def kind_of(session):
+    """The "Custom Command" of a session's profile ("Browser" for a browser session)."""
+    return (await session.async_get_profile()).all_properties.get("Custom Command")
+
+
+async def profile_kind(conn):
+    """The stored "Custom Command" of the viewer profile (None: iTerm2 has no such profile)."""
+    for p in await iterm2.PartialProfile.async_query(conn, guids=[VIEWER_GUID]):
+        return (await p.async_get_full_profile()).all_properties.get("Custom Command")
+    return None
 
 
 class Windows:
@@ -49,13 +44,12 @@ class Windows:
     # ── Toolbelt in new windows ──────────────────────────────────────────────
 
     async def tick(self, conn):
-        ids = {w.window_id for w in self.app.terminal_windows}
-        self.pending |= ids - self.known - {self.viewer_id}
+        ids = {w.window_id for w in self.app.terminal_windows} - {self.viewer_id}  # never a Toolbelt there
+        self.pending |= ids - self.known
         self.known |= ids
         self.pending &= ids
-        self.pending.discard(self.viewer_id)
         key = self.app.current_terminal_window
-        if AUTO_TOOLBELT and key and key.window_id in self.pending and key.window_id != self.viewer_id:
+        if AUTO_TOOLBELT and key and key.window_id in self.pending:
             self.pending.discard(key.window_id)
             try:
                 st = await iterm2.MainMenu.async_get_menu_item_state(conn, "Show Toolbelt")
@@ -70,10 +64,12 @@ class Windows:
         return session is not None and session.session_id == self.viewer_session
 
     async def adopt_viewer(self):
-        """After a bridge restart, find the viewer window by its profile, so it is reused."""
+        """After a bridge restart, find the viewer window by its profile, so it is reused
+        (not a terminal window that got the profile while it was not a browser profile)."""
         for w in self.app.terminal_windows:
             s = w.current_tab.current_session if w.current_tab else None
-            if s and await s.async_get_variable("profileName") == VIEWER_PROFILE:
+            if (s and await s.async_get_variable("profileName") == VIEWER_PROFILE
+                    and await kind_of(s) == BROWSER):
                 self.viewer_id, self.viewer_session = w.window_id, s.session_id
                 self.known.add(w.window_id)
                 return
@@ -97,26 +93,43 @@ class Windows:
             await asyncio.get_running_loop().run_in_executor(None, self.backend.post, "/internal/viewer-open", {"path": path})
             await win.async_activate()
             return
+        await ensure_browser(lambda: profile_kind(conn), lambda: install_viewer_profile(force=True))
         url = f"{BASE}/?v={code}&view={urllib.parse.quote(path)}"
         custom = iterm2.LocalWriteOnlyProfile()
         custom._simple_set("Initial URL", url)
         created = await iterm2.Window.async_create(conn, profile=VIEWER_PROFILE, profile_customizations=custom)
         if not created:
-            log("viewer window did not open")
-            return
-        self.viewer_id = created.window_id
+            raise UserError("Viewer window failed: iTerm2 did not open a window")
+        self.viewer_id = created.window_id  # at once: tick() must not treat it as a terminal window
         self.known.add(created.window_id)
         self.pending.discard(created.window_id)  # tick() may have seen it before this line
+        try:
+            win = await self._browser_window(created.window_id)
+        except Exception:
+            self.viewer_id = self.viewer_session = None  # never reuse a window that failed
+            raise
+        self.viewer_session = win.current_tab.current_session.session_id
+        await self._place(win)
+
+    async def _browser_window(self, window_id):
+        """The created window once it has its tab, if it holds a browser session; a terminal
+        window is closed."""
         win = None
         for _ in range(40):  # the app model learns about the window's tab a moment later
-            win = self.app.get_window_by_id(created.window_id)
+            win = self.app.get_window_by_id(window_id)
             if win and win.current_tab:
                 break
             await asyncio.sleep(0.05)
         if not win or not win.current_tab:
-            log("viewer window has no tab yet")
-            return
-        self.viewer_session = win.current_tab.current_session.session_id
+            raise UserError("Viewer window failed: the window opened without a tab")
+        session = win.current_tab.current_session
+        if await kind_of(session) != BROWSER:
+            await win.async_close(force=True)
+            raise UserError(NOT_BROWSER)
+        return win
+
+    async def _place(self, win):
+        """At the last viewer frame, or large next to the terminal window the first time."""
         frame = await win.async_get_frame()
         saved = self.state.get("viewer_frame")
         if saved:

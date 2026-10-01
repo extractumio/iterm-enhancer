@@ -186,7 +186,7 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
   box-shadow: 0 6px 24px rgb(0 0 0 / .35); transition: all .2s; max-width: 90%; }
 #toast.on { opacity: 1; transform: translate(-50%, 0); }
 
-/* ── Stage 2: editing, dialogs, menus ───────────────────── */
+/* ── editing, dialogs, menus ───────────────────── */
 .tab.dirty .close { opacity: .9; color: var(--accent); font-size: 11px; }
 .tab.dirty .close:hover { color: var(--fg); }
 .btn.sm { padding: 1px 8px; font-size: .9em; }
@@ -227,6 +227,11 @@ html.viewer-mode header, html.viewer-mode #tree, html.viewer-mode #splitter, htm
 html.viewer-mode #maximize { display: none !important; }
 html.viewer-mode #viewer { display: flex !important; }
 html.viewer-mode .md-body { font-size: 16px; max-width: 82ch; padding-top: 28px; }
+#pathbar { display: none; }
+html.viewer-mode #pathbar { display: flex; align-items: center; gap: 6px; flex: none; padding: 3px 6px 3px 12px;
+  border-bottom: 1px solid var(--line); background: var(--bg-2); color: var(--fg-dim); font: 12px var(--mono); }
+#pathbar .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;
+  text-align: left; user-select: text; -webkit-user-select: text; unicode-bidi: plaintext; }
 #notice { display: none; padding: 16px; color: var(--fg-dim); }
 #notice.on { display: block; }
 #notice b { color: var(--warn); display: block; margin-bottom: 6px; }

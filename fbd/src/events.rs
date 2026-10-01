@@ -35,6 +35,8 @@ pub enum Event {
     FsChange { dirs: Vec<String>, files: Vec<Stamp>, moved: Vec<Moved> },
     /// open `path` as a tab in the viewer window that is already open
     ViewerOpen { path: String },
+    /// a bridge command failed; only the panel `by` (its `X-FB-Client`) shows it
+    BridgeError { message: String, by: Option<String> },
 }
 
 impl Event {
@@ -44,6 +46,7 @@ impl Event {
             Event::Workspace { .. } => "workspace",
             Event::FsChange { .. } => "fs-change",
             Event::ViewerOpen { .. } => "viewer-open",
+            Event::BridgeError { .. } => "bridge-error",
         }
     }
 

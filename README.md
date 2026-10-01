@@ -17,7 +17,13 @@ always shows the directory of the pane you are working in. New windows open with
 - **Editing**: a ● marks an unsaved tab, ⌘S saves. If the file changed on disk since you
   opened it, you get "Overwrite / Reload / Cancel". Closing an unsaved tab asks first.
 - **Viewer window**: ⌘-click a file (or ⌘↩, or "Open in Window") to read and edit it in a
-  large separate window; more files open there as tabs, and it reopens at its last size.
+  large separate window; more files open there as tabs, and it reopens at its last size. A
+  bar on top shows the file's full path with a copy button. The window uses a "Files
+  Viewer" browser profile that the bridge adds to iTerm2 (`make uninstall` removes it).
+- **Expand and collapse all**: header buttons, or ⌥→ / ⌥← (⌥-click the arrow) on one
+  folder. Expanding stops at 200 folders and depth 8, and skips `node_modules`, `.git`,
+  build output and folders with more than 500 entries; a toast says what it skipped.
+- **File-type icons** for code, config, data, docs, images, archives, keys and more.
 - **IDE operations**: new file or folder (⌥N / ⌥⇧N; `a/b` creates nested folders), rename
   with F2, move to Trash with ⌘⌫. Select with ⇧-click and ⌥-click. The context menu copies
   paths, reveals in Finder, inserts the path into the terminal, and `cd`s the terminal to a
@@ -75,6 +81,7 @@ shows. See [SECURITY.md](SECURITY.md).
 | Key | Action |
 |---|---|
 | ↑ ↓ ← → · PgUp PgDn Home End | move, expand / collapse |
+| ⌥→ / ⌥← | expand / collapse a folder and everything below it |
 | ↩ | open file / toggle folder |
 | F2 | rename |
 | ⌥N / ⌥⇧N | new file / new folder |
@@ -112,6 +119,7 @@ Logs: `~/Library/Logs/iterm-filebrowser/{fbd,bridge}.log`.
 |---|---|---|
 | **Backend not running** | `fbd` is not up: the bridge is stopped or iTerm2's Python API is off | Enable the Python API; `make restart`; see `~/Library/Logs/iterm-filebrowser/` |
 | **Not following iTerm2** | `fbd` runs but no bridge reports the focused pane (the bridge was stopped or hangs); the tree still works but no longer follows `cd` | `make restart` or Scripts → AutoLaunch → fb_bridge.py; see `bridge.log`. A bridge exits with its iTerm2 and a new one replaces a leftover one |
+| **Viewer window failed: … did not load as a browser** | iTerm2 could not load the "Files Viewer" profile as a browser profile, even after the bridge reloaded it | Install iTerm2's browser plugin (see iTerm2's web browser documentation), then ⌘-click again; `bridge.log` has the details |
 | **Outdated panel link** | This panel was opened with a token fbd no longer accepts (the `token` file was deleted or `FB_PORT` changed while it was open) | Toggle View → Toolbelt → Files, or restart iTerm2. The bridge re-registers the tool with the current link at every start |
 
 iTerm2 keeps every registered Toolbelt tool in its preferences and has no API to remove
@@ -142,6 +150,8 @@ Dual-licensed:
   over a network).
 - **[Commercial license](LICENSE-COMMERCIAL.md)**: for companies that use it internally
   without the AGPL obligations or ship it in closed products.
+
+File-type icons: [Tabler Icons](https://tabler.io/icons) 3.48.0, MIT License (`ui/src/icons/LICENSE`).
 
 Copyright © 2026 Gregory Zemskov and contributors. Licensing:
 [info@extractum.io](mailto:info@extractum.io).
