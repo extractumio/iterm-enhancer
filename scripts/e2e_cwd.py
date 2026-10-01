@@ -20,12 +20,11 @@ from pathlib import Path
 
 import iterm2
 
+from e2e_common import PORT, TOKEN
+
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 N = int(args[0]) if args else 10
 SKIP_CC = "--no-cc" in sys.argv  # local tmux -CC can be blocked by an iTerm2 "Cannot Attach" alert
-PORT = int(os.environ.get("FB_PORT", "47821"))
-APP_DIR = Path(os.environ.get("FB_APP_DIR") or Path.home() / "Library/Application Support/iterm-filebrowser")
-TOKEN = (APP_DIR / "token").read_text().strip()
 ROOT = Path(tempfile.mkdtemp(prefix="fb-e2e-")).resolve()
 DIRS = [ROOT / f"d{i}" for i in range(N)]
 for d in DIRS:

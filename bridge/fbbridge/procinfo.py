@@ -79,6 +79,11 @@ def shell_of(job_pid, root_pid):
     return job_pid
 
 
+def command_of(pid):
+    """The command line of `pid` (empty if it is gone)."""
+    return subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+
+
 _tmux_args = {}
 
 
@@ -86,8 +91,7 @@ def tmux_command(client_pid):
     """The client's own tmux binary (AutoLaunch has no Homebrew PATH) plus the -L/-S
     flags it was started with (cached per pid)."""
     if client_pid not in _tmux_args:
-        out = subprocess.run(["ps", "-o", "command=", "-p", str(client_pid)],
-                             capture_output=True, text=True).stdout.split()
+        out = command_of(client_pid).split()
         args = []
         for i, a in enumerate(out[:-1]):
             if a in ("-L", "-S"):

@@ -11,7 +11,7 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::http::{abs, err, op_err, ApiResult};
+use crate::http::{abs, blocking, err, op_err, ApiResult};
 use crate::ops::{self, OpError};
 use crate::{files, listing, Shared};
 
@@ -56,13 +56,8 @@ pub async fn file(State(app): State<Shared>, Query(q): Query<PathQuery>, headers
             return Ok(StatusCode::NOT_MODIFIED.into_response());
         }
     }
-    let text_max = app.cfg.text_max;
-    let app2 = app.clone();
-    match tokio::task::spawn_blocking(move || files::read_view(&path, text_max, &app2.roots)).await {
-        Ok(Ok(v)) => Ok(Json(v).into_response()),
-        Ok(Err(e)) => Err(op_err(e)),
-        Err(e) => Err(err(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())),
-    }
+    let v = blocking(move || files::read_view(&path, app.cfg.text_max, &app.roots)).await?.map_err(op_err)?;
+    Ok(Json(v).into_response())
 }
 
 const RAW_MAX: u64 = 64 << 20;
@@ -96,10 +91,7 @@ pub async fn save_file(State(app): State<Shared>, Query(q): Query<PathQuery>, he
         .map(|s| s.trim_matches('"').to_string())
         .ok_or_else(|| err(StatusCode::PRECONDITION_REQUIRED, "if_match_required", "If-Match header required"))?;
     let (app2, p2) = (app.clone(), path.clone());
-    let res = tokio::task::spawn_blocking(move || ops::save(&app2.roots, &p2, &b.text, &if_match))
-        .await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()))?;
-    match res {
+    match blocking(move || ops::save(&app2.roots, &p2, &b.text, &if_match)).await? {
         Ok(etag) => {
             tracing::info!(event = "save", path = %path.display());
             app.changed(&parents(&[&path]), &[path], &[]);
@@ -114,8 +106,8 @@ pub async fn save_file(State(app): State<Shared>, Query(q): Query<PathQuery>, he
     }
 }
 
-fn parents(paths: &[&Path]) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = paths.iter().filter_map(|p| p.parent().map(Path::to_path_buf)).collect();
+fn parents<P: AsRef<Path>>(paths: &[P]) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = paths.iter().filter_map(|p| p.as_ref().parent().map(Path::to_path_buf)).collect();
     v.dedup();
     v
 }
@@ -128,7 +120,10 @@ pub struct CreateBody {
 
 async fn create(app: Shared, b: CreateBody, dir: bool) -> ApiResult {
     let parent = abs(&b.parent)?;
-    let p = if dir { ops::mkdir(&app.roots, &parent, &b.name) } else { ops::touch(&app.roots, &parent, &b.name) }.map_err(op_err)?;
+    let (app2, at) = (app.clone(), parent.clone());
+    let p = blocking(move || if dir { ops::mkdir(&app2.roots, &at, &b.name) } else { ops::touch(&app2.roots, &at, &b.name) })
+        .await?
+        .map_err(op_err)?;
     tracing::info!(event = if dir { "mkdir" } else { "touch" }, path = %p.display());
     app.changed(&[parent], &[p.clone()], &[]);
     Ok((StatusCode::CREATED, Json(json!({"path": p.display().to_string()}))).into_response())
@@ -150,7 +145,8 @@ pub struct RenameBody {
 
 pub async fn fs_rename(State(app): State<Shared>, Json(b): Json<RenameBody>) -> ApiResult {
     let path = abs(&b.path)?;
-    let to = ops::rename(&app.roots, &path, &b.name).map_err(op_err)?;
+    let (app2, from) = (app.clone(), path.clone());
+    let to = blocking(move || ops::rename(&app2.roots, &from, &b.name)).await?.map_err(op_err)?;
     tracing::info!(event = "rename", from = %path.display(), to = %to.display());
     app.changed(&parents(&[&path]), &[], &[(path, to.clone())]);
     Ok(Json(json!({"path": to.display().to_string()})).into_response())
@@ -164,9 +160,8 @@ pub struct TrashBody {
 pub async fn fs_trash(State(app): State<Shared>, Json(b): Json<TrashBody>) -> ApiResult {
     let paths = b.paths.iter().map(|p| abs(p)).collect::<Result<Vec<_>, _>>()?;
     let (app2, list) = (app.clone(), paths.clone());
-    let errors = tokio::task::spawn_blocking(move || ops::trash(&app2.roots, &list)).await.unwrap_or_default();
-    let refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
-    app.changed(&parents(&refs), &paths, &[]);
+    let errors = blocking(move || ops::trash(&app2.roots, &list)).await?;
+    app.changed(&parents(&paths), &paths, &[]);
     tracing::info!(event = "trash", count = paths.len(), failed = errors.len());
     let failed: Vec<Value> = errors.iter().map(|(p, e)| json!({"path": p.display().to_string(), "error": e.code(), "message": e.message()})).collect();
     let status = match failed.len() {
@@ -188,20 +183,20 @@ pub async fn os_open(Json(b): Json<OpenBody>) -> ApiResult {
     let target = match (b.url, b.path) {
         (Some(u), _) if ["http://", "https://", "mailto:"].iter().any(|p| u.starts_with(p)) => u,
         (Some(u), _) => return Err(err(StatusCode::BAD_REQUEST, "bad_url", format!("Only http, https and mailto links open: {u}"))),
-        (None, Some(p)) => existing(&p)?.display().to_string(),
+        (None, Some(p)) => existing(&p).await?.display().to_string(),
         _ => return Err(err(StatusCode::BAD_REQUEST, "bad_request", "path or url required")),
     };
     run_open(&["--", &target]).await
 }
 
 pub async fn os_reveal(Json(b): Json<OpenBody>) -> ApiResult {
-    let p = existing(b.path.as_deref().unwrap_or(""))?;
+    let p = existing(b.path.as_deref().unwrap_or("")).await?;
     run_open(&["-R", "--", &p.to_string_lossy()]).await
 }
 
-fn existing(path: &str) -> Result<PathBuf, Response> {
+async fn existing(path: &str) -> Result<PathBuf, Response> {
     let p = abs(path)?;
-    p.symlink_metadata().map_err(|e| op_err(ops::io(e, &p)))?;
+    tokio::fs::symlink_metadata(&p).await.map_err(|e| op_err(ops::io(e, &p)))?;
     Ok(p)
 }
 

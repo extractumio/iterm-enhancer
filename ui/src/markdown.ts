@@ -5,7 +5,7 @@
 import MarkdownIt from "markdown-it";
 import taskLists from "markdown-it-task-lists";
 import footnote from "markdown-it-footnote";
-import { dirname, rawUrl, resolvePath } from "./api";
+import { dirname, hasScheme, rawUrl, resolvePath } from "./api";
 import { highlightInto } from "./highlight";
 
 const md = new MarkdownIt({ html: false, linkify: true, typographer: true, breaks: false })
@@ -15,13 +15,12 @@ const md = new MarkdownIt({ html: false, linkify: true, typographer: true, break
 // Only these link schemes survive; everything else (javascript:, file:, data: for links) is dropped.
 md.validateLink = (url) => /^(https?:|mailto:|#|\.{0,2}\/|[^:]*$)/i.test(url.trim());
 
-const isExternal = (u: string) => /^[a-z][a-z0-9+.-]*:/i.test(u);
 const safeDecode = (u: string) => { try { return decodeURI(u); } catch { return u; } };
 
 md.renderer.rules.image = (tokens, idx, _opts, env) => {
   const t = tokens[idx];
   const src = String(t.attrGet("src") ?? "");
-  const url = isExternal(src) || src.startsWith("data:") ? "" : rawUrl(resolvePath(String(env?.dir ?? "/"), safeDecode(src.split("#")[0])));
+  const url = hasScheme(src) || src.startsWith("data:") ? "" : rawUrl(resolvePath(String(env?.dir ?? "/"), safeDecode(src.split("#")[0])));
   const alt = md.utils.escapeHtml(t.content);
   // remote images are not loaded (CSP img-src 'self'); show the alt text as a link instead
   return url

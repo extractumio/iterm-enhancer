@@ -5,22 +5,17 @@ import asyncio
 import fcntl
 import os
 import signal
-import subprocess
 import threading
 import time
 
 from .common import log
-from .procinfo import proc_start
+from .procinfo import command_of, proc_start
 
 MARK = "fb_bridge.py"  # in the command line of every bridge
 
 
 class LockError(Exception):
     pass
-
-
-def command_of(pid):
-    return subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
 
 
 def _try_lock(fd):

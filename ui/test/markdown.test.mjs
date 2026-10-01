@@ -1,16 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // AC-04 / OQ-05: Markdown rendering is safe and resolves local resources.
 // Bundles src/markdown.ts for node (highlighting is DOM-only and not exercised here).
-import * as esbuild from "esbuild";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { load } from "./bundle.mjs";
 
-const out = await esbuild.build({
-  entryPoints: ["src/markdown.ts"], bundle: true, format: "esm", platform: "neutral",
-  write: false, mainFields: ["module", "main"], logLevel: "silent",
-  define: { "location.search": '"?t=tok123"' },
-});
-const { mdToHtml } = await import("data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64"));
+const { mdToHtml } = await load("src/markdown.ts", { define: { "location.search": '"?t=tok123"' } });
 
 const P = "/Users/alex/work/api/README.md";
 

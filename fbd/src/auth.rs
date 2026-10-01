@@ -22,6 +22,11 @@ pub fn app_dir() -> PathBuf {
     dir
 }
 
+/// `N` random bytes as lowercase hex.
+pub fn random_hex<const N: usize>() -> String {
+    rand::random::<[u8; N]>().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// 128-bit token, created once, mode 0600, stable so the registered tool URL keeps working.
 pub fn load_token(dir: &Path) -> String {
     use std::os::unix::fs::OpenOptionsExt;
@@ -31,8 +36,7 @@ pub fn load_token(dir: &Path) -> String {
             return t.trim().to_string();
         }
     }
-    let bytes: [u8; 16] = rand::random();
-    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let token = random_hex::<16>();
     let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path).expect("write token");
     std::io::Write::write_all(&mut f, token.as_bytes()).expect("write token");
     token

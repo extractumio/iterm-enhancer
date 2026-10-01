@@ -6,12 +6,13 @@ import type { Theme } from "./api";
 
 let current = "";
 
-export function applyTheme(t?: Theme) {
+/** Apply `t`; false when it is the theme already shown (nothing to re-measure). */
+export function applyTheme(t?: Theme): boolean {
   const key = JSON.stringify(t ?? null);
-  if (key === current) return;
+  if (key === current) return false;
   current = key;
   const root = document.documentElement;
-  if (!t?.bg || !t.fg) { root.classList.remove("themed"); return; }
+  if (!t?.bg || !t.fg) { root.classList.remove("themed"); return true; }
   const set = (k: string, v?: string | null) => { if (v) root.style.setProperty(k, v); };
   set("--t-bg", t.bg);
   set("--t-fg", t.fg);
@@ -28,4 +29,5 @@ export function applyTheme(t?: Theme) {
   ff.textContent = t.font ? `@font-face { font-family: TermFont; src: local("${t.font.replace(/["\\]/g, "")}"); }` : "";
   root.style.colorScheme = t.dark ? "dark" : "light";
   root.classList.add("themed");
+  return true;
 }

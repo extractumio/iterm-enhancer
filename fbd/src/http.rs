@@ -34,6 +34,11 @@ pub fn op_err(e: OpError) -> Response {
     (status, Json(body)).into_response()
 }
 
+/// File-system work runs off the async workers; a panic in it answers 500.
+pub async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, Response> {
+    tokio::task::spawn_blocking(f).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()))
+}
+
 /// An absolute path without `..` components.
 pub fn abs(path: &str) -> Result<PathBuf, Response> {
     let p = PathBuf::from(path);

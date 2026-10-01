@@ -3,7 +3,7 @@
 // the panel: anchors scroll, web links go to the default browser, files open as tabs
 // (`guide.md#install` opens guide.md and scrolls to "install").
 
-import { api, apiOrToast, basename, dirname, rawUrl, resolvePath, toast, type FileView } from "./api";
+import { api, apiOrToast, basename, dirname, hasScheme, rawUrl, resolvePath, toast, type FileView } from "./api";
 import { isMarkdown, renderMarkdown } from "./markdown";
 
 export const isHtml = (path: string) => /\.x?html?$/i.test(path);
@@ -24,7 +24,7 @@ export function scrollToAnchor(scope: Document | HTMLElement, anchor: string, sm
 export async function followLink(href: string, from: string, scope: Document | HTMLElement, host: LinkHost) {
   if (href.startsWith("#")) return scrollToAnchor(scope, decodeURIComponent(href.slice(1)));
   if (/^(https?:|mailto:)/i.test(href)) return void apiOrToast("POST", "/api/os/open", { body: { url: href } });
-  if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith("file:")) return toast(`Not opened: ${href.split(":")[0]} links`);
+  if (hasScheme(href) && !href.startsWith("file:")) return toast(`Not opened: ${href.split(":")[0]} links`);
   const [file, anchor] = href.replace(/^file:\/\//, "").split("#");
   let target: string;
   try { target = resolvePath(dirname(from), decodeURIComponent(file)); } catch { return toast(`Bad link: ${href}`); }
@@ -74,7 +74,7 @@ function prepareHtml(text: string, path: string): string {
   for (const el of doc.querySelectorAll("*")) {
     for (const attr of [...el.attributes]) if (/^on/i.test(attr.name)) el.removeAttribute(attr.name);
   }
-  const local = (url: string | null) => !!url && !/^([a-z][a-z0-9+.-]*:|#|\/\/)/i.test(url);
+  const local = (url: string | null) => !!url && !hasScheme(url) && !/^(#|\/\/)/.test(url);
   const raw = (url: string) => rawUrl(resolvePath(dirname(path), decodeURIComponent(url.split(/[?#]/)[0])));
   for (const el of doc.querySelectorAll<HTMLElement>("img[src], source[src], video[src], audio[src], input[src]")) {
     const src = el.getAttribute("src");

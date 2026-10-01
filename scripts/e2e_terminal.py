@@ -7,30 +7,14 @@ session has focus, so nothing is ever typed into another terminal. Needs the ins
 bridge (make install && make restart).
 """
 import asyncio
-import json
-import os
 import tempfile
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 import iterm2
 
-PORT = int(os.environ.get("FB_PORT", "47821"))
-APP_DIR = Path(os.environ.get("FB_APP_DIR") or Path.home() / "Library/Application Support/iterm-filebrowser")
-TOKEN = (APP_DIR / "token").read_text().strip()
+from e2e_common import call
+
 TARGET = Path(tempfile.mkdtemp(prefix="fb term ")).resolve()  # a space, to test quoting
-
-
-def call(method, path, body=None):
-    req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method,
-                                 data=json.dumps(body).encode() if body is not None else None,
-                                 headers={"X-FB-Token": TOKEN, "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=3) as r:
-            return r.status, (json.loads(r.read() or b"null"))
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read() or b"null")
 
 
 async def main(conn):

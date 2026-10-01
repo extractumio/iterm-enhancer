@@ -83,25 +83,7 @@ export const eventsUrl = () => `/api/events?t=${encodeURIComponent(TOKEN)}`;
 export const apiOrToast = <T>(...args: Parameters<typeof api<T>>) => api<T>(...args).catch((e: Error) => { toast(e.message); return undefined; });
 
 export const isDirKind = (k: Row["k"]) => k === "d" || k === "L";
-export const isUnder = (p: string, dir: string) => p === dir || p.startsWith(dir + "/");
-/** `p` after `from` was renamed to `to` (unchanged if not inside `from`). */
-export const rebase = (p: string, from: string, to: string) => (isUnder(p, from) ? to + p.slice(from.length) : p);
-
-export const basename = (p: string) => p.slice(p.lastIndexOf("/") + 1) || "/";
-export const dirname = (p: string) => p.slice(0, Math.max(p.lastIndexOf("/"), 1));
-export const join = (a: string, b: string) => (a === "/" ? "/" + b : a + "/" + b);
-
-/** Resolve a relative link against a folder, POSIX-style. */
-export function resolvePath(dir: string, rel: string): string {
-  const parts = (rel.startsWith("/") ? rel : dir + "/" + rel).split("/");
-  const out: string[] = [];
-  for (const p of parts) {
-    if (!p || p === ".") continue;
-    if (p === "..") out.pop(); else out.push(p);
-  }
-  return "/" + out.join("/");
-}
-
+export * from "./paths";
 export function fmtSize(n?: number | null): string {
   if (n == null) return "";
   if (n < 1024) return `${n} B`;
