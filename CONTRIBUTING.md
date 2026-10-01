@@ -11,10 +11,11 @@ needs this agreement. By opening a pull request you confirm that:
 
 1. You wrote the contribution, or have the right to submit it; if your employer has rights
    in it, your employer has allowed you to contribute it under these terms.
-2. You grant [COPYRIGHT HOLDER] a perpetual, worldwide, non-exclusive, royalty-free,
-   irrevocable license to use, modify, sublicense and relicense the contribution, including
-   under the commercial license, and to transfer these rights.
-3. You grant the same parties a patent license for any of your patents that the contribution
+2. You grant Gregory Zemskov and any successors and assigns ("the Maintainer") a
+   perpetual, worldwide, non-exclusive, royalty-free, irrevocable license to use, modify,
+   sublicense and relicense the contribution, including under the commercial license, and
+   to transfer these rights.
+3. You grant the Maintainer a patent license for any of your patents that the contribution
    necessarily infringes, on the same terms.
 4. You keep the copyright of your contribution and may use it under any terms.
 

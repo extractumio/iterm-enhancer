@@ -17,8 +17,9 @@ developer tool bundle) without releasing its source under the AGPL.
 
 **Does not need one:** personal use; use under the AGPL with its obligations met.
 
-To obtain a commercial license, contact **[LICENSING CONTACT]** with your company name,
-the number of seats, and how you plan to use the software.
+To obtain a commercial license, contact Gregory Zemskov
+([info@extractum.io](mailto:info@extractum.io)) with your company name, the number of
+seats, and how you plan to use the software.
 
-Copyright © 2026 [COPYRIGHT HOLDER]. All rights reserved except as granted by the
+Copyright © 2026 Gregory Zemskov. All rights reserved except as granted by the
 licenses above.

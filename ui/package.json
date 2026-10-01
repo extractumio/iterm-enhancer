@@ -8,6 +8,7 @@
     "watch": "node build.mjs --watch",
     "typecheck": "tsc -p ."
   },
+  "author": "Gregory Zemskov <info@extractum.io>",
   "license": "AGPL-3.0-only OR LicenseRef-Commercial",
   "type": "module",
   "dependencies": {

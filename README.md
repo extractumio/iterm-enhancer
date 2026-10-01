@@ -143,4 +143,7 @@ Dual-licensed:
 - **[Commercial license](LICENSE-COMMERCIAL.md)**: for companies that use it internally
   without the AGPL obligations or ship it in closed products.
 
+Copyright © 2026 Gregory Zemskov and contributors. Licensing:
+[info@extractum.io](mailto:info@extractum.io).
+
 Contributions are accepted under the agreement in [CONTRIBUTING.md](CONTRIBUTING.md).
