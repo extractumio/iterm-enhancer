@@ -9,6 +9,7 @@ import {
   type FsChange, type Pane, type Prefs, type TermState,
 } from "./api";
 import { Binding } from "./binding";
+import { hostEntries, hostMenu, renderOffer } from "./host-offer";
 import { ask, menu, type MenuEntry } from "./dialogs";
 import { applyTheme } from "./theme";
 import { Tree, type EditMode } from "./tree";
@@ -113,7 +114,7 @@ function renderHeader(s: TermState) {
   $("title").textContent = s.title ?? "";
   const cwd = ws?.root ?? s.cwd ?? "";
   const home = scope ? undefined : cwd.match(/^\/Users\/[^/]+/)?.[0];
-  const head = (scope ? `${scope}:` : "") + (cwd === "/" ? "" : dirname(cwd).replace(/\/?$/, "/"));
+  const head = (scope ? `${s.remote?.name ?? scope}:` : "") + (cwd === "/" ? "" : dirname(cwd).replace(/\/?$/, "/"));
   const b = Object.assign(document.createElement("b"), { textContent: basename(cwd) });
   const bdi = document.createElement("bdi");
   bdi.append(home ? head.replace(home, "~") : head, b);
@@ -157,6 +158,7 @@ async function onState(s: TermState) {
   if (restyled) tree.themeChanged(); // row height follows the font size
   renderHeader(s);
   bridgeNotice(s);
+  renderOffer($("offer"), s.remote);
   if (!s.key || !s.cwd) {
     if (!key) $("empty").textContent = s.bridge ? "Focus a local terminal pane" : "Waiting for iTerm2…";
     return;
@@ -300,7 +302,10 @@ async function contextMenu(path: string | null, isDir: boolean, ev: MouseEvent) 
     { id: "cd", label: "Open Terminal Here", disabled: many },
   );
   else entries.push("-", ...(scope ? [] : [{ id: "reveal", label: "Reveal in Finder" }]), { id: "cd", label: "Open Terminal Here" });
-  switch (await menu(ev.clientX, ev.clientY, entries)) {
+  entries.push(...hostEntries(term.remote));
+  const choice = await menu(ev.clientX, ev.clientY, entries);
+  if (choice?.startsWith("host-") && term.remote) return void hostMenu(choice, term.remote);
+  switch (choice) {
     case "new-file": return void tree.startCreate(dir, "file");
     case "new-folder": return void tree.startCreate(dir, "folder");
     case "open": return viewer.open(target);

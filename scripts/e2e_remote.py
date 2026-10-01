@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 """AC-37 / AC-38 end to end against a real Linux host with sshd: a throwaway Debian
 container, its own test key, ssh config, app folder and fbd port (nothing of the user's
-is read or changed). Needs Docker and the Linux toolchain (make toolchain).
+is read or changed). Enabling goes through fbbridge.hosts.enable, as the panel's Enable
+button does. Needs Docker and the Linux toolchain (make toolchain).
 
     python3 scripts/e2e_remote.py [--amd64]     (--amd64: an x86_64 host, emulated)
 """
@@ -56,19 +57,22 @@ def main():
     env = dict(os.environ, FB_SSH=str(work / "ssh"), FB_APP_DIR=str(work / "app"), FB_PORT=str(PORT))
     fbd = None
     try:
-        for _ in range(40):  # sshd up
+        for _ in range(120):  # sshd up (a fresh container can take a while)
             if subprocess.run([str(work / "ssh"), "-o", "BatchMode=yes", "fbtest", "true"], capture_output=True).returncode == 0:
                 break
             time.sleep(0.25)
-        r = subprocess.run([sys.executable, str(REPO / "scripts/agent.py"), "fbtest"], env=env, capture_output=True, text=True)
-        check("AC-38 make agent prepares the host", r.returncode == 0 and "fbtest ready" in r.stdout, (r.stdout or r.stderr).strip().splitlines()[-1:])
-        record = json.loads((work / "app/agents.json").read_text())["fbtest"]
-        check("AC-38 the host is recorded", record["host"] == "fbvm" and record["platform"] == ("linux-x86_64" if amd64 else "linux-aarch64"), record)
-        fbd = subprocess.Popen([str(REPO / "fbd/target/debug/fbd")], env=dict(env, FB_BRIDGE_SECRET=SECRET, FB_LOG="warn"), stderr=subprocess.DEVNULL)
-        time.sleep(1)
         os.environ.update(FB_SSH=env["FB_SSH"], FB_APP_DIR=env["FB_APP_DIR"])
         sys.path.insert(0, str(REPO / "bridge"))
-        from fbbridge import agentctl, remote
+        sys.path.insert(0, str(REPO / "scripts"))
+        import agents
+        from fbbridge import agentctl, hosts, remote
+        aid = agents.agent_id()
+        record = hosts.enable(["fbtest"], binary_for=lambda p: agents.build([p])[p], agent_id=aid)
+        check("AC-38 Enable prepares the host", record["agent_id"] == aid and record["platform"] == ("linux-x86_64" if amd64 else "linux-aarch64"), record)
+        layout = agentctl.ssh(["fbtest"], "cd ~/.iterm-filebrowser && ls bin logs && readlink bin/fbd && stat -c %a .").split()
+        check("AC-38 the helper is in ~/.iterm-filebrowser/bin, private", f"fbd-{aid}" in layout and layout[-1] == "700", layout)
+        fbd = subprocess.Popen([str(REPO / "fbd/target/debug/fbd")], env=dict(env, FB_BRIDGE_SECRET=SECRET, FB_LOG="warn"), stderr=subprocess.DEVNULL)
+        time.sleep(1)
         token = (work / "app/token").read_text().strip()
 
         def post(path, body):
@@ -77,7 +81,7 @@ def main():
             urllib.request.urlopen(req, timeout=5).read()
 
         def api(method, path, body=None, headers=None):
-            h = {"X-FB-Token": token, "X-FB-Host": "fbvm", **(headers or {})}
+            h = {"X-FB-Token": token, "X-FB-Host": "fbtest", **(headers or {})}
             if body is not None:
                 h["Content-Type"] = "application/json"
             req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", data=json.dumps(body).encode() if body is not None else None,
@@ -88,12 +92,12 @@ def main():
             except urllib.error.HTTPError as e:
                 return e.code, json.loads(e.read() or b"null")
 
-        post("/internal/state", {"key": "k", "session": "s", "cwd": "/home/tester", "host": "fbvm", "window": "w", "panel": True, "mode": "remote"})
+        post("/internal/state", {"key": "k", "session": "s", "cwd": "/home/tester", "host": "fbtest", "window": "w", "panel": True, "mode": "remote"})
         remotes = remote.Remotes(post)
         t0 = time.monotonic()
-        while not remotes.status("fbvm")[0] and time.monotonic() - t0 < 20:
+        while remotes.status("fbtest", ["fbtest"], "fbvm")["state"] != "up" and time.monotonic() - t0 < 20:
             time.sleep(0.25)
-        check("AC-37 the bridge connects the host's agent through ssh", remotes.status("fbvm")[0], f"{time.monotonic() - t0:.1f} s")
+        check("AC-37 the bridge connects the host's agent through ssh", remotes.status("fbtest", ["fbtest"], "fbvm")["state"] == "up", f"{time.monotonic() - t0:.1f} s")
         events = []
 
         def listen():
@@ -113,23 +117,27 @@ def main():
         check("AC-37 create on the host", status == 201 and made["path"] == "/home/tester/hello.txt")
         status, f = api("GET", "/api/file?path=/home/tester/hello.txt")
         status, saved = api("PUT", "/api/file?path=/home/tester/hello.txt", {"text": "from the Mac\n"}, {"If-Match": f'"{f["etag"]}"'})
-        check("AC-37 save on the host", status == 200 and agentctl.ssh("fbtest", "cat hello.txt") == "from the Mac\n")
+        check("AC-37 save on the host", status == 200 and agentctl.ssh(["fbtest"], "cat hello.txt") == "from the Mac\n")
         check("AC-37 a stale save is refused", api("PUT", "/api/file?path=/home/tester/hello.txt", {"text": "x"}, {"If-Match": f'"{f["etag"]}"'})[0] == 409)
         check("AC-37 writes outside the host's roots are refused", api("POST", "/api/fs/touch", {"parent": "/etc", "name": "x"})[0] == 403)
-        post("/internal/state", {"key": "k", "session": "s", "cwd": "/home/tester", "host": "fbvm", "window": "w", "panel": True, "mode": "remote", "title": "t"})
+        post("/internal/state", {"key": "k", "session": "s", "cwd": "/home/tester", "host": "fbtest", "window": "w", "panel": True, "mode": "remote", "title": "t"})
         time.sleep(1)
-        agentctl.ssh("fbtest", "echo hi > made-on-host.txt")
+        agentctl.ssh(["fbtest"], "echo hi > made-on-host.txt")
         for _ in range(20):
-            if any(e.get("host") == "fbvm" for e in events):
+            if any(e.get("host") == "fbtest" for e in events):
                 break
             time.sleep(0.25)
-        check("AC-37 a change on the host arrives tagged with the host", any(e.get("host") == "fbvm" and "/home/tester" in e.get("dirs", []) for e in events))
+        check("AC-37 a change on the host arrives tagged with the host", any(e.get("host") == "fbtest" and "/home/tester" in e.get("dirs", []) for e in events))
         status, trashed = api("POST", "/api/fs/trash", {"paths": ["/home/tester/hello.txt"]})
-        check("AC-37 trash on the host", status == 200 and "hello.txt" in agentctl.ssh("fbtest", "ls ~/.local/share/Trash/files"))
+        check("AC-37 trash on the host", status == 200 and "hello.txt" in agentctl.ssh(["fbtest"], "ls ~/.local/share/Trash/files"))
         remotes.stop()
         time.sleep(1)
-        left = agentctl.ssh("fbtest", 'ps -eo comm | grep -c "^fbd$" || true').strip()
-        check("AC-37 the agent exits with its connection and leaves nothing in /tmp", left == "0" and not agentctl.ssh("fbtest", "ls -A /tmp").strip(), f"{left} running")
+        left = agentctl.ssh(["fbtest"], 'ps -eo comm | grep -c "^fbd$" || true').strip()
+        check("AC-37 the agent exits with its connection and leaves nothing in /tmp", left == "0" and not agentctl.ssh(["fbtest"], "ls -A /tmp").strip(), f"{left} running")
+        log = agentctl.ssh(["fbtest"], "cat ~/.iterm-filebrowser/logs/agent.log")
+        check("AC-38 the agent logged to ~/.iterm-filebrowser/logs/agent.log", "event=\"start\"" in log and "mode=\"agent\"" in log, log[-160:])
+        hosts.remove(["fbtest"])
+        check("AC-38 remove takes it all off the host", agentctl.ssh(["fbtest"], "ls -A ~").split().count(".iterm-filebrowser") == 0 and not agentctl.entry("fbtest"))
     finally:
         if fbd:
             fbd.terminate()

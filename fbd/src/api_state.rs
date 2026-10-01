@@ -240,6 +240,24 @@ pub async fn view_open(State(app): State<Shared>, headers: HeaderMap, Json(b): J
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+#[derive(Deserialize)]
+pub struct HostBody {
+    host: String,
+}
+
+/// The panel's Enable / Not now / Remove for a remote host (AC-38): the bridge does it
+/// (ssh lives there) and reports a failure to the panel that asked.
+pub async fn remote_action(State(app): State<Shared>, UrlPath(action): UrlPath<String>, headers: HeaderMap, Json(b): Json<HostBody>) -> ApiResult {
+    if !matches!(action.as_str(), "enable" | "dismiss" | "remove") || b.host.is_empty() || b.host.len() > 512 {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_request", "enable, dismiss or remove a host"));
+    }
+    if !app.term.lock().bridge_alive() {
+        return Err(no_bridge());
+    }
+    command(&app, json!({"action": format!("host-{action}"), "host": b.host}), &headers);
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
 /// The bridge reused the open viewer window: tell its page to add a tab.
 pub async fn internal_viewer_open(State(app): State<Shared>, Json(b): Json<ViewBody>) -> StatusCode {
     let mut pending = app.viewer_pending.lock();

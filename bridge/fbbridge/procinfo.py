@@ -79,6 +79,38 @@ def shell_of(job_pid, root_pid):
     return job_pid
 
 
+_libc = ctypes.CDLL("/usr/lib/libc.dylib", use_errno=True)
+_CTL_KERN, _KERN_PROCARGS2 = 1, 49
+
+
+def proc_argv(pid):
+    """The exact argument list of `pid` (sysctl KERN_PROCARGS2: argc, exec path, padding,
+    then the arguments), or None; `ps` would lose the quoting."""
+    mib = (ctypes.c_int * 3)(_CTL_KERN, _KERN_PROCARGS2, pid)
+    size = ctypes.c_size_t(0)
+    if _libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0 or size.value < 8:
+        return None
+    buf = ctypes.create_string_buffer(size.value)
+    if _libc.sysctl(mib, 3, buf, ctypes.byref(size), None, 0) != 0:
+        return None
+    raw = buf.raw[:size.value]
+    argc = int.from_bytes(raw[:4], "little")
+    rest = raw[4:]
+    rest = rest[rest.find(b"\0"):].lstrip(b"\0")      # skip the exec path and its padding
+    return [a.decode(errors="replace") for a in rest.split(b"\0")[:argc]]
+
+
+def find_descendant(pid, name, depth=6):
+    """The first process called `name` below `pid` (breadth first), or None."""
+    level = [pid]
+    for _ in range(depth):
+        level = [c for p in level for c in proc_children(p)][:64]
+        for c in level:
+            if proc_name(c) == name:
+                return c
+    return None
+
+
 def command_of(pid):
     """The command line of `pid` (empty if it is gone)."""
     return subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()

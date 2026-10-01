@@ -6,9 +6,26 @@ import subprocess
 import iterm2
 
 from .common import LOCAL_HOST, REMOTE_JOBS, SHELLS
-from .procinfo import foreground_pid, proc_children, proc_cwd, proc_name, shell_of, tmux_command
+from .procinfo import find_descendant, foreground_pid, proc_argv, proc_children, proc_cwd, proc_name, shell_of, tmux_command
+from .sshargs import key as ssh_key
+from .sshargs import target as ssh_target
 
 _static = {}
+_gateways = {}  # tmux connection id → (gateway session id, the ssh arguments it runs, or None)
+
+
+async def gateway_target(tc):
+    """The ssh arguments of a tmux -CC connection's gateway session (AC-38): the `ssh`
+    process below it (tms, autossh and scripts exec or start one), read exactly. iTerm2
+    reuses a connection id once its connection is gone, so the gateway session is checked."""
+    s = tc.owning_session
+    sid = s.session_id if s else None
+    cached = _gateways.get(tc.connection_id)
+    if not cached or cached[0] != sid:
+        pid = await s.async_get_variable("pid") if s else None
+        ssh = find_descendant(pid, "ssh") if pid else None
+        cached = _gateways[tc.connection_id] = (sid, ssh_target(proc_argv(ssh)) if ssh else None)
+    return cached[1]
 
 
 async def static_vars(session):
@@ -46,7 +63,11 @@ async def resolve(conn, session):
         if tc is None or pane is None:
             return {"mode": "tmux -CC", "key": session.session_id, "cwd": None, "note": "tmux connection not found"}
         out = await tc.async_send_command(f"display -p -t %{pane} '{TMUX_FMT}'")
-        return tmux_result("tmux -CC", out)
+        r = tmux_result("tmux -CC", out)
+        if r["mode"] == "remote":
+            target = await gateway_target(tc)
+            r.update(ssh=target, remote_key=ssh_key(target) if target else None)
+        return r
 
     root_pid, tty = await static_vars(session)
     # login is root-owned (its info reads as zeros): fall back to the shells it started

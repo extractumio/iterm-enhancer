@@ -186,6 +186,7 @@ fn routes(app: Shared) -> Router {
         .route("/api/health", get(health))
         .route("/api/watch", put(watch))
         .route("/api/view/open", post(view_open))
+        .route("/api/remote/{action}", post(remote_action))
         .route("/api/view/pending", get(view_pending))
         .route("/api/ui/toolbelt-width", post(toolbelt_width))
         .route("/api/panel/claim", post(panels::panel_claim))

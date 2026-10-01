@@ -53,6 +53,14 @@ async def run_commands(conn, app, windows, queue):
                 await windows.open_viewer(conn, c["path"], c["code"], c.get("host"))
             elif action == "default-width":
                 await windows.set_default_width(conn)
+            elif action in ("host-enable", "host-dismiss", "host-remove"):  # the panel's buttons (AC-38)
+                k = c.get("host", "")
+                if action == "host-enable":
+                    remotes.enable(k, c.get("by"))
+                elif action == "host-dismiss":
+                    remotes.dismiss(k)
+                else:
+                    remotes.remove(k, c.get("by"))
             elif action == "which-window":  # its own task: never delays a terminal command
                 asyncio.create_task(answer_which_window(conn, app, windows, c))
         except Exception as e:
@@ -110,13 +118,14 @@ class Follower:
                      "panel": await windows.toolbelt_shown(self.conn, win.window_id, refresh=self.tick % THEME_EVERY == 0)}
             last = self.last
             remote_path = False
-            if r.get("remote_host"):  # a host's own path, never resolved on this Mac (AC-37)
-                connected, note = remotes.status(r["remote_host"])
-                state["note"] = note
-                if remotes.recorded(r["remote_host"]):
+            if r.get("remote_key"):  # a host's own path, never resolved on this Mac (AC-37, AC-38)
+                st = remotes.status(r["remote_key"], r["ssh"], r["remote_host"])
+                state["note"] = st["note"]
+                state["remote"] = {"key": r["remote_key"], "name": r["remote_host"], "state": st["state"]}
+                if st["enabled"]:
                     # always with its host: while disconnected the panel's requests fail
                     # with "not connected" instead of reading the same path on this Mac
-                    state.update(host=r["remote_host"], busy=not r["idle"])
+                    state.update(host=r["remote_key"], busy=not r["idle"])
                     cwd, remote_path = r.get("path"), True
             if remote_path and not cwd:
                 state.update(cwd=None, stale=True)

@@ -67,16 +67,25 @@ pub fn start(socket: &Path) -> Setup {
     Setup { dir: dir.to_path_buf(), token, listener }
 }
 
-/// After "ready" nobody reads stdout or stderr, and ssh closes them when the Mac goes away:
-/// a log line written then would fail and panic the exit path, leaving the agent running.
+/// After "ready" nobody reads stdout or stderr, and ssh closes them when the Mac goes away
+/// (a log line written then would fail and panic the exit path, leaving the agent running):
+/// from here on they go to `--log <file>` (AC-38: ~/.iterm-filebrowser/logs/agent.log on
+/// the host; at 1 MB the file becomes <file>.1), else to /dev/null.
 fn quiet() {
-    if let Ok(null) = std::fs::OpenOptions::new().write(true).open("/dev/null") {
-        use std::os::fd::AsRawFd;
-        // SAFETY: dup2 onto the standard descriptors with a valid open descriptor
-        unsafe {
-            libc::dup2(null.as_raw_fd(), 1);
-            libc::dup2(null.as_raw_fd(), 2);
+    let args: Vec<String> = std::env::args().collect();
+    let log = args.iter().position(|a| a == "--log").and_then(|i| args.get(i + 1)).map(PathBuf::from);
+    let file = log.and_then(|p| {
+        if std::fs::metadata(&p).is_ok_and(|m| m.len() > 1 << 20) {
+            let _ = std::fs::rename(&p, p.with_extension("log.1"));
         }
+        std::fs::OpenOptions::new().create(true).append(true).open(&p).ok()
+    });
+    let Some(out) = file.or_else(|| std::fs::OpenOptions::new().write(true).open("/dev/null").ok()) else { return };
+    use std::os::fd::AsRawFd;
+    // SAFETY: dup2 onto the standard descriptors with a valid open descriptor
+    unsafe {
+        libc::dup2(out.as_raw_fd(), 1);
+        libc::dup2(out.as_raw_fd(), 2);
     }
 }
 

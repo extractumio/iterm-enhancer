@@ -51,17 +51,25 @@ impl Remotes {
     }
 }
 
-/// The host a request names, if any.
-fn host_of(req: &Request) -> Option<String> {
-    let from_header = req.headers().get("x-fb-host").and_then(|v| v.to_str().ok()).map(str::to_string);
-    from_header
-        .or_else(|| req.uri().query().and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("host="))).map(str::to_string))
-        .filter(|h| !h.is_empty())
+/// The host a request names (`Ok(None)`: none). A header or parameter that is present but
+/// unreadable is an error, never "no host": that would fall through to local files.
+fn host_of(req: &Request) -> Result<Option<String>, ()> {
+    if let Some(v) = req.headers().get("x-fb-host") {
+        return v.to_str().map(|h| Some(h.to_string()).filter(|h| !h.is_empty())).map_err(|_| ());
+    }
+    let Some(raw) = req.uri().query().and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("host="))) else { return Ok(None) };
+    let raw = raw.replace('+', " ");
+    let host = percent_encoding::percent_decode_str(&raw).decode_utf8().map_err(|_| ())?.into_owned();
+    Ok(Some(host).filter(|h| !h.is_empty()))
 }
 
 /// Middleware: a request for a remote host never reaches a local handler.
 pub async fn route(State(app): State<Shared>, req: Request, next: Next) -> Response {
-    let Some(host) = host_of(&req) else { return next.run(req).await };
+    let host = match host_of(&req) {
+        Ok(Some(h)) => h,
+        Ok(None) => return next.run(req).await,
+        Err(()) => return err(StatusCode::BAD_REQUEST, "bad_host", "The remote host name is not readable"),
+    };
     let path = req.uri().path();
     if path.starts_with("/api/os/") {
         return err(StatusCode::BAD_REQUEST, "remote", "Not available for remote files");
@@ -114,6 +122,28 @@ async fn forward(host: &str, agent: &Agent, req: Request) -> Result<Response, St
         }
     }
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req(uri: &str, header: Option<&[u8]>) -> Request {
+        let mut r = axum::http::Request::builder().uri(uri);
+        if let Some(h) = header {
+            r = r.header("x-fb-host", HeaderValue::from_bytes(h).unwrap());
+        }
+        r.body(Body::empty()).unwrap()
+    }
+
+    #[test]
+    fn hosts_are_read_exactly_or_refused() {
+        assert_eq!(host_of(&req("/api/ls?path=/a", None)), Ok(None));
+        assert_eq!(host_of(&req("/api/ls", Some(b"-p 2222 alex@vm"))), Ok(Some("-p 2222 alex@vm".into())));
+        assert_eq!(host_of(&req("/api/raw?path=/a&host=-p%202222%20alex%40vm", None)), Ok(Some("-p 2222 alex@vm".into())));
+        assert_eq!(host_of(&req("/api/raw?host=ai4&t=x", None)), Ok(Some("ai4".into())));
+        assert_eq!(host_of(&req("/api/ls", Some(b"caf\xe9"))), Err(()), "unreadable: refused, not local");
+    }
 }
 
 #[derive(Deserialize)]

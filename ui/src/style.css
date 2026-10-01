@@ -232,6 +232,10 @@ html.viewer-mode #pathbar { display: flex; align-items: center; gap: 6px; flex: 
   border-bottom: 1px solid var(--line); background: var(--bg-2); color: var(--fg-dim); font: 12px var(--mono); }
 #pathbar .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;
   text-align: left; user-select: text; -webkit-user-select: text; unicode-bidi: plaintext; }
+#offer { display: none; padding: 12px 14px; color: var(--fg-dim); border-bottom: 1px solid var(--line); background: var(--bg-2); }
+#offer.on { display: block; }
+#offer b { color: var(--fg); display: block; margin-bottom: 4px; }
+#offer .actions { display: flex; gap: 8px; margin-top: 10px; }
 #notice { display: none; padding: 16px; color: var(--fg-dim); }
 #notice.on { display: block; }
 #notice b { color: var(--warn); display: block; margin-bottom: 6px; }
