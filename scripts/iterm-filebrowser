@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+# iterm-filebrowser: install, upgrade, roll back, uninstall, and the remote hosts (AC-40).
+# Runs scripts/cli.py of the build it belongs to, with the Command Line Tools' python3 or,
+# on a Mac without them (python3 would only offer to install them), iTerm2's own Python.
+set -eu
+self=$0
+while [ -L "$self" ]; do                      # ~/.local/bin/iterm-filebrowser → the build
+    link=$(readlink "$self")
+    case $link in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
+done
+dir=$(cd "$(dirname "$self")" && pwd -P)
+py=""
+found=$(command -v python3 2>/dev/null || true)
+# /usr/bin/python3 without the Command Line Tools only offers to install them
+if [ -n "$found" ] && { [ "$found" != /usr/bin/python3 ] || xcode-select -p >/dev/null 2>&1; }; then
+    py=$found
+else
+    for cand in "$HOME"/.config/iterm2/AppSupport/iterm2env*/versions/*/bin/python3 \
+                "$HOME"/.config/iterm2/AppSupport/uv/venvs/*/bin/python3 \
+                "$HOME"/Library/Application\ Support/iTerm2/iterm2env*/versions/*/bin/python3; do
+        [ -x "$cand" ] && "$cand" -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null && { py=$cand; break; }
+    done
+fi
+if [ -z "$py" ]; then
+    echo "iterm-filebrowser: no Python found. Install the Command Line Tools (xcode-select --install)," >&2
+    echo "or enable iTerm2's Python API (Settings → General → Magic) and let it install its runtime." >&2
+    exit 1
+fi
+exec "$py" "$dir/scripts/cli.py" "$@"

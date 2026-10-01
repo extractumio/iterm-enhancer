@@ -1,11 +1,13 @@
-# iTerm2 File Browser — build and install.
-#   make install    build, install as a versioned build and switch to it (first install or
+# iTerm2 File Browser — build and install from a checkout (users install the package:
+# curl … install.sh | sh, then the iterm-filebrowser command; README).
+#   make install    build the package from this checkout and install it (first install or
 #                   upgrade; a build that does not come up healthy is rolled back)
 #   make upgrade    the same
 #   make rollback   back to the previous build
 #   make uninstall  remove builds and scripts (keeps workspaces.json and token)
-#   make agent HOST=<ssh alias>   make a remote host ready for the Files panel
-#   make toolchain / agents       the pinned cross toolchain / agents for all platforms
+#   make toolchain  the pinned cross toolchain (zig, cargo-zigbuild) for the Linux helpers
+#   make package    the release package in dist/package (tarball, install.sh, SHA256SUMS)
+#   make release TAG=v…   build the package as that release and upload it
 #   make test       unit tests (Rust, bridge, installer) + typecheck and unit tests (UI)
 
 ifeq ($(shell id -u),0)
@@ -19,7 +21,7 @@ export FB_BUILD := $(BUILD)
 # which fbd sources: an agent on a remote host works with this fbd when the ids match (AC-37)
 export FB_AGENT_ID := $(shell python3 scripts/agents.py id)
 
-.PHONY: all ui fbd install upgrade rollback uninstall test restart clean-registrations toolchain agents agent release
+.PHONY: all ui fbd install upgrade rollback uninstall test restart clean-registrations toolchain agents package release
 
 all: fbd
 
@@ -38,25 +40,23 @@ test: ui
 	python3 -m unittest discover -s bridge/tests
 	cd ui && npx tsc -p . && npm test
 
-install: fbd
-	python3 scripts/agents.py build --recorded
-	python3 scripts/install.py install --build $(BUILD)
+install: ui
+	python3 scripts/package.py --stage
+	dist/package/iterm-filebrowser/iterm-filebrowser install
 
-# Remote hosts (AC-37 … AC-39): the pinned cross toolchain once, agents for all platforms,
-# and one command that makes a host ready: make agent HOST=<ssh alias>
+# Remote hosts (AC-37 … AC-40): the pinned cross toolchain once, then the package carries
+# the helpers for macOS arm64/x86_64 and Linux x86_64/arm64
 toolchain:
 	python3 scripts/agents.py toolchain
 
 agents: ui
 	python3 scripts/agents.py build
 
-agent: ui
-	@test -n "$(HOST)" || { echo "usage: make agent HOST=<ssh alias>"; exit 2; }
-	python3 scripts/agent.py "$(HOST)"
+package: ui
+	python3 scripts/package.py
 
-# the macOS agents of release $(TAG) (the runner attaches the Linux ones)
 release: ui
-	@test -n "$(TAG)" || { echo "usage: make release TAG=v0.12.0"; exit 2; }
+	@test -n "$(TAG)" || { echo "usage: make release TAG=v0.13.0"; exit 2; }
 	python3 scripts/release.py $(TAG)
 
 upgrade: install

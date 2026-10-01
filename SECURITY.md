@@ -14,7 +14,8 @@ only by the Files panel:
 | A forged error toast | bridge errors arrive only through `/internal/error` with the per-launch bridge secret; the text is capped at 300 characters, control characters are dropped, and the panel shows it as plain text |
 | A remote host's agent | runs as the user you ssh in as, writes only under that user's `$HOME` and `/tmp`, listens only on a Unix socket in a private (0700) folder with a random name, accepts only a token given per connection on ssh's stdin, and exits when that connection closes |
 | Requests for a remote host | sent only to that host's agent (never to a local file), through a socket in the app folder that only fbd uses; the panel's Origin and token are not forwarded; answers are capped at 64 MB; Finder actions are refused |
-| ssh | your own ssh config, `BatchMode=yes` (no password or host-key prompts), only hosts you prepared with `make agent` |
+| ssh | the same ssh command the tmux session was started with, your own ssh config, `BatchMode=yes` (no password or host-key prompts); a host gets the helper only after you click Enable for it (or run `iterm-filebrowser hosts enable`) |
+| The installer | `install.sh` downloads into a temporary folder and runs nothing until the package's SHA256 matches the release's `SHA256SUMS`; it refuses root; `iterm-filebrowser upgrade` checks the same way and refuses archive members outside the package |
 | The CI runner (public repository) | workflows never run for pull requests; no token permission unless a job asks; only the release job may write, after the tests, for a tag on `main`; actions pinned to commits |
 | Typing into the wrong terminal | terminal commands need a per-launch bridge secret inside fbd, the key of the pane the panel shows, an idle shell for `cd`, and no control characters |
 

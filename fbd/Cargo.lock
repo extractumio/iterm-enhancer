@@ -202,6 +202,7 @@ dependencies = [
  "mime_guess",
  "notify",
  "parking_lot",
+ "percent-encoding",
  "rand",
  "rust-embed",
  "serde",

@@ -1,7 +1,8 @@
 name: release
 
-# A tag v* builds the Linux agents on the owner's runner and attaches them to the GitHub
-# release (AC-39); `make release TAG=…` on the Mac adds the macOS agents. No pull-request
+# A tag v* tests and builds the Linux helpers on the owner's runner and attaches them to
+# the GitHub release (AC-39); `make release TAG=…` on the Mac attaches the package users
+# install (it carries all helpers, AC-40). No pull-request
 # trigger (public repository); no permissions unless a job asks; only the upload job may
 # write, after the tests passed, for a tag whose commit is on main.
 on:
@@ -70,4 +71,11 @@ jobs:
         run: |
           (cd ui && npm ci --ignore-scripts --no-fund --no-audit && npm run build)
           python3 scripts/agents.py toolchain linux-x86_64 linux-aarch64
-          python3 scripts/release.py "$GITHUB_REF_NAME" linux-x86_64 linux-aarch64
+          python3 scripts/agents.py build linux-x86_64 linux-aarch64
+          aid=$(python3 scripts/agents.py id)
+          mkdir -p out
+          for p in linux-x86_64 linux-aarch64; do cp "dist/agents/$aid/$p/fbd" "out/fbd-$p"; done
+          (cd out && sha256sum fbd-* > SHA256SUMS-linux)
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes "Linux helpers built on the owner's runner"
+          gh release upload "$GITHUB_REF_NAME" out/* --clobber

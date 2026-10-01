@@ -44,55 +44,58 @@ always shows the directory of the pane you are working in. New windows open with
 ## Install
 
 ```bash
-make install    # first install or upgrade: build, install, switch, and go live
-make rollback   # back to the build before
-make uninstall  # remove builds and scripts; state stays in ~/Library/Application Support/iterm-filebrowser
+curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/download/install.sh | sh
 ```
 
-`make install` (or `make upgrade`, the same) builds the UI and `fbd`, copies the build to
-`~/.local/lib/iterm-filebrowser/<build>/`, switches the `current` link to it and, when
-iTerm2 runs, starts its bridge, which takes over from the running one. It waits up to 10 s
-for the new build to answer; a build that does not is switched back to the one before.
-Open Files panels reload themselves into the new build and keep their tree, tabs and
-window; one with unsaved edits says "Update ready — reloads after you save". Running it
-again without changes says so and does nothing. When iTerm2 is not running, the build is
-installed and starts with iTerm2.
+It downloads the latest release, checks its checksum, and installs it: a versioned build in
+`~/.local/lib/iterm-filebrowser`, the bridge in iTerm2's AutoLaunch, and the command
+`~/.local/bin/iterm-filebrowser`. Then in iTerm2: **View → Toolbelt → Show Toolbelt** and
+check **Files**. Needs macOS, iTerm2 with its Python API enabled (Settings → General →
+Magic), and no build tools.
 
-The first time: **View → Toolbelt → Show Toolbelt** and check **Files**.
+```bash
+iterm-filebrowser                 # status: what runs, which builds, which remote hosts
+iterm-filebrowser upgrade         # the latest release (checked the same way); open panels reload by themselves
+iterm-filebrowser rollback        # back to the build before
+iterm-filebrowser uninstall       # remove it; your settings stay in ~/Library/Application Support/iterm-filebrowser
+```
+
+From a checkout: `make install` builds the same package and installs it (`make toolchain`
+once for the Linux helpers); `make rollback`, `make uninstall`.
 
 ## Remote hosts
 
-A tmux -CC pane on another machine (for example `ssh -tt devbox "tmux -CC new-session -A -s
-work"`) shows that machine's files once it has an agent: fbd itself, run on the host and
-reached through ssh. Make a host ready once:
+A tmux -CC pane on another machine, for example from `ssh -tt ai4 "tmux -CC new-session
+-A -s work"`, can show that machine's files. The first time you focus such a pane, the
+Files panel asks:
 
-```bash
-make agent HOST=devbox    # devbox: the ssh alias you log in with
-```
+> **ai4 is a remote host.** Browse its files here? This copies a small helper (about 6 MB)
+> to ~/.iterm-filebrowser on ai4 over your ssh connection; it runs only while you use it.
+> **[Enable]** [Not now]
 
-It reads the host's platform (macOS arm64/x86_64, Linux x86_64/arm64; the Linux agent is a
-static binary for any Ubuntu or Debian), builds the agent if needed, copies it to
-`~/.local/lib/iterm-filebrowser/agent/` on the host, checks it through a trial tunnel and
-records the host. From then on, focusing a tmux -CC pane of that host starts `ssh devbox`
-carrying the agent and forwarding its socket; the panel shows `devbox:/path` and works as
-for local files (open, edit, save, create, rename, Trash, live refresh). Later `make
-install`s update the agent on its next connection.
+**Enable** is all. Nothing is run on the remote host by hand and nothing needs a password:
+the bridge uses the very ssh command the tmux session was started with (destination, port,
+user, key, jump host) with your own ssh configuration. The panel then shows `ai4:/path` and
+works as for local files: open, edit, save, create, rename, Trash, live refresh.
 
-- **Needs**: ssh without a password prompt (a key or agent; BatchMode), the host key
-  already known, and socket forwarding allowed by the host's sshd (the default,
-  `AllowStreamLocalForwarding yes`).
-- **Lives** as long as its ssh connection: closing it (network, sleep, iTerm2 quit) ends the
-  agent on the host; the bridge reconnects with back-off.
-- **Writes** only under the host's `$HOME` and `/tmp`, as the user you log in as. Trash on
-  Linux is `~/.local/share/Trash`; saving keeps a file's mode and owner (not its extended
-  attributes, unlike on macOS).
-- **Not available** for remote files: Reveal in Finder, Open with Default App. Plain `ssh`
-  panes (no tmux -CC) stay frozen as "remote".
-- **Remove** from a host: `ssh devbox rm -rf ~/.local/lib/iterm-filebrowser` and delete its
-  entry from `~/Library/Application Support/iterm-filebrowser/agents.json`.
-
-Agents for all four platforms: `make toolchain` once (pinned zig and cargo-zigbuild in
-`./.toolchain`), then `make agents`.
+- **On the host**: the helper is `~/.iterm-filebrowser/bin/fbd` (one older version kept),
+  its log `~/.iterm-filebrowser/logs/agent.log`. It runs only while your Mac is connected
+  (it exits with the ssh connection), as your user, writes only under your home and /tmp,
+  and listens on no network port.
+- **Authentication** is ssh itself: no pairing, no keys of its own. Each connection hands the
+  helper a fresh token over ssh. The host must accept your key or ssh-agent without a
+  prompt and allow socket forwarding (sshd's default).
+- **Not now** hides the question until iTerm2 restarts; the panel's menu (right click) has
+  **Browse Files of ai4…** any time, and **Remove Helper from ai4…** deletes
+  `~/.iterm-filebrowser` there.
+- **Upgrades** of the Mac side update the helper on the host at its next connection.
+- From the command line: `iterm-filebrowser hosts`, `iterm-filebrowser hosts enable ai4`
+  (any ssh destination and options, e.g. `-p 2222 alex@10.0.0.5`),
+  `iterm-filebrowser hosts remove ai4`.
+- Helpers exist for macOS (arm64, x86_64) and Linux (x86_64, arm64; one static file for any
+  Ubuntu or Debian). Plain `ssh` panes without tmux -CC, and mosh, stay frozen as "remote".
+  On Linux, saving keeps a file's mode and owner, not its extended attributes; Trash is
+  `~/.local/share/Trash`.
 
 ## How it works
 
@@ -183,7 +186,8 @@ python3 scripts/e2e_cwd.py 10              # cd → panel latency in bash / tmux
 python3 scripts/e2e_terminal.py            # Insert Path / Open Terminal Here / refusals (opens an iTerm2 window)
 python3 scripts/e2e_windows.py             # Toolbelt in new windows, viewer window, panel per window (opens iTerm2 windows; needs iTerm2 in front)
 scripts/security_check.sh                  # refused requests against the installed fbd
-python3 scripts/e2e_remote.py [--amd64]    # remote agent end to end against a Linux container with sshd (Docker)
+python3 scripts/e2e_remote.py [--amd64]    # remote helper end to end against a Linux container with sshd (Docker)
+make package                               # the release package in dist/package (tarball, install.sh, SHA256SUMS)
 scripts/make_big_dir.sh /tmp/fb-big 500000 && scripts/bench_ls.sh /tmp/fb-big
 ```
 
@@ -197,7 +201,8 @@ fork must not run code on the runner); `bridge/tests/test_workflows.py` enforces
 with actions pinned to commits in `.github/actions-allowlist.json`. `ci.yml` runs the
 tests on Linux and builds the Linux agents on every push to `main`. A tag `v*` runs
 `release.yml`: tests, then the Linux agents and `SHA256SUMS-linux` attached to the GitHub
-release; `make release TAG=v…` on the Mac adds the macOS agents.
+release; `make release TAG=v…` on the Mac builds the package users install (all four
+helpers) and attaches it with `install.sh` and `SHA256SUMS`.
 
 Set the runner up once on a Linux VM (as root; the token travels on stdin):
 

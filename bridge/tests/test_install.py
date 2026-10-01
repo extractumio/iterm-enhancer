@@ -3,6 +3,7 @@
 iTerm2 faked (no launch, no health from a real fbd)."""
 import importlib
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -14,11 +15,21 @@ sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "bridge"))
 
 
-def fake_fbd(dir_, build):
-    p = Path(dir_) / f"fbd-{build}"
-    p.write_text(f"#!/bin/sh\necho {build}\n")
-    p.chmod(0o755)
-    return p
+def fake_package(dir_, build, answers=None):
+    """A package folder as scripts/package.py makes it, with an fbd that says `answers`."""
+    pkg = Path(dir_) / f"pkg-{build}-{answers or build}"
+    shutil.rmtree(pkg, ignore_errors=True)
+    for plat in ("macos-aarch64", "macos-x86_64", "linux-x86_64"):
+        f = pkg / "agents" / plat / "fbd"
+        f.parent.mkdir(parents=True)
+        f.write_text(f"#!/bin/sh\necho {answers or build}\n")
+        f.chmod(0o755)
+    (pkg / "bridge/fbbridge").mkdir(parents=True)
+    (pkg / "bridge/fbbridge/app.py").write_text("# bridge\n")
+    (pkg / "bridge/fb_bridge.py").write_text("# entry\n")
+    (pkg / "iterm-filebrowser").write_text("#!/bin/sh\n")
+    (pkg / "BUILD").write_text(build + "\n")
+    return pkg
 
 
 class InstallTest(unittest.TestCase):
@@ -65,7 +76,7 @@ class InstallTest(unittest.TestCase):
     def install(self, build, healthy=True):
         if healthy:
             self.healthy_builds.add(build)
-        self.inst.install(build, fake_fbd(self.tmp.name, build))
+        self.inst.install(fake_package(self.tmp.name, build))
 
     def current(self, name="current"):
         link = self.root / "lib" / name
@@ -78,6 +89,9 @@ class InstallTest(unittest.TestCase):
         self.assertTrue((self.root / "AutoLaunch/fb_bridge.py").is_file())
         self.assertEqual((self.root / "lib/a/BUILD").read_text().strip(), "a")
         self.assertTrue((self.root / "lib/a/bridge/fbbridge/app.py").is_file())
+        self.assertTrue((self.root / "lib/a/agents/linux-x86_64/fbd").is_file(), "the helpers for remote hosts come along")
+        self.assertTrue(os.readlink(self.root / "lib/a/fbd").startswith("agents/macos-"), "the Mac's fbd is its macOS helper")
+        self.assertEqual(os.readlink(self.root / "bin/iterm-filebrowser"), str(self.root / "lib/current/iterm-filebrowser"))
         self.install("b")
         self.assertEqual((self.current(), self.current("previous")), ("b", "a"))
         self.assertIn("Upgraded a → b", self.said)
@@ -117,7 +131,7 @@ class InstallTest(unittest.TestCase):
 
     def test_wrong_binary_is_refused_before_anything_changes(self):
         with self.assertRaises(self.inst.Failed):
-            self.inst.install("b", fake_fbd(self.tmp.name, "other"))
+            self.inst.install(fake_package(self.tmp.name, "b", answers="other"))
         self.assertIsNone(self.current())
         self.assertFalse((self.root / "bin/fbd").exists())
 

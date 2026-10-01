@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-"""Install, upgrade, roll back and uninstall the iTerm2 File Browser (AC-33, AC-35).
+"""Install, upgrade, roll back and uninstall the iTerm2 File Browser (AC-33, AC-35, AC-40).
 
-Each build lives in its own folder, <lib>/<build>/{fbd, bridge/fbbridge, BUILD}; the links
-`current` and `previous` name the live and the last build, and each is switched with one
-rename. A running bridge keeps its own build (it resolved `current` when it started), so
-a switch takes effect when the new bridge takes over, and a build that does not come up
-healthy is switched back.
+Each build lives in its own folder, <lib>/<build>/ (a copy of its package: BUILD, agents/,
+bridge/, scripts/, the iterm-filebrowser command, and fbd linked to the macOS agent of this
+Mac); the links `current` and `previous` name the live and the last build, and each is
+switched with one rename. A running bridge keeps its own build (it resolved `current` when
+it started), so a switch takes effect when the new bridge takes over, and a build that
+does not come up healthy is switched back. Users run it through `iterm-filebrowser`.
 
-    python3 scripts/install.py id                    print the build id of the checkout
-    python3 scripts/install.py install --build ID    install or upgrade (make install / upgrade)
-    python3 scripts/install.py rollback              back to `previous` (make rollback)
-    python3 scripts/install.py uninstall             remove builds, links, scripts (keeps state)
+    python3 scripts/install.py id                     the build id of a checkout's sources
+    python3 scripts/install.py install [--from DIR]   install or upgrade to a package
+    python3 scripts/install.py rollback               back to `previous`
+    python3 scripts/install.py uninstall              remove builds, links, scripts (keeps state)
 """
 import argparse
 import fcntl
@@ -22,9 +23,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-import agents
+import platform as host_platform
+
 import install_launch as live
 
+# the folder this installer came in: a package (BUILD, agents/, bridge/, scripts/), or the
+# checkout, where only `id` is meaningful (make install stages a package first)
 REPO = Path(__file__).resolve().parent.parent
 HOME = Path.home()
 LIB = Path(os.environ.get("FB_LIB_DIR") or HOME / ".local/lib/iterm-filebrowser")
@@ -85,27 +89,23 @@ def unlink(name):
         (LIB / name).unlink()
 
 
-def copy_build(build, fbd):
-    """Copy the build into <lib>/<build> through a hidden folder renamed at the end, so a
-    half-copied build is never linked."""
+def mac_platform():
+    """The Mac's own architecture: under Rosetta, Python would say x86_64 on Apple Silicon."""
+    r = subprocess.run(["sysctl", "-n", "hw.optional.arm64"], capture_output=True, text=True)
+    return "macos-aarch64" if r.stdout.strip() == "1" or host_platform.machine() == "arm64" else "macos-x86_64"
+
+
+def copy_build(build, pkg):
+    """Copy the package into <lib>/<build> through a hidden folder renamed at the end, so a
+    half-copied build is never linked. The Mac's fbd is the macOS agent of this Mac's
+    architecture; the others stay for remote hosts (AC-38)."""
     dest = LIB / build
     if dest.is_dir():
         return
     tmp = LIB / f".{build}.tmp"
     shutil.rmtree(tmp, ignore_errors=True)
-    (tmp / "bridge").mkdir(parents=True)
-    shutil.copy2(fbd, tmp / "fbd")
-    os.chmod(tmp / "fbd", 0o755)
-    shutil.copytree(REPO / "bridge/fbbridge", tmp / "bridge/fbbridge", ignore=shutil.ignore_patterns("__pycache__"))
-    (tmp / "BUILD").write_text(build + "\n")
-    # the agents of prepared hosts, so the bridge brings their agents up to this build (AC-38)
-    aid = agents.agent_id()
-    (tmp / "AGENT_ID").write_text(aid + "\n")
-    for plat in agents.recorded():
-        built = agents.DIST / aid / plat / "fbd"
-        if built.is_file():
-            (tmp / "agents" / plat).mkdir(parents=True)
-            shutil.copy2(built, tmp / "agents" / plat / "fbd")
+    shutil.copytree(pkg, tmp, ignore=shutil.ignore_patterns("__pycache__"))
+    (tmp / "fbd").symlink_to(f"agents/{mac_platform()}/fbd")
     tmp.rename(dest)
 
 
@@ -113,9 +113,10 @@ def place_entry_points():
     """`fbd` on PATH follows `current`; iTerm2's AutoLaunch runs the bridge entry."""
     BIN.mkdir(parents=True, exist_ok=True)
     swap_link(BIN / "fbd", LIB / "current/fbd")  # also replaces the file of an unversioned install
+    swap_link(BIN / "iterm-filebrowser", LIB / "current/iterm-filebrowser")
     AUTOLAUNCH.mkdir(parents=True, exist_ok=True)
     tmp = AUTOLAUNCH / ".fb_bridge.py.new"
-    shutil.copy2(REPO / "bridge/fb_bridge.py", tmp)
+    shutil.copy2(LIB / "current/bridge/fb_bridge.py", tmp)
     tmp.replace(AUTOLAUNCH / "fb_bridge.py")
 
 
@@ -158,17 +159,22 @@ def go_live(build):
     return True
 
 
-def install(build, fbd):
+def install(pkg=REPO):
+    """Install (or upgrade to) the package in folder `pkg`."""
+    if not (pkg / "BUILD").is_file():
+        raise Failed(f"{pkg} is not a package (no BUILD): from a checkout, run make install")
+    build = (pkg / "BUILD").read_text().strip()
+    fbd = pkg / "agents" / mac_platform() / "fbd"
     if not fbd.is_file():
-        raise Failed(f"{fbd} not found: run make install (it builds first)")
+        raise Failed(f"the package has no fbd for {mac_platform()}")
     got = subprocess.run([str(fbd), "--version"], capture_output=True, text=True).stdout.strip()
     if got != build:
-        raise Failed(f"{fbd} is build {got or 'unknown'}, expected {build}: rebuild with make install")
+        raise Failed(f"{fbd} is build {got or 'unknown'}, expected {build}")
     old = target("current")
     if old == build:
         if live.iterm_running() and live.runs(live.health(), build):
             return say(f"{build} is already installed and running")
-    copy_build(build, fbd)
+    copy_build(build, pkg)
     if old and old != build:
         relink("previous", old)
     relink("current", build)
@@ -213,7 +219,7 @@ def uninstall():
     subprocess.run(["pkill", "-f", "AutoLaunch/fb_bridge.py"], capture_output=True)
     subprocess.run(["pkill", "-x", "fbd"], capture_output=True)
     shutil.rmtree(LIB, ignore_errors=True)
-    for p in (BIN / "fbd", AUTOLAUNCH / "fb_bridge.py", PROFILE):
+    for p in (BIN / "fbd", BIN / "iterm-filebrowser", AUTOLAUNCH / "fb_bridge.py", PROFILE):
         if p.is_symlink() or p.exists():
             p.unlink()
     drop_unversioned()
@@ -227,8 +233,7 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("id")
     i = sub.add_parser("install")
-    i.add_argument("--build", required=True)
-    i.add_argument("--fbd", type=Path, default=REPO / "fbd/target/release/fbd")
+    i.add_argument("--from", dest="pkg", type=Path, default=REPO, help="the package folder (default: the one this script is in)")
     sub.add_parser("rollback")
     sub.add_parser("uninstall")
     a = p.parse_args(argv)
@@ -239,7 +244,7 @@ def main(argv=None):
     try:
         fd = lock()
         try:
-            {"install": lambda: install(a.build, a.fbd), "rollback": rollback, "uninstall": uninstall}[a.cmd]()
+            {"install": lambda: install(a.pkg.resolve()), "rollback": rollback, "uninstall": uninstall}[a.cmd]()
         finally:
             os.close(fd)
     except Failed as e:
