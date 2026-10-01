@@ -94,25 +94,29 @@ def probe(target):
 
 
 def install(target, binary, agent_id):
-    """Copy `binary` to ~/.iterm-filebrowser/bin/fbd-<agent id> on the host through a
-    temporary name, point bin/fbd at it, keep one older version, and check it answers with
-    `agent_id` (AC-38: a place the user finds; logs go to ~/.iterm-filebrowser/logs)."""
+    """Copy `binary` to ~/.iterm-filebrowser/bin/fbd-agent-<agent id> on the host through a
+    temporary name, point bin/fbd-agent at it, keep one older version, and check it answers
+    with `agent_id` (AC-38: a place the user finds; logs go to ~/.iterm-filebrowser/logs).
+    Never bin/fbd: a Mac host keeps its own install in the same folder (AC-40)."""
     if not re.fullmatch(r"[0-9a-f]{12}|dev", agent_id):  # it goes into a remote shell line
         raise AgentError(f"not an agent id: {agent_id!r}")
     script = (f'set -e; d="$HOME/{HOME_DIR}"; mkdir -p "$d/bin" "$d/logs"; chmod 700 "$d"; '
-              f'cat > "$d/bin/.fbd.tmp"; chmod 755 "$d/bin/.fbd.tmp"; mv -f "$d/bin/.fbd.tmp" "$d/bin/fbd-{agent_id}"; '
-              f'ln -sfn "fbd-{agent_id}" "$d/bin/.fbd.new"; mv -f "$d/bin/.fbd.new" "$d/bin/fbd"; '
-              f'ls -1t "$d/bin" | grep "^fbd-" | grep -v "^fbd-{agent_id}$" | tail -n +2 | while read -r f; do rm -f "$d/bin/$f"; done; '
+              f'cat > "$d/bin/.fbd-agent.tmp"; chmod 755 "$d/bin/.fbd-agent.tmp"; '
+              f'mv -f "$d/bin/.fbd-agent.tmp" "$d/bin/fbd-agent-{agent_id}"; '
+              f'ln -sfn "fbd-agent-{agent_id}" "$d/bin/.fbd-agent.new"; mv -f "$d/bin/.fbd-agent.new" "$d/bin/fbd-agent"; '
+              f'ls -1t "$d/bin" | grep "^fbd-agent-" | grep -v "^fbd-agent-{agent_id}$" | tail -n +2 | while read -r f; do rm -f "$d/bin/$f"; done; '
               f'rm -rf "$HOME/.local/lib/iterm-filebrowser/agent"; '   # Stage 8's helper only (a Mac host keeps its own install)
-              f'"$d/bin/fbd" --agent-id')
+              f'"$d/bin/fbd-agent" --agent-id')
     got = ssh(target, script, stdin=Path(binary).read_bytes(), timeout=300).strip()
     if got != agent_id:
         raise AgentError(f"{key_of(target)}: the copied helper says {got or 'nothing'}, expected {agent_id}")
 
 
 def remove(target):
-    """Take the agent, its versions and its logs off the host."""
-    ssh(target, f'rm -rf "$HOME/{HOME_DIR}"')
+    """Take the agent, its versions and its log off the host, and the folders once empty;
+    a Mac host's own install in the same root stays (AC-40)."""
+    ssh(target, f'd="$HOME/{HOME_DIR}"; rm -f "$d/bin/fbd-agent" "$d/bin/fbd-agent-"* "$d/bin/.fbd-agent."* "$d/logs/agent.log"*; '
+                f'rmdir "$d/bin" "$d/logs" "$d" 2>/dev/null; true')
 
 
 class Tunnel:
@@ -133,7 +137,7 @@ class Tunnel:
         self.proc = subprocess.Popen(
             [SSH, *SSH_OPTS, "-T", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15",
              "-L", f"{self.local}:{remote}", *self.target,
-             f'FB_LOG=info "$HOME/{HOME_DIR}/bin/fbd" --agent --socket {remote} --log "$HOME/{HOME_DIR}/logs/agent.log"'],
+             f'FB_LOG=info "$HOME/{HOME_DIR}/bin/fbd-agent" --agent --socket {remote} --log "$HOME/{HOME_DIR}/logs/agent.log"'],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.proc.stdin.write((self.token + "\n").encode())
         self.proc.stdin.flush()

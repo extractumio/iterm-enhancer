@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 # security_check.sh — AC-07: refused requests against the installed fbd.
 port=${FB_PORT:-47821}; b="http://127.0.0.1:$port"
-tok=$(cat "${FB_APP_DIR:-$HOME/Library/Application Support/iterm-filebrowser}/token")
+tok=$(cat "${FB_APP_DIR:-$HOME/.iterm-filebrowser/state}/token")
 fail=0
 check() { # name expected actual
   if [ "$2" = "$3" ]; then echo "ok   $1 → $3"; else echo "FAIL $1 → $3 (want $2)"; fail=1; fi; }

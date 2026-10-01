@@ -11,8 +11,9 @@ from pathlib import Path
 # read here, not imported from fbbridge.common: tests reload this module under a temporary
 # home, and an already imported fbbridge would keep the real paths
 PORT = int(os.environ.get("FB_PORT", "47821"))
-APP_DIR = Path(os.environ.get("FB_APP_DIR") or Path.home() / "Library/Application Support/iterm-filebrowser")
-LOG_DIR = Path.home() / "Library/Logs/iterm-filebrowser"
+ROOT = Path.home() / ".iterm-filebrowser"  # the one folder of the File Browser (AC-40)
+APP_DIR = Path(os.environ.get("FB_APP_DIR") or ROOT / "state")
+LOG_DIR = ROOT / "logs"
 
 SCRIPT = "fb_bridge.py"
 

@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -33,7 +34,7 @@ class AgentsTest(unittest.TestCase):
         ssh = root / "ssh"
         ssh.write_text(FAKE_SSH)
         ssh.chmod(0o755)
-        env = {"FB_SSH": str(ssh), "FB_APP_DIR": str(root / "app"), "FAKE_HOME": str(root / "home")}
+        env = {"FB_SSH": str(ssh), "FB_APP_DIR": str(root / "app"), "FAKE_HOME": str(root / "home"), "HOME": str(root / "mac")}
         self.addCleanup(self.restore_modules)  # runs after the environment is restored
         p = mock.patch.dict(os.environ, env)
         p.start()
@@ -44,7 +45,15 @@ class AgentsTest(unittest.TestCase):
         importlib.reload(hosts)
         self.remote = importlib.reload(remote)
         self.root = root
-        self.assertTrue(str(self.ctl.RECORD).startswith(self.tmp.name), "the record must be the test's own")
+        for p in (self.ctl.RECORD, common.LOG_DIR):
+            self.assertTrue(str(p).startswith(self.tmp.name), f"{p} must be the test's own")
+        self.addCleanup(self.join_removals)  # first: a removal still logging writes into the test's home
+
+    @staticmethod
+    def join_removals():
+        for t in threading.enumerate():
+            if t.name.startswith("remove-"):
+                t.join(5)
 
     @staticmethod
     def restore_modules():
@@ -79,16 +88,30 @@ class AgentsTest(unittest.TestCase):
         for aid in (a, b, c):
             self.ctl.install(["vm"], self.fake_agent(aid), aid)
             time.sleep(0.01)
-        self.assertEqual(os.readlink(home / "bin/fbd"), f"fbd-{c}")
-        self.assertEqual(sorted(p.name for p in (home / "bin").iterdir()), ["fbd", f"fbd-{b}", f"fbd-{c}"])
+        self.assertEqual(os.readlink(home / "bin/fbd-agent"), f"fbd-agent-{c}")
+        self.assertEqual(sorted(p.name for p in (home / "bin").iterdir()), ["fbd-agent", f"fbd-agent-{b}", f"fbd-agent-{c}"])
         self.assertTrue((home / "logs").is_dir())
         self.assertEqual(oct(home.stat().st_mode & 0o777), "0o700")
+        (home / "logs/agent.log").write_text("x")
         self.ctl.remove(["vm"])
         self.assertFalse(home.exists(), "remove takes it all off the host")
         with self.assertRaises(self.ctl.AgentError):
             self.ctl.install(["vm"], self.fake_agent(d), "eeeeeeeeeeee")  # answers d, not e
         with self.assertRaises(self.ctl.AgentError):
             self.ctl.install(["vm"], self.fake_agent(d), "x; rm -rf ~")  # never into a shell line
+
+    def test_install_and_remove_leave_a_mac_hosts_own_install(self):
+        home = self.root / "home" / self.ctl.HOME_DIR
+        for rel in ("bin/fbd", "bin/iterm-filebrowser", "logs/fbd.log", "state/token"):
+            (home / rel).parent.mkdir(parents=True, exist_ok=True)
+            (home / rel).write_text("mine")
+        aid = "aaaaaaaaaaaa"
+        self.ctl.install(["mac"], self.fake_agent(aid), aid)
+        self.assertEqual((home / "bin/fbd").read_text(), "mine")
+        (home / "logs/agent.log").write_text("x")
+        self.ctl.remove(["mac"])
+        self.assertEqual(sorted(str(p.relative_to(home)) for p in home.rglob("*") if p.is_file()),
+                         ["bin/fbd", "bin/iterm-filebrowser", "logs/fbd.log", "state/token"])
 
     def test_tunnel_reports_why_it_failed(self):
         with mock.patch.dict(os.environ, {"FAKE_SSH_FAIL": "connect to host vm port 22: Connection refused"}):
@@ -171,7 +194,7 @@ class AgentsTest(unittest.TestCase):
     def test_remove_while_connecting_leaves_no_connection(self):
         self.ctl.save({"devbox": {"ssh": ["devbox"], "name": "devbox"}})
         posted, stopped = [], []
-        gate = __import__("threading").Event()
+        gate = threading.Event()
 
         class SlowTunnel:
             local, token = Path("/nonexistent.sock"), "t"

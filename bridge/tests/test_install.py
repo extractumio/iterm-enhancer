@@ -35,12 +35,12 @@ def fake_package(dir_, build, answers=None):
 class InstallTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        root = Path(self.tmp.name)
-        env = {"FB_LIB_DIR": str(root / "lib"), "FB_BIN_DIR": str(root / "bin"),
-               "FB_AUTOLAUNCH_DIR": str(root / "AutoLaunch"), "FB_APP_DIR": str(root / "app")}
-        patcher = mock.patch.dict(os.environ, env)
+        self.home = Path(self.tmp.name)
+        root = self.home / ".iterm-filebrowser"
+        patcher = mock.patch.dict(os.environ, {"HOME": str(self.home)})  # every path the installer uses derives from HOME
         patcher.start()
         self.addCleanup(patcher.stop)
+        os.environ.pop("FB_APP_DIR", None)  # restored with the rest of the environment
         import install_launch
         import install
         self.live = importlib.reload(install_launch)
@@ -50,10 +50,8 @@ class InstallTest(unittest.TestCase):
         # nothing this test can delete may lie outside the temporary home
         for p in (self.inst.LIB, self.inst.BIN, self.inst.AUTOLAUNCH, self.inst.APP_DIR, self.live.APP_DIR):
             self.assertTrue(str(p).startswith(self.tmp.name), f"{p} is outside the test's home")
-        # never the live profile: uninstall deletes it
-        p = mock.patch.object(self.inst, "PROFILE", root / "DynamicProfiles/iterm-filebrowser.json")
-        p.start()
-        self.addCleanup(p.stop)
+        for p in (self.inst.PROFILE, self.inst.OLD_LIB, self.inst.OLD_BIN, *self.inst.OLD_DIRS):
+            self.assertTrue(str(p).startswith(self.tmp.name), f"{p} is outside the test's home")
         self.running = {}            # what the fake iTerm2 runs: {"build": ..., "bridge": ...}
         self.launches = []
         self.healthy_builds = set()  # builds that come up when launched
@@ -68,7 +66,7 @@ class InstallTest(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def fake_launch(self):
-        build = os.readlink(self.root / "lib/current")
+        build = os.readlink(self.root / "builds/current")
         self.launches.append(build)
         self.running = ({"build": build, "bridge_build": build, "bridge_connected": True}
                         if build in self.healthy_builds else {})
@@ -79,19 +77,19 @@ class InstallTest(unittest.TestCase):
         self.inst.install(fake_package(self.tmp.name, build))
 
     def current(self, name="current"):
-        link = self.root / "lib" / name
+        link = self.root / "builds" / name
         return os.readlink(link) if link.is_symlink() else None
 
     def test_fresh_install_upgrade_same_build_and_prune(self):
         self.install("a")
         self.assertEqual(self.current(), "a")
-        self.assertEqual(os.readlink(self.root / "bin/fbd"), str(self.root / "lib/current/fbd"))
-        self.assertTrue((self.root / "AutoLaunch/fb_bridge.py").is_file())
-        self.assertEqual((self.root / "lib/a/BUILD").read_text().strip(), "a")
-        self.assertTrue((self.root / "lib/a/bridge/fbbridge/app.py").is_file())
-        self.assertTrue((self.root / "lib/a/agents/linux-x86_64/fbd").is_file(), "the helpers for remote hosts come along")
-        self.assertTrue(os.readlink(self.root / "lib/a/fbd").startswith("agents/macos-"), "the Mac's fbd is its macOS helper")
-        self.assertEqual(os.readlink(self.root / "bin/iterm-filebrowser"), str(self.root / "lib/current/iterm-filebrowser"))
+        self.assertEqual(os.readlink(self.root / "bin/fbd"), str(self.root / "builds/current/fbd"))
+        self.assertTrue((self.inst.AUTOLAUNCH / "fb_bridge.py").is_file())
+        self.assertEqual((self.root / "builds/a/BUILD").read_text().strip(), "a")
+        self.assertTrue((self.root / "builds/a/bridge/fbbridge/app.py").is_file())
+        self.assertTrue((self.root / "builds/a/agents/linux-x86_64/fbd").is_file(), "the helpers for remote hosts come along")
+        self.assertTrue(os.readlink(self.root / "builds/a/fbd").startswith("agents/macos-"), "the Mac's fbd is its macOS helper")
+        self.assertEqual(os.readlink(self.root / "bin/iterm-filebrowser"), str(self.root / "builds/a/iterm-filebrowser"))
         self.install("b")
         self.assertEqual((self.current(), self.current("previous")), ("b", "a"))
         self.assertIn("Upgraded a → b", self.said)
@@ -100,7 +98,7 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(len(self.launches), n, "same build, running: nothing relaunched")
         self.assertIn("b is already installed and running", self.said)
         self.install("c")
-        self.assertEqual(sorted(p.name for p in (self.root / "lib").iterdir() if not p.name.startswith(".") and p.is_dir()
+        self.assertEqual(sorted(p.name for p in (self.root / "builds").iterdir() if not p.name.startswith(".") and p.is_dir()
                                 and not p.is_symlink()), ["b", "c"], "only current and previous are kept")
 
     def test_unhealthy_build_is_rolled_back(self):
@@ -110,7 +108,7 @@ class InstallTest(unittest.TestCase):
         self.assertIn("rolled back to a", str(cm.exception))
         self.assertEqual(self.current(), "a")
         self.assertEqual(self.launches[-2:], ["b", "a"])
-        self.assertTrue((self.root / "lib/b").is_dir(), "kept for a look; pruned by the next good install")
+        self.assertTrue((self.root / "builds/b").is_dir(), "kept for a look; pruned by the next good install")
 
     def test_refused_launch_keeps_the_switch(self):
         self.install("a")
@@ -127,7 +125,7 @@ class InstallTest(unittest.TestCase):
             self.install("b")
         self.assertEqual(self.current(), "b")
         self.assertIn("Installed b; takes effect when iTerm2 starts", self.said)
-        self.assertTrue((self.root / "lib/a").is_dir(), "nothing pruned before the new build was seen running")
+        self.assertTrue((self.root / "builds/a").is_dir(), "nothing pruned before the new build was seen running")
 
     def test_wrong_binary_is_refused_before_anything_changes(self):
         with self.assertRaises(self.inst.Failed):
@@ -135,13 +133,120 @@ class InstallTest(unittest.TestCase):
         self.assertIsNone(self.current())
         self.assertFalse((self.root / "bin/fbd").exists())
 
+    def old_layout(self, build="z"):
+        """An install as Stage 7 to 9 left it: builds in ~/.local/lib, links in ~/.local/bin,
+        state in Application Support, logs in Library/Logs."""
+        old_app, old_logs = list(self.inst.OLD_DIRS)
+        old_app.mkdir(parents=True)
+        (old_app / "token").write_text("same-token")
+        (old_app / "workspaces.json").write_text("{}")
+        old_logs.mkdir(parents=True)
+        (old_logs / "fbd.log").write_text("old log")
+        for b in (build, "y"):
+            (self.inst.OLD_LIB / b / "bridge/fbbridge").mkdir(parents=True)
+            (self.inst.OLD_LIB / b / "bridge/fbbridge/common.py").write_text("# the old paths\n")
+            (self.inst.OLD_LIB / b / "fbd").write_text("#!/bin/sh\n")
+        (self.inst.OLD_LIB / "current").symlink_to(build)
+        (self.inst.OLD_LIB / "previous").symlink_to("y")
+        self.healthy_builds.add("y")
+        self.inst.OLD_BIN.mkdir(parents=True)
+        for name in ("fbd", "iterm-filebrowser"):
+            (self.inst.OLD_BIN / name).symlink_to(self.inst.OLD_LIB / "current" / name)
+        (self.inst.OLD_BIN / "other-tool").write_text("not ours")
+        self.healthy_builds.add(build)
+        return old_app, old_logs
+
+    def test_moves_the_old_layout_under_one_root(self):
+        old_app, old_logs = self.old_layout()
+        self.install("a")
+        self.assertEqual((self.root / "state/token").read_text(), "same-token", "the Toolbelt URL stays valid")
+        self.assertEqual((self.root / "logs/fbd.log").read_text(), "old log")
+        self.assertEqual((self.current(), self.current("previous")), ("a", "z"), "the old build stays for a rollback")
+        self.assertEqual(old_app.resolve(), (self.root / "state").resolve(), "linked while build z may run again")
+        self.assertFalse(self.inst.OLD_LIB.exists())
+        self.assertEqual(sorted(p.name for p in self.inst.OLD_BIN.iterdir()), ["other-tool"])
+        self.inst.rollback()
+        self.assertEqual(self.launches[-1], "z")
+        self.assertTrue((self.root / "builds/z/bridge/fbbridge/common.py").is_file())
+        self.assertEqual(os.readlink(self.root / "bin/iterm-filebrowser"), str(self.root / "builds/a/iterm-filebrowser"),
+                         "after a rollback into an old build the command still knows this layout")
+        self.install("b")
+        self.install("c")
+        self.assertFalse(old_app.is_symlink() or old_app.exists(), "no kept build uses the old folders")
+        self.assertFalse(old_logs.is_symlink() or old_logs.exists())
+        self.assertEqual((self.root / "state/token").read_text(), "same-token")
+
+    def test_old_state_merges_into_a_new_folder_and_a_clash_is_refused(self):
+        old_app, _ = self.old_layout()
+        (self.root / "state").mkdir(parents=True)
+        (self.root / "state/agents.json").write_text("{}")
+        self.install("a")
+        self.assertEqual((self.root / "state/token").read_text(), "same-token")
+        self.assertTrue((self.root / "state/agents.json").is_file())
+        self.assertTrue(old_app.is_symlink())
+
+    def test_a_token_in_both_places_is_refused(self):
+        old_app, _ = self.old_layout()
+        (self.root / "state").mkdir(parents=True)
+        (self.root / "state/token").write_text("new-token")
+        with self.assertRaises(self.inst.Failed) as cm:
+            self.install("a")
+        self.assertIn("both exist", str(cm.exception))
+        self.assertEqual((self.root / "state/token").read_text(), "new-token")
+        self.assertEqual((old_app / "token").read_text(), "same-token", "nothing of the user's is deleted")
+        self.assertIsNone(self.current(), "nothing installed")
+
+    def test_uninstall_before_install_keeps_the_old_token(self):
+        self.old_layout()
+        with mock.patch.object(self.inst.subprocess, "run"):
+            self.inst.uninstall()
+        self.install("a")
+        self.assertEqual((self.root / "state/token").read_text(), "same-token")
+
+    def test_a_bad_package_moves_nothing(self):
+        old_app, old_logs = self.old_layout()
+        with self.assertRaises(self.inst.Failed):
+            self.inst.install(fake_package(self.tmp.name, "b", answers="other"))
+        self.assertFalse(old_app.is_symlink() or old_logs.is_symlink())
+        self.assertFalse((self.root / "state").exists())
+
+    def test_a_log_written_while_moving_is_merged(self):
+        _, old_logs = self.old_layout()
+        real = Path.symlink_to
+
+        def bridge_logs(path, dest, *a):
+            if path == old_logs and not (old_logs / "bridge.log").exists() and not hasattr(self, "logged"):
+                self.logged = True
+                old_logs.mkdir()
+                (old_logs / "bridge.log").write_text("late line\n")
+            return real(path, dest, *a)
+        with mock.patch.object(Path, "symlink_to", bridge_logs):
+            self.inst.move_old_layout()
+        self.assertTrue(old_logs.is_symlink())
+        self.assertEqual((self.root / "logs/bridge.log").read_text(), "late line\n")
+        self.assertEqual((self.root / "logs/fbd.log").read_text(), "old log")
+
+    def test_rollback_from_the_old_layout(self):
+        self.old_layout()
+        self.inst.rollback()
+        self.assertEqual((self.current(), self.current("previous")), ("y", "z"))
+
     def test_migrates_the_unversioned_layout(self):
-        (self.root / "bin").mkdir()
-        (self.root / "bin/fbd").write_text("old binary")
-        (self.root / "app/bridge/fbbridge").mkdir(parents=True)
+        self.inst.OLD_BIN.mkdir(parents=True)
+        (self.inst.OLD_BIN / "fbd").write_text("old binary: reads FB_APP_DIR")
+        old_app, _ = self.inst.OLD_DIRS
+        (old_app / "bridge/fbbridge").mkdir(parents=True)
+        self.inst.move_old_layout()
         self.install("a")
         self.assertTrue((self.root / "bin/fbd").is_symlink())
-        self.assertFalse((self.root / "app/bridge").exists(), "the old bridge copy goes once the new build runs")
+        self.assertFalse((self.inst.OLD_BIN / "fbd").exists(), "the copied fbd of installs before Stage 7 goes")
+        self.assertFalse((self.root / "state/bridge").exists(), "the old bridge copy goes once the new build runs")
+
+    def test_an_fbd_that_is_not_ours_stays(self):
+        self.inst.OLD_BIN.mkdir(parents=True)
+        (self.inst.OLD_BIN / "fbd").write_text("someone else's tool")
+        self.install("a")
+        self.assertTrue((self.inst.OLD_BIN / "fbd").is_file())
 
     def test_rollback_and_nothing_to_roll_back(self):
         with self.assertRaises(self.inst.Failed) as cm:
@@ -154,10 +259,10 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(self.launches[-1], "a")
 
     def test_a_half_copied_build_is_never_linked(self):
-        (self.root / "lib/.b.tmp/bridge").mkdir(parents=True)  # a copy that was interrupted
+        (self.root / "builds/.b.tmp/bridge").mkdir(parents=True)  # a copy that was interrupted
         self.install("b")
-        self.assertTrue((self.root / "lib/b/fbd").is_file())
-        self.assertFalse((self.root / "lib/.b.tmp").exists())
+        self.assertTrue((self.root / "builds/b/fbd").is_file())
+        self.assertFalse((self.root / "builds/.b.tmp").exists())
 
     def test_one_install_at_a_time(self):
         fd = self.inst.lock()
@@ -169,16 +274,16 @@ class InstallTest(unittest.TestCase):
 
     def test_uninstall_keeps_token_and_workspaces(self):
         self.install("a")
-        (self.root / "app").mkdir(exist_ok=True)
-        (self.root / "app/token").write_text("t")
-        self.inst.PROFILE.parent.mkdir(parents=True)
+        (self.root / "state").mkdir(parents=True, exist_ok=True)
+        (self.root / "state/token").write_text("t")
+        self.inst.PROFILE.parent.mkdir(parents=True, exist_ok=True)
         self.inst.PROFILE.write_text("{}")
         with mock.patch.object(self.inst.subprocess, "run"):
             self.inst.uninstall()
         self.assertFalse(self.inst.PROFILE.exists())
-        self.assertFalse((self.root / "lib").exists())
+        self.assertFalse((self.root / "builds").exists())
         self.assertFalse((self.root / "bin/fbd").exists() or (self.root / "bin/fbd").is_symlink())
-        self.assertTrue((self.root / "app/token").exists())
+        self.assertTrue((self.root / "state/token").exists())
 
     def test_build_id_covers_the_bridge(self):
         with tempfile.TemporaryDirectory() as d:

@@ -65,12 +65,13 @@ def main():
         sys.path.insert(0, str(REPO / "bridge"))
         sys.path.insert(0, str(REPO / "scripts"))
         import agents
-        from fbbridge import agentctl, hosts, remote
+        from fbbridge import agentctl, common, hosts, remote
+        common.LOG_DIR = work / "logs"  # the bridge's log of this run, never the user's
         aid = agents.agent_id()
         record = hosts.enable(["fbtest"], binary_for=lambda p: agents.build([p])[p], agent_id=aid)
         check("AC-38 Enable prepares the host", record["agent_id"] == aid and record["platform"] == ("linux-x86_64" if amd64 else "linux-aarch64"), record)
-        layout = agentctl.ssh(["fbtest"], "cd ~/.iterm-filebrowser && ls bin logs && readlink bin/fbd && stat -c %a .").split()
-        check("AC-38 the helper is in ~/.iterm-filebrowser/bin, private", f"fbd-{aid}" in layout and layout[-1] == "700", layout)
+        layout = agentctl.ssh(["fbtest"], "cd ~/.iterm-filebrowser && ls bin logs && readlink bin/fbd-agent && stat -c %a .").split()
+        check("AC-38 the helper is in ~/.iterm-filebrowser/bin, private", f"fbd-agent-{aid}" in layout and layout[-1] == "700", layout)
         fbd = subprocess.Popen([str(REPO / "fbd/target/debug/fbd")], env=dict(env, FB_BRIDGE_SECRET=SECRET, FB_LOG="warn"), stderr=subprocess.DEVNULL)
         time.sleep(1)
         token = (work / "app/token").read_text().strip()
@@ -132,7 +133,7 @@ def main():
         check("AC-37 trash on the host", status == 200 and "hello.txt" in agentctl.ssh(["fbtest"], "ls ~/.local/share/Trash/files"))
         remotes.stop()
         time.sleep(1)
-        left = agentctl.ssh(["fbtest"], 'ps -eo comm | grep -c "^fbd$" || true').strip()
+        left = agentctl.ssh(["fbtest"], 'ps -eo comm | grep -c "^fbd-agent" || true').strip()
         check("AC-37 the agent exits with its connection and leaves nothing in /tmp", left == "0" and not agentctl.ssh(["fbtest"], "ls -A /tmp").strip(), f"{left} running")
         log = agentctl.ssh(["fbtest"], "cat ~/.iterm-filebrowser/logs/agent.log")
         check("AC-38 the agent logged to ~/.iterm-filebrowser/logs/agent.log", "event=\"start\"" in log and "mode=\"agent\"" in log, log[-160:])

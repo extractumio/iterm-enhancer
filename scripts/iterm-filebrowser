@@ -5,7 +5,7 @@
 # on a Mac without them (python3 would only offer to install them), iTerm2's own Python.
 set -eu
 self=$0
-while [ -L "$self" ]; do                      # ~/.local/bin/iterm-filebrowser → the build
+while [ -L "$self" ]; do                      # ~/.iterm-filebrowser/bin/iterm-filebrowser → the build
     link=$(readlink "$self")
     case $link in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
 done

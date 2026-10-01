@@ -6,7 +6,7 @@
 #
 # Downloads the latest release's package and its SHA256SUMS into a temporary folder,
 # checks the checksum, and runs the package's own installer (a versioned build in
-# ~/.local/lib/iterm-filebrowser, the bridge in iTerm2's AutoLaunch, health check,
+# ~/.iterm-filebrowser/builds, the bridge in iTerm2's AutoLaunch, health check,
 # rollback when the new build does not come up). Nothing is run before the check passes.
 # Everything happens in main, called on the last line: a cut-off download does nothing.
 set -eu
@@ -28,11 +28,6 @@ main() {
     mkdir "$tmp/pkg"
     tar -xzf "$tmp/package.tar.gz" -C "$tmp/pkg"
     "$tmp/pkg/iterm-filebrowser/iterm-filebrowser" install
-    case ":$PATH:" in
-        *":$HOME/.local/bin:"*) ;;
-        *) echo "Tip: add ~/.local/bin to your PATH to use the iterm-filebrowser command:"
-           echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc" ;;
-    esac
     echo "Then in iTerm2: View → Toolbelt → Show Toolbelt, and check Files."
 }
 

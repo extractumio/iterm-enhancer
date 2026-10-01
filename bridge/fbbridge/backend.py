@@ -16,7 +16,7 @@ from .common import BASE, BUILD, BUILD_DIR, LOG_DIR, PORT, UserError, log
 def find_fbd():
     """fbd of this bridge's own build first, so a bridge never starts another build's
     backend after `current` was switched (AC-33)."""
-    for cand in (os.environ.get("FB_BIN"), str(BUILD_DIR / "fbd"), str(Path.home() / ".local/bin/fbd"), shutil.which("fbd")):
+    for cand in (os.environ.get("FB_BIN"), str(BUILD_DIR / "fbd"), str(Path.home() / ".iterm-filebrowser/bin/fbd"), shutil.which("fbd")):
         if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
             return cand
     raise SystemExit("fbd binary not found: run `make install`")

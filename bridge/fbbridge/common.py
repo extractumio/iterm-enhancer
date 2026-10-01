@@ -7,11 +7,13 @@ from pathlib import Path
 
 PORT = int(os.environ.get("FB_PORT", "47821"))
 BASE = f"http://127.0.0.1:{PORT}"
-APP_DIR = Path(os.environ.get("FB_APP_DIR") or Path.home() / "Library/Application Support/iterm-filebrowser")
-# an installed build is <lib>/<build>/{fbd, bridge/fbbridge, BUILD} (AC-33); a checkout has no BUILD
+# everything the File Browser keeps is under one root (AC-40)
+ROOT = Path.home() / ".iterm-filebrowser"
+APP_DIR = Path(os.environ.get("FB_APP_DIR") or ROOT / "state")
+# an installed build is <root>/builds/<build>/{fbd, bridge/fbbridge, BUILD} (AC-33); a checkout has no BUILD
 BUILD_DIR = Path(__file__).resolve().parents[2]
 BUILD = (BUILD_DIR / "BUILD").read_text().strip() if (BUILD_DIR / "BUILD").is_file() else "dev"
-LOG_DIR = Path.home() / "Library/Logs/iterm-filebrowser"
+LOG_DIR = ROOT / "logs"
 TOOL_ID = "com.local.iterm-filebrowser"
 POLL = 0.5
 POLL_TIMEOUT = 10.0  # one poll of the focused pane (AC-30)

@@ -47,17 +47,28 @@ always shows the directory of the pane you are working in. New windows open with
 curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/download/install.sh | sh
 ```
 
-It downloads the latest release, checks its checksum, and installs it: a versioned build in
-`~/.local/lib/iterm-filebrowser`, the bridge in iTerm2's AutoLaunch, and the command
-`~/.local/bin/iterm-filebrowser`. Then in iTerm2: **View → Toolbelt → Show Toolbelt** and
-check **Files**. Needs macOS, iTerm2 with its Python API enabled (Settings → General →
-Magic), and no build tools.
+It downloads the latest release, checks its checksum, and installs it into one folder,
+`~/.iterm-filebrowser/`, plus the bridge entry in iTerm2's AutoLaunch. Then in iTerm2:
+**View → Toolbelt → Show Toolbelt** and check **Files**. Needs macOS, iTerm2 with its Python
+API enabled (Settings → General → Magic), and no build tools.
+
+```text
+~/.iterm-filebrowser/
+  bin/      iterm-filebrowser (the command; add this folder to your PATH), fbd
+  builds/   one folder per build; current, previous
+  logs/     bridge.log, fbd.log
+  state/    token, workspaces.json, agents.json (enabled hosts)
+```
+
+An install from before this layout (`~/.local/lib`, `~/.local/bin`, `~/Library/Application
+Support/iterm-filebrowser`, `~/Library/Logs/iterm-filebrowser`) is moved on the next
+upgrade; the token and your workspaces come along.
 
 ```bash
 iterm-filebrowser                 # status: what runs, which builds, which remote hosts
 iterm-filebrowser upgrade         # the latest release (checked the same way); open panels reload by themselves
 iterm-filebrowser rollback        # back to the build before
-iterm-filebrowser uninstall       # remove it; your settings stay in ~/Library/Application Support/iterm-filebrowser
+iterm-filebrowser uninstall       # remove it; your settings and logs stay in ~/.iterm-filebrowser
 ```
 
 From a checkout: `make install` builds the same package and installs it (`make toolchain`
@@ -70,7 +81,7 @@ A tmux -CC pane on another machine, for example from `ssh -tt ai4 "tmux -CC new-
 Files panel asks:
 
 > **ai4 is a remote host.** Browse its files here? This copies a small helper (about 6 MB)
-> to ~/.iterm-filebrowser on ai4 over your ssh connection; it runs only while you use it.
+> to ~/.iterm-filebrowser/bin on ai4 over your ssh connection; it runs only while you use it.
 > **[Enable]** [Not now]
 
 **Enable** is all. Nothing is run on the remote host by hand and nothing needs a password:
@@ -78,7 +89,7 @@ the bridge uses the very ssh command the tmux session was started with (destinat
 user, key, jump host) with your own ssh configuration. The panel then shows `ai4:/path` and
 works as for local files: open, edit, save, create, rename, Trash, live refresh.
 
-- **On the host**: the helper is `~/.iterm-filebrowser/bin/fbd` (one older version kept),
+- **On the host**: the helper is `~/.iterm-filebrowser/bin/fbd-agent` (one older version kept),
   its log `~/.iterm-filebrowser/logs/agent.log`. It runs only while your Mac is connected
   (it exits with the ssh connection), as your user, writes only under your home and /tmp,
   and listens on no network port.
@@ -86,8 +97,8 @@ works as for local files: open, edit, save, create, rename, Trash, live refresh.
   helper a fresh token over ssh. The host must accept your key or ssh-agent without a
   prompt and allow socket forwarding (sshd's default).
 - **Not now** hides the question until iTerm2 restarts; the panel's menu (right click) has
-  **Browse Files of ai4…** any time, and **Remove Helper from ai4…** deletes
-  `~/.iterm-filebrowser` there.
+  **Browse Files of ai4…** any time, and **Remove Helper from ai4…** deletes the helper and
+  its log there (and `~/.iterm-filebrowser` once empty; a Mac host keeps its own install).
 - **Upgrades** of the Mac side update the helper on the host at its next connection.
 - From the command line: `iterm-filebrowser hosts`, `iterm-filebrowser hosts enable ai4`
   (any ssh destination and options, e.g. `-p 2222 alex@10.0.0.5`),
@@ -152,20 +163,19 @@ Environment of `fbd` (the bridge passes its own environment through):
 | `FB_LIST_CACHE_MB` | `128` | memory for cached listings |
 | `FB_TEXT_MAX_BYTES` | `10485760` | larger files open read-only, first 1 MB |
 | `FB_WORKSPACE_TTL_DAYS` | `14` | idle pane state is dropped after this |
-| `FB_APP_DIR` | `~/Library/Application Support/iterm-filebrowser` | token and workspace folder |
+| `FB_APP_DIR` | `~/.iterm-filebrowser/state` | token and workspace folder (tests use their own) |
 | `FB_LOG` | `info` | log level |
 | `FB_BIN` | its build's `fbd` | the bridge starts this fbd binary instead |
 | `FB_AUTO_TOOLBELT` | `1` | `0` stops showing the Toolbelt in new windows |
-| `FB_LIB_DIR`, `FB_BIN_DIR`, `FB_AUTOLAUNCH_DIR` | `~/.local/lib/iterm-filebrowser`, `~/.local/bin`, iTerm2's AutoLaunch | where `make install` puts builds, the `fbd` link and the bridge entry (tests use their own) |
 | `FB_BUILD_ID` | the compiled build | lets a test play another build (AC-34) |
 
-Logs: `~/Library/Logs/iterm-filebrowser/{fbd,bridge}.log`.
+Logs: `~/.iterm-filebrowser/logs/{fbd,bridge}.log`.
 
 ## Troubleshooting
 
 | The panel says | Why | Fix |
 |---|---|---|
-| **Backend not running** | `fbd` is not up: the bridge is stopped or iTerm2's Python API is off | Enable the Python API; `make restart`; see `~/Library/Logs/iterm-filebrowser/` |
+| **Backend not running** | `fbd` is not up: the bridge is stopped or iTerm2's Python API is off | Enable the Python API; `make restart`; see `~/.iterm-filebrowser/logs/` |
 | **Not following iTerm2** | `fbd` runs but no bridge reports the focused pane (the bridge was stopped or hangs); the tree still works but no longer follows `cd` | `make restart` or Scripts → AutoLaunch → fb_bridge.py; see `bridge.log`. A bridge exits with its iTerm2 and a new one replaces a leftover one |
 | **Viewer window failed: … did not load as a browser** | iTerm2 could not load the "Files Viewer" profile as a browser profile, even after the bridge reloaded it | Install iTerm2's browser plugin (see iTerm2's web browser documentation), then ⌘-click again; `bridge.log` has the details |
 | **Install of … failed** / **Upgrade to … failed; rolled back** | the new build did not report healthy within 10 s | see `bridge.log` and `fbd.log`; the build before keeps running |

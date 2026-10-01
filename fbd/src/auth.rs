@@ -13,10 +13,10 @@ use axum::response::Response;
 use crate::http::err;
 use crate::Shared;
 
-/// `FB_APP_DIR`, default `~/Library/Application Support/iterm-filebrowser` (tests use their own).
+/// `FB_APP_DIR`, default `~/.iterm-filebrowser/state` (tests use their own).
 pub fn app_dir() -> PathBuf {
     let dir = std::env::var_os("FB_APP_DIR").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(std::env::var("HOME").expect("HOME")).join("Library/Application Support/iterm-filebrowser")
+        PathBuf::from(std::env::var("HOME").expect("HOME")).join(".iterm-filebrowser/state")
     });
     std::fs::create_dir_all(&dir).expect("create app dir");
     dir

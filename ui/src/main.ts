@@ -200,7 +200,7 @@ function connect() {
       // EventSource hides the status: ask once whether the token or the backend is the problem
       api("GET", "/api/state", { retry: false }).then(() => {}, (e: ApiError) => {
         if (e.status === 401) authFailed();
-        else notice("Backend not running", "fbd is not reachable; retrying. Check that iTerm2's Python API is enabled and see ~/Library/Logs/iterm-filebrowser/fbd.log.");
+        else notice("Backend not running", "fbd is not reachable; retrying. Check that iTerm2's Python API is enabled and see ~/.iterm-filebrowser/logs/fbd.log.");
       });
     });
   };

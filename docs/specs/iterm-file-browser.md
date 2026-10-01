@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.13.0 |
+| Version | 0.14.0 |
 | Date | 2026-10-01 |
 | Status | approved |
 | Author | Project maintainers |
@@ -27,6 +27,7 @@ Change log:
 | 0.11.0 | 2026-10-01 | Stage 7 implemented (AC-33, AC-34, AC-35). The build id hashes the sources (bridge, fbd, UI sources and lockfiles), not `ui/dist`, because the UI bundle carries the id itself; the UI build writes it to `ui/.build-id` so the browser test runs its fbd as the same build; `FB_BUILD_ID` lets a test play another build. Panels reload in place with `location.reload()` (keeping token and window binding), once per build. AC-25: the menu is disabled while iTerm2 is not the active app (AS-10), so a new window stays pending and is retried while it is key, logged once; `e2e_windows.py` skips unless iTerm2 is in front. Step 0 (AS-10) was probed only as far as possible from inside a running iTerm2 session. Implementation review: the bridge says its build in its first post (a pane need not be focused), the wait is 30 s, `make` refuses root before building, the install lock lives outside what uninstall removes, the down-probe does not retry, a page still differing after its one reload says "Reload the panel to update". /simplify: one health check, one atomic link swap, one session-storage helper, the build id in one place (`build.rs` dropped: cargo tracks `option_env!`), the bridge's build sent once per fbd start; installer paths are read from the environment, not from `fbbridge.common` (an imported module kept the real paths under the test's temporary home, and a test run removed the live unversioned bridge copy, restored from the installed commit); the installer test now asserts every path it may delete is inside its temporary home |
 | 0.12.0 | 2026-10-01 | Planned (Stage 8): AC-37 (browse the files of a remote host's tmux -CC pane through an fbd agent on that host, reached through ssh), AC-38 (one command makes a host ready: detects its platform, builds or takes the matching agent, installs it over ssh), AC-39 (one way to build the agent for macOS arm64/x86_64 and Linux x86_64/arm64, and a release built on the owner's own runner). The "remote file systems" non-goal is narrowed to hosts without an agent. Fable review (pragmatic agent): an explicit host on requests, workspaces and tabs instead of `//host` path prefixes (the prefix leaked into local file access: Rust collapses `//`), agents keyed by an agent id (fbd sources only), agent mode without desktop assumptions, host-name collisions refused, release hardened for a public repository, a trial tunnel at setup; kept against its advice: the release workflow and the macOS x86_64 build (owner's request). Implementation review (Fable): the agent takes no existing folder (removing it on exit could have wiped a home given by hand), a recorded host's pane always carries its host (a disconnected host must not read the same path on the Mac), a failed registration no longer leaves "connecting…" and a live ssh, hosts are registered again after fbd restarts, Trash on a macOS host uses the file manager (no Finder over ssh), an agent exits after 90 s without the Mac's event stream (sshd may not notice a dropped link), the runner keeps its toolchain and builds with 2 jobs, the relay buffer is capped, agent ids are checked before a remote shell sees them, banner lines are skipped, socket names are short; noticed, not fixed: the runner tarball is not checksum-verified, macOS hosts are not tested yet |
 | 0.13.0 | 2026-10-01 | Planned (Stage 9), from the owner: a user who installs a package never runs `make` and should not need any step on the remote host. AC-38 becomes "enable a host from the panel": one click, once per host; the ssh destination comes from the command iTerm2's tmux gateway runs; the agent installs over that ssh into `~/.iterm-filebrowser/bin/` and logs into `~/.iterm-filebrowser/logs/` on the host (owner: easy to find). AC-40: a Mac package installed with one line, carrying fbd for both Mac architectures and the agents of all platforms, and a command `iterm-filebrowser` for upgrade, rollback, uninstall and hosts. No pairing: ssh is the authentication. Fable review: exact ssh arguments from the kernel (sysctl), `-o` options by allowlist; hosts keyed by their ssh destination (the name a host reports only labels it; cloud images share names); "Not now" lasts until the bridge restarts (a permanent refusal would contradict its label; the menu enables later); four thin binaries instead of a universal one (no lipo on a fresh Mac; the Mac's fbd is the macOS agent); the installer and the command use iTerm2's Python when the Command Line Tools are missing; install.sh downloads and checks in a temp folder with stable asset names; the Mac builds and uploads the package. Implementation review (Fable): Enable cleans up only Stage 8's `agent` folder (the whole `~/.local/lib/iterm-filebrowser` would have removed a Mac host's own install), the gateway cache checks the gateway session (iTerm2 reuses tmux connection ids), `host=` is percent-decoded and an unreadable host is refused (never local), Remove forgets at once and a connection finished meanwhile is dropped, one shape of `FB_RELEASE_URL`, Homebrew's python3 used when the Command Line Tools are missing, the Mac's architecture from `hw.optional.arm64` (Rosetta), `-o ""` and non-ASCII arguments handled |
+| 0.14.0 | 2026-10-01 | From the owner: one root `~/.iterm-filebrowser/` everywhere, on the Mac and on hosts, for the command, builds, logs and state (was `~/.local/lib`, `~/.local/bin`, `~/Library/Application Support`, `~/Library/Logs`). The host helper becomes `bin/fbd-agent`, so a Mac host's own `bin/fbd` is untouched, and Remove deletes only the helper's files. The earlier layout is moved on upgrade (the token survives; old folders stay as links while a kept build uses them). Pragmatic review (approved with conditions): fixed a state folder created before the move (by the install lock or a new fbd) skipping the move for good and leaving the token behind — the lock moved to the root, an existing folder is merged and a clash refused; the move runs under the lock and after the package check, and for rollback and uninstall too; move errors are messages; a log recreated mid-move is merged; only our own `~/.local/bin/fbd` is removed; the PATH tip comes from the installer; the command stays the newest build's after a rollback; a marker file, not source text, says a build came from the old layout. |
 
 ## 1. Overview
 
@@ -279,7 +280,7 @@ Scenario: AC-05 edge — expanded folder was deleted
 Scenario: AC-06 happy path — install
   Given the repo is at "~/src/iterm-filebrowser"
   When the user runs "make install"
-  Then "fbd" is copied to "~/.local/bin/fbd"
+  Then "fbd" is copied to "~/.iterm-filebrowser/bin/fbd"
   And "fb_bridge.py" is copied to "~/Library/Application Support/iTerm2/Scripts/AutoLaunch/"
   And the command prints "Installed. Restart iTerm2 or run Scripts → AutoLaunch → fb_bridge.py"
 
@@ -291,7 +292,7 @@ Scenario: AC-06 happy path — autostart
 Scenario: AC-06 failure — port busy
   Given another program listens on 127.0.0.1:47821
   When the bridge starts "fbd"
-  Then "fbd" exits with "error: port 47821 in use (set FB_PORT)" in "~/Library/Logs/iterm-filebrowser/fbd.log"
+  Then "fbd" exits with "error: port 47821 in use (set FB_PORT)" in "~/.iterm-filebrowser/logs/fbd.log"
 ```
 
 ### AC-07 — Only the panel can use the backend [MUST / P0]
@@ -878,9 +879,9 @@ Scenario: AC-32 edge — folders and tabs
 Scenario: AC-33 happy path — first install while iTerm2 runs
   Given nothing is installed and iTerm2 runs with its Python API enabled
   When the user runs "make install"
-  Then the build lands in "~/.local/lib/iterm-filebrowser/<build>/" (fbd, bridge package, BUILD file) and "current" links to it
+  Then the build lands in "~/.iterm-filebrowser/builds/<build>/" (fbd, bridge package, BUILD file) and "current" links to it
   And "<build>/fbd --version" prints the same id as BUILD before anything is switched
-  And "~/.local/bin/fbd" links to "current/fbd", and the AutoLaunch "fb_bridge.py" loads the bridge from the resolved "current"
+  And "~/.iterm-filebrowser/bin/fbd" links to "current/fbd", and the AutoLaunch "fb_bridge.py" loads the bridge from the resolved "current"
   And the bridge is launched, and within 10 s "/api/health" reports "build": "<build>" and "bridge_connected": true
   And the command prints "Installed <build>; the Files panel is live (View → Toolbelt → Files)"
 
@@ -918,10 +919,10 @@ Scenario: AC-33 failure — the new build does not come up
   Given "current" was switched to "B" and the launch succeeded
   When "/api/health" does not report "build": "B" with "bridge_connected": true within 10 s
   Then "current" is switched back to "A", the bridge is launched again and "A" is live within 10 s
-  And the command exits non-zero with "Upgrade to B failed (<reason>); rolled back to A — see ~/Library/Logs/iterm-filebrowser/"
+  And the command exits non-zero with "Upgrade to B failed (<reason>); rolled back to A — see ~/.iterm-filebrowser/logs/"
 
 Scenario: AC-33 failure — wrong user or concurrent run
-  When "make install" runs as root, or while another install holds "~/.local/lib/iterm-filebrowser/.lock"
+  When "make install" runs as root, or while another install holds "~/.iterm-filebrowser/install.lock"
   Then it changes nothing and exits non-zero with "Run as your user, not root" or "Another install is running"
 
 Scenario: AC-33 edge — one build per running bridge
@@ -1092,9 +1093,9 @@ Scenario: AC-37 security
 Scenario: AC-38 happy path — first time on a host
   Given the user ran "tms cc ai4 work" (iTerm2's tmux gateway runs "ssh -tt ai4 tmux -CC …") and ai4 has never been enabled or declined
   When the user focuses a pane of that session
-  Then the panel says "ai4 is a remote host. Browse its files? This copies a 6 MB helper to ~/.iterm-filebrowser on ai4." with [Enable] and [Not now]
+  Then the panel says "ai4 is a remote host. Browse its files? This copies a 6 MB helper to ~/.iterm-filebrowser/bin on ai4." with [Enable] and [Not now]
   When the user clicks Enable
-  Then the bridge connects with the gateway's ssh destination and connection options, read exactly from its process ("ai4"; "-p 2222 -l alex 10.0.0.5" stays as given; only allowlisted -o options), reads the platform, copies the agent the package carries for it to "~/.iterm-filebrowser/bin/fbd-<agent id>", links "~/.iterm-filebrowser/bin/fbd" to it, checks it through a trial tunnel, and records ai4 as enabled
+  Then the bridge connects with the gateway's ssh destination and connection options, read exactly from its process ("ai4"; "-p 2222 -l alex 10.0.0.5" stays as given; only allowlisted -o options), reads the platform, copies the agent the package carries for it to "~/.iterm-filebrowser/bin/fbd-agent-<agent id>", links "~/.iterm-filebrowser/bin/fbd-agent" to it (never "bin/fbd": a Mac host keeps its own install there), checks it through a trial tunnel, and records ai4 as enabled
   And the panel shows ai4's files (AC-37) within seconds; the agent logs to "~/.iterm-filebrowser/logs/agent.log" on ai4
 
 Scenario: AC-38 happy path — later
@@ -1109,7 +1110,7 @@ Scenario: AC-38 edge — Not now
 
 Scenario: AC-38 edge — remove from a host
   When the user chooses "Remove helper from ai4" in the panel's menu, or runs "iterm-filebrowser hosts remove ai4"
-  Then the connection closes, "~/.iterm-filebrowser" is removed from ai4 and ai4 is no longer enabled
+  Then the connection closes, "bin/fbd-agent*" and "logs/agent.log*" are removed from ai4's "~/.iterm-filebrowser" (the folder too, once empty; a Mac host keeps its own install) and ai4 is no longer enabled
 
 Scenario: AC-38 failure — the host cannot take it
   When ssh fails (a password is needed, the host key is unknown, socket forwarding is off) or the host's system has no agent
@@ -1130,7 +1131,7 @@ Scenario: AC-38 edge — logs on the host
 Scenario: AC-40 happy path — install
   When the user runs "curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/download/install.sh | sh"
   Then it downloads the package of the latest release and its SHA256SUMS, checks the checksum, and installs as AC-33 does (versioned build, health check, rollback on failure)
-  And "~/.local/bin/iterm-filebrowser" is the command for everything else; nothing needs a compiler, npm or make
+  And "~/.iterm-filebrowser/bin/iterm-filebrowser" is the command for everything else; nothing needs a compiler, npm or make
 
 Scenario: AC-40 happy path — the command
   Then "iterm-filebrowser" offers: "status", "upgrade" (latest release, the same checks), "rollback", "uninstall", "hosts" (list), "hosts enable <ssh destination>", "hosts remove <host>"
@@ -1138,6 +1139,23 @@ Scenario: AC-40 happy path — the command
 
 Scenario: AC-40 happy path — the package
   Then a package ("iterm-filebrowser-macos.tar.gz") holds the bridge, fbd for macOS arm64 and x86_64 and Linux x86_64 and arm64 (the Mac's fbd is the macOS one for its architecture, chosen at install), the installer and the command, built and uploaded by "make release TAG=…" on the Mac; developers' "make install" installs the same package built from the checkout
+
+Scenario: AC-40 happy path — one folder
+  Then everything the File Browser keeps is under "~/.iterm-filebrowser/" on the Mac and on every host: "bin/" (the command, fbd; "fbd-agent" on a host), "builds/" (versioned builds, "current", "previous"), "logs/" (bridge.log, fbd.log; agent.log on a host), "state/" (token, workspaces.json, agents.json, locks, sockets)
+  And only iTerm2's own folders hold anything else: the AutoLaunch "fb_bridge.py" and the "Files Viewer" dynamic profile
+
+Scenario: AC-40 edge — upgrade from the earlier layout
+  Given an install in "~/.local/lib/iterm-filebrowser", "~/.local/bin", "~/Library/Application Support/iterm-filebrowser" and "~/Library/Logs/iterm-filebrowser"
+  When the user installs, upgrades, rolls back or uninstalls (an install only after the package passed its checks)
+  Then state and logs are moved (one rename each, so the token and the registered Toolbelt URL stay valid) and the old folders become links to the new ones while a kept build still uses them (rollback works)
+  And the old "current" and "previous" builds are copied into "builds/", so the upgrade keeps the old build as "previous"; the command in "bin/" is the newest installed build's, so it still knows this layout after a rollback into an old build
+  And our links in "~/.local/bin" (and the copied fbd of installs before Stage 7) are removed when the new command is placed; another "fbd" there stays; after the new build reports healthy, "~/.local/lib/iterm-filebrowser" is removed, and the old-folder links go once no kept build came from the old layout
+  And the command says how to add "~/.iterm-filebrowser/bin" to PATH when it is missing
+
+Scenario: AC-40 failure — the new folder already has the same file
+  Given "~/.iterm-filebrowser/state/token" and the old folder's "token" both exist (a new fbd started before the move)
+  When the user installs
+  Then nothing is overwritten or installed and the command exits non-zero naming both files; other files merge into the new folder, and log lines written while moving are appended
 
 Scenario: AC-40 failure — a bad download
   When the checksum does not match or the release has no package
@@ -1332,7 +1350,7 @@ State when this spec was written: a Python prototype in `demo/` (removed in 0.3.
 | Item | Design |
 |---|---|
 | Build id | `<commit>-<hash>`: the hash covers `bridge/`, `fbd/src`, `fbd/Cargo.*`, `ui/src`, `ui/public`, `ui/build.mjs`, `ui/package-lock.json` (sources, not `ui/dist`, which carries the id); `make` exports it as `FB_BUILD`; fbd compiles it in through `option_env!` (cargo rebuilds when it changes; `fbd --version`; `FB_BUILD_ID` overrides it for tests), the UI defines `__BUILD__` and writes `ui/.build-id`, the installer writes `BUILD` into the build folder, which the bridge reads |
-| Layout | `~/.local/lib/iterm-filebrowser/<build>/{fbd, bridge/fbbridge, BUILD}`, links `current` and `previous`; `~/.local/bin/fbd` → `current/fbd`; AutoLaunch `fb_bridge.py` resolves `current` with `realpath` once and puts that folder on `sys.path` (the checkout next to it wins for development) |
+| Layout | one root `~/.iterm-filebrowser/` (AC-40): `builds/<build>/{fbd, agents, bridge/fbbridge, scripts, BUILD}`, links `current` and `previous`; `bin/fbd` → `builds/current/fbd`, `bin/iterm-filebrowser` → `builds/current/iterm-filebrowser`; `logs/`; `state/` (`FB_APP_DIR` overrides it); AutoLaunch `fb_bridge.py` resolves `current` with `realpath` once and puts that folder on `sys.path` (the checkout next to it wins for development) |
 | Switch | new link as `current.new`, `rename(2)` over `current` (atomic); same for `previous`; prune other folders only after a healthy launch |
 | One build per bridge | the bridge keeps the folder it resolved at start and starts and restarts fbd only from there |
 | Script | `scripts/install.py` (stdlib, ≤ 500 lines; launching and health checks in `scripts/install_launch.py`): refuse root; take `.lock`; build check (`fbd --version` = `BUILD`); copy; migrate the unversioned layout; switch; launch only if iTerm2 runs (`pgrep -x iTerm2`), via `osascript … launch API script`, mapping -1743 and API errors to their fix; wait for health; roll back on a health failure; prune. `make install` / `upgrade` / `rollback` / `uninstall` call it; `make test` stays separate (CI runs it) |
@@ -1412,7 +1430,7 @@ Response `200` `{"etag": "1727690123456789012-8812345-31"}`; on conflict `409` `
 
 ### Data formats
 
-Workspace file `~/Library/Application Support/iterm-filebrowser/workspaces.json` (written by fbd, debounced 500 ms, atomic rename):
+Workspace file `~/.iterm-filebrowser/state/workspaces.json` (written by fbd, debounced 500 ms, atomic rename):
 
 ```json
 {"version": 1, "prefs": {"hidden": true, "split": 0.45},
@@ -1421,7 +1439,7 @@ Workspace file `~/Library/Application Support/iterm-filebrowser/workspaces.json`
    "tabs": [{"path": "/Users/alex/work/api/README.md", "view": "rendered"}], "active_tab": 0, "updated": 1790772426}}}
 ```
 
-Bridge lock `~/Library/Application Support/iterm-filebrowser/bridge.lock` (AC-30): the running bridge's pid as text, e.g. `23515`, under an exclusive `flock` held until the bridge exits. A stale pid in an unlocked file is ignored.
+Bridge lock `~/.iterm-filebrowser/state/bridge.lock` (AC-30): the running bridge's pid as text, e.g. `23515`, under an exclusive `flock` held until the bridge exits. A stale pid in an unlocked file is ignored.
 
 Unsaved edits are not stored in this file. The panel keeps editor buffers per state key in memory, so switching panes never drops them; closing a dirty tab prompts (AC-08). Every panel (one per iTerm2 window) follows the focused pane; each `PUT` sends the `rev` it last read and gets `409 {"error":"stale_rev"}` if another panel wrote first, then re-reads.
 
@@ -1437,7 +1455,7 @@ Environment variables of `fbd` (set by the bridge; defaults shown):
 | `FB_TEXT_MAX_BYTES` | `10485760` | `5242880` | Above this, files open read-only, first 1 MB only. |
 | `FB_WORKSPACE_TTL_DAYS` | `14` | `30` | Idle pane state is removed after this (OQ-06). |
 | `FB_LOG` | `info` | `debug` | Log level. |
-| `FB_APP_DIR` | `~/Library/Application Support/iterm-filebrowser` | `/tmp/fb-test-app` | Token and workspace folder; tests use a private one so they never touch the live state. |
+| `FB_APP_DIR` | `~/.iterm-filebrowser/state` | `/tmp/fb-test-app` | Token and workspace folder; tests use a private one so they never touch the live state. |
 
 ### Performance
 
@@ -1469,7 +1487,7 @@ Measured on a MacBook (Apple Silicon, APFS SSD).
 ### Security
 
 - Loopback only (`127.0.0.1`), never `0.0.0.0`.
-- Token: 128 random bits in `~/Library/Application Support/iterm-filebrowser/token`, mode `0600`, created on first run, kept across restarts so the registered tool URL stays valid.
+- Token: 128 random bits in `~/.iterm-filebrowser/state/token`, mode `0600`, created on first run, kept across restarts so the registered tool URL stays valid.
 - Every request: `Host` must be `127.0.0.1:<port>` (defeats DNS rebinding); token must match.
 - Writes (`PUT`, `POST`): `Content-Type: application/json` and `Origin` either absent or `http://127.0.0.1:<port>`. No CORS headers are ever sent.
 - Writes only under `FB_WRITABLE_ROOTS`, after `realpath` (a symlink cannot escape). `..` in names is rejected.
@@ -1487,12 +1505,12 @@ curl -X POST -H "X-FB-Token: q7Wm2xR9vKp4Lz8NcY3aTg" -H "Origin: http://evil.exa
 # 403 {"error": "bad_origin", "message": "Origin http://evil.example is not allowed"}
 ```bash
 make install     # build fbd (release), bundle UI, copy fbd and fb_bridge.py, print next step
-make uninstall   # stop fbd, remove ~/.local/bin/fbd and the AutoLaunch script; keeps workspaces.json and token
+make uninstall   # stop fbd, remove builds, ~/.iterm-filebrowser/bin and the AutoLaunch script; keeps state/ and logs/
 ```
 
 ### Logging and observability
 
-`~/Library/Logs/iterm-filebrowser/fbd.log` (rotated at 5 MB, 3 files) and `bridge.log`:
+`~/.iterm-filebrowser/logs/fbd.log` (rotated at 5 MB, 3 files) and `bridge.log`:
 
 ```text
 2026-09-30T12:41:07.512Z level=info event=ls.done path=/tmp/fb-big entries=500000 read_ms=1184 sort_ms=212
@@ -1563,6 +1581,7 @@ Order: 0, 1 and 2 first (independent), then 3 → 4 for install and 5 → 6 for 
 | 6 | Command `iterm-filebrowser`: status, install, upgrade, rollback, uninstall, hosts list/enable/remove | 3, 5 | unit tests with a fake release (file://) on Python 3.14 and 3.9 |
 | 7 | `install.sh` one-liner and release assets (package, SHA256SUMS); `make release` uploads them | 5, 6 | the line against a local file server with a test package; checksum mismatch refused |
 | 8 | Docs, SECURITY.md, Definition of Done | 1–7 | `make test`, `e2e_panel`, container end to end, live on ai4 |
+| 9 | One root `~/.iterm-filebrowser/{bin,builds,logs,state}` on the Mac and hosts; the host helper is `bin/fbd-agent`; move the earlier layout, keeping links for a kept older build | 1, 5 | `test_install.py` (fresh layout, migration, rollback into an old build, links dropped), `test_agents.py`, container end to end; live upgrade keeps the token |
 
 ## 11. Checklist with Definition of Done
 
@@ -1599,10 +1618,10 @@ Results of 2026-09-30 on a MacBook (Apple Silicon) (iTerm2 3.6.11, tmux 3.6a). `
 - [x] AC-26 (0.8.0) — Verified by: live 2026-10-01, iTerm2 3.7.3: after an iTerm2 restart the stored profile read `Custom Command = No` and the viewer session had a tty (bash); rewriting the same file reloaded it as `Browser` in 0.5 s and the viewer opened with no tty. `make test` → bridge 22 pass (`test_viewer`: left alone, reloaded, written when missing, fails loud after one rewrite, error reaches the asking panel), cargo 13 pass (`bridge_errors_are_capped_and_addressed`); `e2e_panel` 86/86 (×2): command carries `by`, another panel's error not shown, the asking panel's shown, path bar shows and follows the active tab, page title is the path, copy puts it on the clipboard; `security_check.sh` against a private fbd 10/10 incl. `/internal/error` without secret → 401. Live after `make install && make restart` (one bridge, one fbd, takeover in 1 s): `scripts/e2e_windows.py` flips the stored profile to a terminal, then ⌘-click opens a browser viewer (`tty=None`, `Browser`; bridge.log "viewer profile reloaded as a browser profile"), reused for a second file, focus kept on the terminal pane; `e2e_terminal.py` PASS; `e2e_cwd.py 5` PASS (bash p95 203 ms, tmux 443 ms, tmux -CC 503 ms). AC-25 failed once in the first run right after the restart and passed in the next 3 runs (timing, open).
 - [ ] AC-36 — Verified by: `cargo test panels` (claim levels, collision and contested windows, a late-closing stream keeps the claim, asks answered once); `e2e_panel` 95/95 (×2) with 9 AC-36 checks (acting binds, a window without a panel and another window's panel do not move it, a new panel claims and shows its window, an in-page reload keeps the window, two load guesses fall); live after `make install`: claims logged in fbd.log (`event="panel.claim"`), a window without a Toolbelt reported `panel: false`, the first window's last state kept. Open: the owner's own check of the reported scenario; `scripts/e2e_windows.py` AC-36 needs iTerm2 on screen (a hidden window's Toolbelt never loads, AS-09).
 - [ ] AC-37 — Verified by: `e2e_panel` 122/122 (×3) with 16 AC-37 checks against a real agent on this Mac registered as host "e2ehost" serving the same folder: listings carry `X-FB-Host`, a local unsaved tab stays out of the remote pane and comes back with its edit, the remote file opens with the host's content, the agent's watcher reports a change, no Finder actions (menu and fbd 400), an unknown host 404, the agent exits with its connection leaving no folder, a disconnected host fails loud and never lists local files; `scripts/e2e_remote.py` PASS on Debian 12 sshd containers, arm64 and amd64 (bridge connects in 0.3–0.5 s, list, create, save, stale save 409, outside roots 403, change tagged with the host, Linux Trash, agent gone afterwards); `bridge/tests/test_agents.py` 11 pass (probe, ssh errors, install keeps two and refuses a bad id, tunnel errors, host-name collision, back-off, outdated agent replaced or explained). Open: a live tmux -CC pane on the owner's VM; a macOS host.
-- [ ] AC-38 — Verified by: `e2e_panel` 130/130 (×2): the offer names the host, Enable sends `host-enable` with the panel's client, "Setting up…" disables both buttons, Not now sends `host-dismiss` and the offer goes, the menu offers "Browse Files of …" and, when up, "Remove Helper from …" behind a confirmation; `scripts/e2e_remote.py` PASS (Debian sshd container): Enable through `hosts.enable` puts `fbd-<agent id>` and `fbd` in `~/.iterm-filebrowser/bin` (0700), the agent logs to `~/.iterm-filebrowser/logs/agent.log`, Remove deletes `~/.iterm-filebrowser`; `test_sshargs.py` 8 (tms, ProxyCommand kept whole, -F/-J/-p/-l, session options dropped, autossh, mosh, odd arguments); `test_agents.py` (keys by destination, two "ubuntu" hosts apart, Stage 8 records read, offer states, failed Enable retried with a toast, back-off, remove, remove while connecting, outdated helper replaced); live: the owner's running `tms` gateway resolved to `['ai4']`. Open: the owner clicks Enable for ai4.
-- [ ] AC-40 — Verified by: `make package` → 9.7 MB tarball with four thin binaries, the macOS fbd's `--version` equals `BUILD`; `test_cli.py` 4 (good release installs, wrong checksum installs nothing, a member outside the package refused, a missing release says so) on Python 3.14 and 3.9; `test_install.py` (installs from a package folder, the Mac's fbd linked to its macOS helper, `~/.local/bin/iterm-filebrowser`). Live: see the owner's install below.
+- [ ] AC-38 — Verified by: `e2e_panel` 130/130 (×2): the offer names the host, Enable sends `host-enable` with the panel's client, "Setting up…" disables both buttons, Not now sends `host-dismiss` and the offer goes, the menu offers "Browse Files of …" and, when up, "Remove Helper from …" behind a confirmation; `scripts/e2e_remote.py` PASS (Debian sshd container): Enable through `hosts.enable` puts `fbd-agent-<agent id>` and the `fbd-agent` link in `~/.iterm-filebrowser/bin` (0700), the agent logs to `~/.iterm-filebrowser/logs/agent.log`, Remove leaves no `~/.iterm-filebrowser`; `test_sshargs.py` 8 (tms, ProxyCommand kept whole, -F/-J/-p/-l, session options dropped, autossh, mosh, odd arguments); `test_agents.py` 14 (a Mac host's own `bin/fbd` and logs survive Enable and Remove, keys by destination, two "ubuntu" hosts apart, Stage 8 records read, offer states, failed Enable retried with a toast, back-off, remove, remove while connecting, outdated helper replaced); live: the owner's running `tms` gateway resolved to `['ai4']`. Open: the owner clicks Enable for ai4.
+- [ ] AC-40 — Verified by: `make package` → 9.7 MB tarball with four thin binaries, the macOS fbd's `--version` equals `BUILD`; `test_cli.py` 4 (good release installs, wrong checksum installs nothing, a member outside the package refused, a missing release says so) on Python 3.14 and 3.9; `test_install.py` (installs from a package folder, the Mac's fbd linked to its macOS helper, `~/.iterm-filebrowser/bin/iterm-filebrowser` from the installed build; one root: the earlier layout moved with the token kept, old `current` and `previous` copied, rollback into the old build keeps the new command, old-folder links dropped after two more installs, merge into an existing state folder, a token in both places refused with nothing installed, uninstall before install keeps the token, a bad package moves nothing, a log written while moving merged, an unrelated `~/.local/bin/fbd` kept). Live: see the owner's install below.
 - [ ] AC-39 — Verified by: `make toolchain && make agents` on the Mac → four binaries in 50 s (Mach-O arm64/x86_64, static ELF aarch64/x86-64); the Linux ones run on Debian 11/12 and Ubuntu 24.04 containers; fbd's 18 tests pass in a Debian container; `test_workflows.py` 6 pass (owner runner only, no pull-request trigger, pinned and allowed actions, no GitHub storage, write only after the tag check). Open: registering the runner on the owner's VM (`scripts/runner/setup.sh`) and its first CI and release runs.
-- [ ] AC-33 — Verified by: `bridge/tests/test_install.py` 11 pass on a temporary home with iTerm2 faked (fresh install, upgrade, same build not relaunched, prune to two, unhealthy build rolled back, refused launch keeps the switch, iTerm2 not running waits and prunes nothing, wrong binary refused before any change, unversioned layout migrated, half-copied build never linked, one install at a time, uninstall keeps token and workspaces, build id covers the bridge); `fbd --version` prints the id. Live: see the owner's install below.
+- [ ] AC-33 — Verified by: `bridge/tests/test_install.py` 19 pass on a temporary home with iTerm2 faked (fresh install, upgrade, same build not relaunched, prune to two, unhealthy build rolled back, refused launch keeps the switch, iTerm2 not running waits and prunes nothing, wrong binary refused before any change, unversioned layout migrated, half-copied build never linked, one install at a time, uninstall keeps token and workspaces, build id covers the bridge); `fbd --version` prints the id. Live: see the owner's install below.
 - [x] AC-34 — Verified by: `e2e_panel` 107/107 (×2) with 12 AC-34 checks: fbd stopped 1.2 s → no "Backend not running", a file created meanwhile appears; a save while fbd is away says "Not saved: backend restarting — save again" and keeps the tab dirty; fbd back as another build → the dirty panel shows "Update ready" and does not reload, after ⌘S it reloads in place with tree, tabs and window binding, the saved text is on disk, and it does not reload again. Not covered by a test: a 404 chunk triggering the reload (the handler matches WebKit's and Chromium's messages).
 - [ ] AC-35 — Verified by: `cargo test workspace` (a file with unknown fields and missing ones loads, not treated as corrupt); `test_install.py` rollback and "No previous build to roll back to". Live: `make rollback` on the owner's Mac (open).
 - [x] AC-31 — Verified by: `npm test` `tree-expand` 5 pass (breadth-first, skip list, symlinks, > 500 entries collapsed again, depth 8, 200 folders, cancel, unreadable folder); `e2e_panel`: header expand opens `src/a/b`, `node_modules` and `.git` stay closed, toast "Expanded 6 folders · skipped 2 (.git, node_modules)", 6 folders saved, collapse all, a folder re-opens one level after collapse all, ⌥→, ⌥←, ⌥-click on the arrow.
