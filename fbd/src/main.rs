@@ -34,6 +34,19 @@ use listing::Cache;
 use watcher::Watcher;
 use workspace::Store;
 
+/// The build this binary is (AC-33): set by `make` from the sources; "dev" otherwise.
+/// `FB_BUILD_ID` overrides it at run time, for tests that play an upgrade.
+const BUILD: &str = match option_env!("FB_BUILD") {
+    Some(b) => b,
+    None => "dev",
+};
+
+/// The build this fbd answers as (the compiled one unless a test overrides it).
+fn build_id() -> &'static str {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| std::env::var("FB_BUILD_ID").unwrap_or_else(|_| BUILD.to_string()))
+}
+
 struct Config {
     port: u16,
     token: String,
@@ -86,6 +99,8 @@ pub struct App {
     viewer_pending: Mutex<Vec<String>>,
     /// which window each panel lives in (AC-36)
     panels: panels::Panels,
+    /// the build the bridge last said it is (AC-33)
+    bridge_build: Mutex<Value>,
 }
 
 pub type Shared = Arc<App>;
@@ -178,6 +193,10 @@ fn exit_with(store: &Store, reason: &str) -> ! {
 
 #[tokio::main]
 async fn main() {
+    if std::env::args().any(|a| a == "--version") {
+        println!("{BUILD}");
+        return;
+    }
     tracing_subscriber::fmt()
         .with_env_filter(std::env::var("FB_LOG").unwrap_or_else(|_| "info".into()))
         .with_ansi(false)
@@ -204,6 +223,7 @@ async fn main() {
         bus,
         term: Mutex::new(Term { state: json!({}), windows: HashMap::new(), version: 0, last_push: None, announced_alive: false }),
         panels: Default::default(),
+        bridge_build: Mutex::new(Value::Null),
         started: Instant::now(),
         denied: Default::default(),
         commands: tokio::sync::broadcast::channel(32).0,
@@ -227,7 +247,7 @@ async fn main() {
             }
         }
     };
-    tracing::info!(event = "start", port, pid = std::process::id(), bridge = app.cfg.bridge_secret.is_some());
+    tracing::info!(event = "start", port, pid = std::process::id(), build = build_id(), bridge = app.cfg.bridge_secret.is_some());
     if app.cfg.bridge_secret.is_some() {
         // started by the bridge: exit with it (iTerm2 quit or the script was stopped)
         let parent = unsafe { libc::getppid() };

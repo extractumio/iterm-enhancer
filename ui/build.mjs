@@ -2,11 +2,13 @@
 // Bundles the panel into dist/ (embedded into fbd by rust-embed).
 // Language grammars are split into lazy chunks, so the first load stays small.
 import * as esbuild from "esbuild";
-import { cpSync, rmSync } from "node:fs";
+import { cpSync, rmSync, writeFileSync } from "node:fs";
 
 const watch = process.argv.includes("--watch");
+const build = process.env.FB_BUILD ?? "dev";
 rmSync("dist", { recursive: true, force: true });
 cpSync("public", "dist", { recursive: true });
+writeFileSync(".build-id", build + "\n"); // the browser test runs its fbd as this build
 const ctx = await esbuild.context({
   entryPoints: ["src/main.ts"],
   bundle: true,
@@ -18,6 +20,7 @@ const ctx = await esbuild.context({
   sourcemap: watch ? "inline" : false,
   target: ["safari16"],
   loader: { ".svg": "text" },  // icons are inlined as markup (src/icons.ts)
+  define: { __BUILD__: JSON.stringify(build) }, // the build id (AC-34)
   logLevel: "info",
 });
 if (watch) await ctx.watch();

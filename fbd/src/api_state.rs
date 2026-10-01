@@ -32,10 +32,13 @@ pub fn state_of(t: &Term) -> Value {
     with_status(t, &t.state)
 }
 
+/// A pane's state as panels see it: plus versions, bridge status and this fbd's build,
+/// so an open panel of another build knows to reload (AC-34).
 fn with_status(t: &Term, state: &Value) -> Value {
     let mut s = if state.is_object() { state.clone() } else { json!({}) };
     s["version"] = json!(t.version);
     s["bridge"] = json!(t.bridge_alive());
+    s["build"] = json!(crate::build_id());
     s
 }
 
@@ -58,6 +61,16 @@ const WINDOWS_MAX: usize = 64;
 
 pub async fn internal_state(State(app): State<Shared>, Json(mut body): Json<Value>) -> StatusCode {
     body.as_object_mut().map(|o| o.remove("version"));
+    // the bridge says which build it is; one from another build means a half-done upgrade
+    if let Some(b) = body.as_object_mut().and_then(|o| o.remove("bridge_build")) {
+        let mut seen = app.bridge_build.lock();
+        if *seen != b {
+            if b.as_str() != Some(crate::build_id()) {
+                tracing::warn!(event = "build.mismatch", fbd = crate::build_id(), bridge = %b);
+            }
+            *seen = b;
+        }
+    }
     let (key, cwd) = (body["key"].as_str().map(str::to_string), body["cwd"].as_str().map(str::to_string));
     let changed = {
         let mut t = app.term.lock();
@@ -124,7 +137,7 @@ pub async fn get_workspace(State(app): State<Shared>, Query(q): Query<KeyQuery>)
 
 /// `X-FB-Client` names the panel that asked: it ignores the echo of its own workspace
 /// writes, and only it is told when the bridge fails its command.
-fn client(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn client(headers: &HeaderMap) -> Option<String> {
     headers.get("x-fb-client").and_then(|v| v.to_str().ok()).map(str::to_string)
 }
 
@@ -134,7 +147,7 @@ fn command(app: &App, mut cmd: Value, headers: &HeaderMap) {
     let _ = app.commands.send(cmd);
 }
 
-fn no_bridge() -> Response {
+pub(crate) fn no_bridge() -> Response {
     err(StatusCode::SERVICE_UNAVAILABLE, "no_bridge", "iTerm2 bridge not connected")
 }
 
@@ -292,6 +305,8 @@ pub async fn health(State(app): State<Shared>) -> Json<Value> {
     let (cache_bytes, cache_dirs) = app.cache.stats();
     Json(json!({
         "uptime_s": app.started.elapsed().as_secs(),
+        "build": crate::build_id(),
+        "bridge_build": *app.bridge_build.lock(),
         "bridge_connected": app.term.lock().bridge_alive(),
         "cache_bytes": cache_bytes,
         "cache_dirs": cache_dirs,

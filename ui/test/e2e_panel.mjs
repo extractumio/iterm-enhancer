@@ -34,9 +34,17 @@ for (const d of ["src/a/b", "node_modules/x", ".git/objects"]) fs.mkdirSync(`${S
 fs.writeFileSync(`${SB}/docs/logo.png`, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
 
 // ── backend with a fake bridge ───────────────────────────────────────────────
-const fbd = spawn(FBD, [], { env: { ...process.env, FB_PORT: String(PORT), FB_BRIDGE_SECRET: SECRET, FB_APP_DIR: APP, FB_LOG: "warn" }, stdio: ["ignore", "ignore", "inherit"] });
 const base = `http://127.0.0.1:${PORT}`;
-for (let i = 0; i < 50; i++) { try { await fetch(base + "/"); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+/** Start the private fbd (again); `env` plays another build (FB_BUILD_ID) for AC-34. */
+// fbd plays the build the UI bundle was made for, or every panel would reload itself (AC-34)
+const UI_BUILD = fs.readFileSync(path.resolve(HERE, "../.build-id"), "utf8").trim();
+async function startFbd(env = {}) {
+  const p = spawn(FBD, [], { env: { ...process.env, FB_PORT: String(PORT), FB_BRIDGE_SECRET: SECRET, FB_APP_DIR: APP, FB_LOG: "warn", FB_BUILD_ID: UI_BUILD, ...env }, stdio: ["ignore", "ignore", "inherit"] });
+  for (let i = 0; i < 50; i++) { try { await fetch(base + "/"); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+  return p;
+}
+let fbd = await startFbd();
+const stopFbd = () => new Promise((r) => { fbd.once("exit", r); fbd.kill(); });
 const TOKEN = fs.readFileSync(path.join(APP, "token"), "utf8").trim();
 let focus = null;
 /** A call only the bridge may make (the fake bridge's secret). */
@@ -47,8 +55,8 @@ const push = (key, cwd, window = "w1", panel = true) => (focus = [key, cwd, wind
 await push("e2eA", SB);
 // the fake bridge's command stream: record commands, answer "which window is key" (AC-36)
 const cmds = [];
-const commands = new AbortController();
-void fetch(base + "/internal/commands", { headers: { "X-FB-Bridge": SECRET }, signal: commands.signal }).then(async (r) => {
+let commands = new AbortController();
+const listenCommands = () => void fetch(base + "/internal/commands", { headers: { "X-FB-Bridge": SECRET }, signal: commands.signal }).then(async (r) => {
   const reader = r.body.getReader(); const dec = new TextDecoder();
   for (;;) {
     const { value, done } = await reader.read(); if (done) break;
@@ -60,6 +68,20 @@ void fetch(base + "/internal/commands", { headers: { "X-FB-Bridge": SECRET }, si
     }
   }
 }).catch(() => {});
+listenCommands();
+/** fbd is back (`env`: as another build); so is the fake bridge. */
+async function bringBack(env = {}) {
+  fbd = await startFbd(env);
+  commands.abort(); commands = new AbortController(); listenCommands();
+  await push(...focus);
+}
+/** fbd goes away for `gapMs` (a restart); `during` runs meanwhile. */
+async function restartFbd(gapMs, during = () => {}) {
+  await stopFbd();
+  during();
+  await new Promise((r) => setTimeout(r, gapMs));
+  await bringBack();
+}
 // like the real bridge: repeat the state every 3 s, or fbd reports it silent after 10 s (AC-30)
 const heartbeat = setInterval(() => void push(...focus).catch(() => {}), 3000);
 
@@ -341,6 +363,36 @@ try {
   check("AC-36 … the newer one too", (await bound(w2b)) === null, await bound(w2b));
   await w2.close(); await w2b.close();
   await push("e2eA", SB);
+
+  // AC-34 a short restart: an amber dot, no error, and what changed meanwhile shows up
+  let noticed = false;
+  const watchNotice = setInterval(() => void page.isVisible("#notice.on").then((v) => { noticed ||= v; }).catch(() => {}), 100);
+  await restartFbd(1200, () => fs.writeFileSync(`${SB}/during-gap.txt`, "x"));
+  await within("AC-34 a file created during the gap appears", (ms) => page.waitForSelector(row("during-gap.txt"), { timeout: ms }));
+  clearInterval(watchNotice);
+  check("AC-34 no 'Backend not running' for a short gap", !noticed);
+  // a save while fbd is away fails loud and keeps the edit
+  await page.click(row("greet.py"));
+  await page.waitForSelector(".cm-content");
+  await page.click(".cm-content"); await page.keyboard.type("# gap\n");
+  await stopFbd();
+  await page.keyboard.press("Meta+s");
+  await within("AC-34 a save during the gap says so", (ms) => page.waitForFunction(() => document.getElementById("toast").textContent === "Not saved: backend restarting — save again", null, { timeout: ms }));
+  check("AC-34 … and the tab stays unsaved", !!(await page.$(".tab.active.dirty")));
+  // an upgrade: the unsaved tab holds the reload back, the save lets it happen, in place
+  await page.evaluate(() => { window.__before = 1; });
+  await bringBack({ FB_BUILD_ID: "e2e-next" });
+  await within("AC-34 a dirty panel waits for the save", (ms) => page.waitForFunction(() => document.getElementById("note").textContent.startsWith("Update ready"), null, { timeout: ms }));
+  check("AC-34 … without reloading", (await page.evaluate(() => window.__before)) === 1);
+  await page.keyboard.press("Meta+s");
+  await within("AC-34 after the save the panel reloads", (ms) => page.waitForFunction(() => window.__before === undefined, null, { timeout: ms }), 8000);
+  await within("AC-34 … with its tabs and tree", (ms) => page.waitForSelector(`${row("src")}`, { timeout: ms }));
+  check("AC-34 … the edited tab is back", !!(await page.$('.tab .tname:text("greet.py")')));
+  check("AC-34 … and its window binding", (await bound(page)) === "w1", await bound(page));
+  check("AC-34 the saved text is on disk", fs.readFileSync(`${SB}/greet.py`, "utf8").includes("# gap"));
+  await page.evaluate(() => { window.__after = 1; });
+  await page.waitForTimeout(2500);
+  check("AC-34 one reload per build (a page that still differs does not loop)", (await page.evaluate(() => window.__after)) === 1);
 
   // AC-28 an outdated link says so and stops retrying
   const op = await browser.newPage();

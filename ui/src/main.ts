@@ -14,12 +14,14 @@ import { applyTheme } from "./theme";
 import { Tree, type EditMode } from "./tree";
 import { Viewer } from "./viewer";
 import { PathBar } from "./viewer-path";
+import { Upgrade } from "./upgrade";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 let term: TermState = { version: -1, bridge: false };
 const binding = new Binding();        // the iTerm2 window this panel lives in (AC-36)
 let unseen = false;                   // fbd has no state of that window yet
+let updateNote = "";                  // an upgrade waits for unsaved work (AC-34)
 let key: string | null = null;        // state key of the pane shown (session or tmux pane)
 let ws: Pane | null = null;           // its workspace as last read or written
 let prefs: Prefs = { ...DEFAULT_PREFS };
@@ -117,7 +119,7 @@ function renderHeader(s: TermState) {
   bdi.append(home ? head.replace(home, "~") : head, b);
   $("crumbs").replaceChildren(bdi);
   $("crumbs").title = cwd;
-  $("note").textContent = (unseen ? "Switch to this window to update · " : "") +
+  $("note").textContent = updateNote + (unseen ? "Switch to this window to update · " : "") +
     (s.stale ? "⏸ cwd unavailable — showing last known · " : "") + (s.note ?? "");
 }
 
@@ -137,11 +139,13 @@ async function showOwnWindow() {
 
 /** The user acted in the panel, so its window is key: bind to it (AC-36). */
 function confirmWindow() {
-  if (!VIEW) void binding.confirm().then(() => showOwnWindow()).catch(() => {});
+  if (!VIEW) void binding.confirm().then((asked) => { if (asked) return showOwnWindow(); }).catch(() => {});
 }
 
 async function onState(s: TermState) {
+  upgrade.build(s.build);
   if (!VIEW && !binding.accepts(s)) { // another window's pane (AC-36): only the bridge status counts here
+    if (s.bridge === term.bridge) return;
     term = { ...term, bridge: s.bridge };
     renderHeader(term);
     return bridgeNotice(term);
@@ -185,15 +189,22 @@ function connect() {
   on("bridge-error", ({ message, by }) => { if (by === CLIENT) toast(message); }); // only the panel that asked
   on("unbind", ({ clients }) => { if (clients.includes(CLIENT)) binding.lost(); });
   es.onerror = () => {
-    $("dot").className = "dot off";
-    // EventSource hides the status: ask once whether the token or the backend is the problem
-    api("GET", "/api/state").then(() => {}, (e: ApiError) => {
-      if (e.status === 401) authFailed();
-      else notice("Backend not running", "fbd is not reachable; retrying. Check that iTerm2's Python API is enabled and see ~/Library/Logs/iterm-filebrowser/fbd.log.");
+    $("dot").className = "dot wait"; // a restart or an upgrade takes a moment (AC-34)
+    upgrade.lost(() => {
+      $("dot").className = "dot off";
+      // EventSource hides the status: ask once whether the token or the backend is the problem
+      api("GET", "/api/state", { retry: false }).then(() => {}, (e: ApiError) => {
+        if (e.status === 401) authFailed();
+        else notice("Backend not running", "fbd is not reachable; retrying. Check that iTerm2's Python API is enabled and see ~/Library/Logs/iterm-filebrowser/fbd.log.");
+      });
     });
   };
   es.onopen = () => {
     notice("", "");
+    if (upgrade.back()) { // fbd was away: what changed meanwhile was not announced
+      viewer.recheck();
+      if (tree.root) void tree.refreshDirs([tree.root.path, ...tree.expanded]);
+    }
     if (VIEW) return void api<string[]>("GET", "/api/view/pending").then((ps) => ps.forEach((p) => viewer.open(p)), () => {});
     void binding.claim().then(() => showOwnWindow()).catch(() => {});
     renderHeader(term);
@@ -345,6 +356,16 @@ const viewer = new Viewer($("tabs"), $("tools"), $("vbody"), {
   active: (p) => pathBar?.show(p),
 });
 let pathBar: PathBar | null = null; // viewer window only
+
+const upgrade = new Upgrade({
+  busy: () => viewer.hasDirty || !!document.querySelector(".modal, .inline-edit.on"),
+  beforeReload: () => saveNow(),
+  waiting: (text) => {
+    if (updateNote) return;
+    updateNote = text + " · ";
+    if (VIEW) toast(text); else renderHeader(term);
+  },
+});
 
 document.addEventListener("pointerdown", confirmWindow, true);
 document.addEventListener("keydown", () => { if (!binding.window) confirmWindow(); }, true); // keys reach only the key window

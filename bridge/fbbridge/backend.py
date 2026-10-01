@@ -10,12 +10,14 @@ import time
 import urllib.request
 from pathlib import Path
 
-from .common import BASE, LOG_DIR, PORT, UserError, log
+from .common import BASE, BUILD, BUILD_DIR, LOG_DIR, PORT, UserError, log
 
 
 def find_fbd():
-    for cand in (os.environ.get("FB_BIN"), str(Path.home() / ".local/bin/fbd"), shutil.which("fbd")):
-        if cand and os.access(cand, os.X_OK):
+    """fbd of this bridge's own build first, so a bridge never starts another build's
+    backend after `current` was switched (AC-33)."""
+    for cand in (os.environ.get("FB_BIN"), str(BUILD_DIR / "fbd"), str(Path.home() / ".local/bin/fbd"), shutil.which("fbd")):
+        if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
             return cand
     raise SystemExit("fbd binary not found: run `make install`")
 
@@ -34,7 +36,7 @@ class Backend:
         env = dict(os.environ, FB_BRIDGE_SECRET=self.secret, FB_PORT=str(PORT))
         self.proc = subprocess.Popen([find_fbd()], env=env, stdout=subprocess.DEVNULL,
                                      stderr=open(logf, "a"), start_new_session=True)
-        log(f"fbd started pid={self.proc.pid}")
+        log(f"fbd started pid={self.proc.pid} build={BUILD}")
 
     def alive(self):
         return self.proc is not None and self.proc.poll() is None
@@ -52,7 +54,7 @@ class Backend:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             try:
-                self.post("/internal/state", {})
+                self.post("/internal/state", {"bridge_build": BUILD})  # said once per fbd; the installer waits for it
                 return True
             except Exception:
                 if not self.alive():

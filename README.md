@@ -44,12 +44,21 @@ always shows the directory of the pane you are working in. New windows open with
 ## Install
 
 ```bash
-make install    # builds the UI and fbd, installs ~/.local/bin/fbd and the AutoLaunch bridge
-make restart    # start the bridge now instead of restarting iTerm2 (a running one is replaced)
+make install    # first install or upgrade: build, install, switch, and go live
+make rollback   # back to the build before
+make uninstall  # remove builds and scripts; state stays in ~/Library/Application Support/iterm-filebrowser
 ```
 
-Then **View → Toolbelt → Show Toolbelt** and check **Files**. `make uninstall` removes
-the binary and the bridge; state stays in `~/Library/Application Support/iterm-filebrowser`.
+`make install` (or `make upgrade`, the same) builds the UI and `fbd`, copies the build to
+`~/.local/lib/iterm-filebrowser/<build>/`, switches the `current` link to it and, when
+iTerm2 runs, starts its bridge, which takes over from the running one. It waits up to 10 s
+for the new build to answer; a build that does not is switched back to the one before.
+Open Files panels reload themselves into the new build and keep their tree, tabs and
+window; one with unsaved edits says "Update ready — reloads after you save". Running it
+again without changes says so and does nothing. When iTerm2 is not running, the build is
+installed and starts with iTerm2.
+
+The first time: **View → Toolbelt → Show Toolbelt** and check **Files**.
 
 ## How it works
 
@@ -108,8 +117,10 @@ Environment of `fbd` (the bridge passes its own environment through):
 | `FB_WORKSPACE_TTL_DAYS` | `14` | idle pane state is dropped after this |
 | `FB_APP_DIR` | `~/Library/Application Support/iterm-filebrowser` | token and workspace folder |
 | `FB_LOG` | `info` | log level |
-| `FB_BIN` | `~/.local/bin/fbd` | the bridge starts this fbd binary |
+| `FB_BIN` | its build's `fbd` | the bridge starts this fbd binary instead |
 | `FB_AUTO_TOOLBELT` | `1` | `0` stops showing the Toolbelt in new windows |
+| `FB_LIB_DIR`, `FB_BIN_DIR`, `FB_AUTOLAUNCH_DIR` | `~/.local/lib/iterm-filebrowser`, `~/.local/bin`, iTerm2's AutoLaunch | where `make install` puts builds, the `fbd` link and the bridge entry (tests use their own) |
+| `FB_BUILD_ID` | the compiled build | lets a test play another build (AC-34) |
 
 Logs: `~/Library/Logs/iterm-filebrowser/{fbd,bridge}.log`.
 
@@ -120,6 +131,8 @@ Logs: `~/Library/Logs/iterm-filebrowser/{fbd,bridge}.log`.
 | **Backend not running** | `fbd` is not up: the bridge is stopped or iTerm2's Python API is off | Enable the Python API; `make restart`; see `~/Library/Logs/iterm-filebrowser/` |
 | **Not following iTerm2** | `fbd` runs but no bridge reports the focused pane (the bridge was stopped or hangs); the tree still works but no longer follows `cd` | `make restart` or Scripts → AutoLaunch → fb_bridge.py; see `bridge.log`. A bridge exits with its iTerm2 and a new one replaces a leftover one |
 | **Viewer window failed: … did not load as a browser** | iTerm2 could not load the "Files Viewer" profile as a browser profile, even after the bridge reloaded it | Install iTerm2's browser plugin (see iTerm2's web browser documentation), then ⌘-click again; `bridge.log` has the details |
+| **Install of … failed** / **Upgrade to … failed; rolled back** | the new build did not report healthy within 10 s | see `bridge.log` and `fbd.log`; the build before keeps running |
+| **iTerm2 did not start it: … Automation** | macOS does not let your terminal control iTerm2 | System Settings → Privacy & Security → Automation: allow iTerm2 for your terminal app, then `make install` |
 | **Outdated panel link** | This panel was opened with a token fbd no longer accepts (the `token` file was deleted or `FB_PORT` changed while it was open) | Toggle View → Toolbelt → Files, or restart iTerm2. The bridge re-registers the tool with the current link at every start |
 
 iTerm2 keeps every registered Toolbelt tool in its preferences and has no API to remove
@@ -129,12 +142,12 @@ quit iTerm2 and run `make clean-registrations` to remove them.
 ## Develop and test
 
 ```bash
-make test                                  # builds the UI, then cargo test, typecheck, UI unit tests
+make test                                  # builds the UI, then cargo test, bridge + installer tests, typecheck, UI unit tests
 cd ui && npx playwright-core install chromium-headless-shell   # once, for the browser test
 cd ui && node test/e2e_panel.mjs           # panel checks in a real browser against a private fbd
 python3 scripts/e2e_cwd.py 10              # cd → panel latency in bash / tmux / tmux -CC (opens an iTerm2 window)
 python3 scripts/e2e_terminal.py            # Insert Path / Open Terminal Here / refusals (opens an iTerm2 window)
-python3 scripts/e2e_windows.py             # Toolbelt in new windows, viewer window (opens iTerm2 windows)
+python3 scripts/e2e_windows.py             # Toolbelt in new windows, viewer window, panel per window (opens iTerm2 windows; needs iTerm2 in front)
 scripts/security_check.sh                  # refused requests against the installed fbd
 scripts/make_big_dir.sh /tmp/fb-big 500000 && scripts/bench_ls.sh /tmp/fb-big
 ```

@@ -8,6 +8,9 @@ from pathlib import Path
 PORT = int(os.environ.get("FB_PORT", "47821"))
 BASE = f"http://127.0.0.1:{PORT}"
 APP_DIR = Path(os.environ.get("FB_APP_DIR") or Path.home() / "Library/Application Support/iterm-filebrowser")
+# an installed build is <lib>/<build>/{fbd, bridge/fbbridge, BUILD} (AC-33); a checkout has no BUILD
+BUILD_DIR = Path(__file__).resolve().parents[2]
+BUILD = (BUILD_DIR / "BUILD").read_text().strip() if (BUILD_DIR / "BUILD").is_file() else "dev"
 LOG_DIR = Path.home() / "Library/Logs/iterm-filebrowser"
 TOOL_ID = "com.local.iterm-filebrowser"
 POLL = 0.5

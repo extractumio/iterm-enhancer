@@ -204,7 +204,10 @@ export class Viewer {
     this.reshow();
   }
 
-  get hasDirty() { return [...this.docs.values()].some((d) => d.dirty); }
+  get hasDirty() { return [...this.docs.values()].some((d) => d.dirty || d.saving); }
+
+  /** fbd was away: re-check every open tab (unchanged files answer 304). */
+  recheck() { for (const t of this.tabs) void this.revalidate(t.path); }
 
   private get activeTab(): Tab | null { return this.active != null ? this.tabs[this.active] ?? null : null; }
   private activePath() { return this.activeTab?.path ?? null; }
@@ -432,7 +435,7 @@ export class Viewer {
         if (choice === "reload") { this.discard(path); return false; }
         return false;
       }
-      toast(e instanceof Error ? e.message : String(e));
+      toast(e instanceof ApiError && e.status === 0 ? "Not saved: backend restarting — save again" : e instanceof Error ? e.message : String(e));
       return false;
     }
   }

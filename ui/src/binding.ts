@@ -3,16 +3,15 @@
 // so it claims the key window when it loads, binds for sure when the user acts in it, and
 // keeps the binding across in-page reloads. States of other windows are not its business.
 
-import { api, type TermState } from "./api";
+import { api, session, type TermState } from "./api";
 
 const STORE = "fb.window";
-const read = () => { try { return sessionStorage.getItem(STORE); } catch { return null; } };
 
 type Level = "tentative" | "restored" | "confirmed";
 interface Claim { window: string | null; level: Level | null }
 
 export class Binding {
-  window: string | null = read();
+  window: string | null = session.get(STORE);
   private level: Level | null = null;
   private asked = 0;
 
@@ -30,12 +29,14 @@ export class Binding {
   }
 
   /** The user acted in the panel: its window is key now. Asked until confirmed once, so
-   *  later clicks cost nothing (and a fast window switch cannot move a sure binding). */
-  async confirm(): Promise<void> {
-    if (this.level === "confirmed" || Date.now() - this.asked < 1000) return;
+   *  later clicks cost nothing (and a fast window switch cannot move a sure binding).
+   *  True when fbd was asked. */
+  async confirm(): Promise<boolean> {
+    if (this.level === "confirmed" || Date.now() - this.asked < 1000) return false;
     this.asked = Date.now();
     const r = await api<Claim>("POST", "/api/panel/bind", { body: {} });
     if (r.window) this.set(r.window, r.level); // no answer (no Toolbelt there) keeps what we had
+    return true;
   }
 
   /** Another panel's claim won (fbd's `unbind` event). */
@@ -44,6 +45,6 @@ export class Binding {
   private set(w: string | null, level: Level | null) {
     this.window = w;
     this.level = level;
-    try { if (w) sessionStorage.setItem(STORE, w); else sessionStorage.removeItem(STORE); } catch { /* private mode */ }
+    session.set(STORE, w);
   }
 }

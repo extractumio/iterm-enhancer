@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Thin client for the fbd JSON API. The token comes from the tool URL (?t=…).
 
+/** This web view's storage, which survives in-page reloads; private mode may refuse it. */
+export const session = {
+  get: (k: string) => { try { return sessionStorage.getItem(k); } catch { return null; } },
+  set: (k: string, v: string | null) => {
+    try { if (v == null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch { /* private mode */ }
+  },
+};
+
 /** The token arrives in the tool URL once; it is kept for this web view only (reloads keep
  *  working) and removed from the address, so no document can see it in a URL or Referer. */
-export let TOKEN = new URLSearchParams(location.search).get("t") ?? readSession() ?? "";
-function readSession() { try { return sessionStorage.getItem("fb.token"); } catch { return null; } }
+export let TOKEN = new URLSearchParams(location.search).get("t") ?? session.get("fb.token") ?? "";
 export function keepToken() {
-  try { if (TOKEN) sessionStorage.setItem("fb.token", TOKEN); } catch { /* private mode: URL only */ }
+  if (TOKEN) session.set("fb.token", TOKEN);
   const u = new URL(location.href);
   if (u.searchParams.has("t") || u.searchParams.has("v")) {
     u.searchParams.delete("t"); u.searchParams.delete("v");
@@ -46,6 +53,7 @@ export interface TermState {
   mode?: string; note?: string; job?: string; busy?: boolean; cwd?: string | null; stale?: boolean; theme?: Theme;
   window?: string;  // the iTerm2 window of the pane (AC-36)
   panel?: boolean;  // false: that window shows no Toolbelt, so no panel lives there
+  build?: string;   // fbd's build: another one than this page's means an upgrade (AC-34)
 }
 export interface FileView {
   path: string; size: number; etag: string; binary: boolean; mime: string | null;
@@ -60,17 +68,22 @@ export class ApiError extends Error {
 
 type Query = Record<string, string | number | boolean | undefined>;
 
-export async function api<T>(method: string, path: string, opts: { query?: Query; body?: unknown; headers?: Record<string, string> } = {}): Promise<T> {
+export async function api<T>(method: string, path: string, opts: { query?: Query; body?: unknown; headers?: Record<string, string>; retry?: boolean } = {}): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(opts.query ?? {})) if (v !== undefined) qs.set(k, String(v));
   const url = path + (qs.size ? `?${qs}` : "");
   const headers: Record<string, string> = { "X-FB-Token": TOKEN, "X-FB-Client": CLIENT, ...opts.headers };
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   let res: Response;
-  try {
-    res = await fetch(url, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
-  } catch (e) {
-    throw new ApiError(0, "network", "Backend not reachable", null);
+  for (let waited = 0, step = 250; ; waited += step, step *= 2) {
+    try {
+      res = await fetch(url, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
+      break;
+    } catch {
+      // reads ride out a backend restart (AC-34); writes fail at once, never repeated behind the user
+      if (method !== "GET" || opts.retry === false || waited >= 3000) throw new ApiError(0, "network", "Backend not reachable (restarting?)", null);
+      await new Promise((r) => setTimeout(r, step));
+    }
   }
   if (res.status === 204 || res.status === 304) return undefined as T;
   const body = await res.json().catch(() => null);

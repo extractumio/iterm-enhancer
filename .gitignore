@@ -2,6 +2,7 @@
 fbd/target/
 ui/node_modules/
 ui/dist/
+ui/.build-id
 # local tooling and caches
 .playwright-cli/
 .DS_Store

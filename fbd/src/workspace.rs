@@ -171,6 +171,23 @@ impl Store {
 mod tests {
     use super::*;
 
+    /// AC-35: a build reads state written by a newer one (unknown fields) or an older one
+    /// (fields missing), so a rollback or upgrade never loses the workspaces.
+    #[tokio::test]
+    async fn state_of_other_builds_is_readable() {
+        let path = std::env::temp_dir().join(format!("fbd-ws-compat-{}.json", std::process::id()));
+        fs::write(&path, r#"{"version": 1, "from_a_newer_build": true, "prefs": {"hidden": false},
+            "panes": {"p1": {"root": "/a", "updated": 4102444800, "tabs": [{"path": "/a/x.rs", "pinned": true}], "zoom": 2}},
+            "older": {}}"#).unwrap();
+        let s = Store::load(path.clone(), 14, Bus::new());
+        let p = s.get("p1", None);
+        assert_eq!((p.root.as_str(), p.tabs[0].path.as_str(), p.tabs[0].view.as_str()), ("/a", "/a/x.rs", "auto"));
+        assert!(p.expanded.is_empty() && p.active_tab.is_none(), "missing fields take their defaults");
+        assert_eq!(s.prefs()["hidden"], false);
+        assert!(!path.with_extension("json.bak").exists(), "not treated as corrupt");
+        let _ = fs::remove_file(&path);
+    }
+
     #[tokio::test]
     async fn cd_clears_tree_keeps_tabs_and_rev_guards() {
         let path = std::env::temp_dir().join(format!("fbd-ws-{}.json", std::process::id()));

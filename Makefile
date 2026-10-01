@@ -1,14 +1,21 @@
 # iTerm2 File Browser — build and install.
-#   make install    build UI + fbd, install fbd and the iTerm2 AutoLaunch bridge
-#   make uninstall  remove them (keeps workspaces.json and token)
-#   make test       unit tests (Rust, bridge) + typecheck (UI)
+#   make install    build, install as a versioned build and switch to it (first install or
+#                   upgrade; a build that does not come up healthy is rolled back)
+#   make upgrade    the same
+#   make rollback   back to the previous build
+#   make uninstall  remove builds and scripts (keeps workspaces.json and token)
+#   make test       unit tests (Rust, bridge, installer) + typecheck and unit tests (UI)
 
-BIN_DIR      := $(HOME)/.local/bin
-AUTOLAUNCH   := $(HOME)/Library/Application Support/iTerm2/Scripts/AutoLaunch
-BRIDGE       := fb_bridge.py
-APP_DIR      := $(HOME)/Library/Application Support/iterm-filebrowser
+ifeq ($(shell id -u),0)
+$(error Run make as your user, not root: the install lives in your home folder)
+endif
 
-.PHONY: all ui fbd install uninstall test restart clean-registrations
+BRIDGE := fb_bridge.py
+# one id per set of sources (bridge, fbd, UI), compiled into fbd and the UI (AC-33)
+BUILD  := $(shell python3 scripts/install.py id)
+export FB_BUILD := $(BUILD)
+
+.PHONY: all ui fbd install upgrade rollback uninstall test restart clean-registrations
 
 all: fbd
 
@@ -28,25 +35,19 @@ test: ui
 	cd ui && npx tsc -p . && npm test
 
 install: fbd
-	mkdir -p "$(BIN_DIR)" "$(AUTOLAUNCH)"
-	install -m 755 fbd/target/release/fbd "$(BIN_DIR)/fbd"
-	mkdir -p "$(APP_DIR)/bridge"
-	rm -rf "$(APP_DIR)/bridge/fbbridge"
-	cp -R bridge/fbbridge "$(APP_DIR)/bridge/fbbridge"
-	install -m 644 bridge/$(BRIDGE) "$(AUTOLAUNCH)/$(BRIDGE)"
-	@echo "Installed. Restart iTerm2 or run Scripts → AutoLaunch → $(BRIDGE)"
+	python3 scripts/install.py install --build $(BUILD)
 
-# Relaunch the bridge after an install: the new one stops the old one and its fbd (AC-30).
+upgrade: install
+
+rollback:
+	python3 scripts/install.py rollback
+
+# Relaunch the bridge without installing: the new one stops the old one and its fbd (AC-30).
 restart:
 	osascript -e 'tell application "iTerm2" to launch API script named "$(BRIDGE)"'
 
 uninstall:
-	-pkill -f "AutoLaunch/$(BRIDGE)"
-	-pkill -x fbd
-	rm -rf "$(BIN_DIR)/fbd" "$(AUTOLAUNCH)/$(BRIDGE)" "$(APP_DIR)/bridge" \
-	  "$(HOME)/Library/Application Support/iTerm2/DynamicProfiles/iterm-filebrowser.json"
-	@echo "Removed fbd and the AutoLaunch bridge. State kept in ~/Library/Application Support/iterm-filebrowser"
-	@echo "To remove the Files entry from iTerm2's Toolbelt menu: quit iTerm2, then run 'make clean-registrations'"
+	python3 scripts/install.py uninstall
 
 # iTerm2 keeps registered tools in its preferences; it must not be running.
 clean-registrations:

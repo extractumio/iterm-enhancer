@@ -47,7 +47,7 @@ button { font: inherit; color: inherit; }
 header { padding: 7px 8px 6px 10px; border-bottom: 1px solid var(--line); background: var(--bg-2); flex: none; }
 .top { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; transition: background .3s; }
-.dot.stale { background: var(--warn); } .dot.off { background: var(--bad); }
+.dot.stale, .dot.wait { background: var(--warn); } .dot.off { background: var(--bad); }
 .badge { font: 600 10px/1 var(--ui); letter-spacing: .05em; text-transform: uppercase; padding: 3px 6px; border-radius: 4px;
   background: var(--bg-hover); color: var(--accent); flex: none; }
 .badge.warn { color: var(--warn); }

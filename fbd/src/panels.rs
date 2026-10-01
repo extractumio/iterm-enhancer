@@ -12,7 +12,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use parking_lot::Mutex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::oneshot;
 
@@ -20,7 +20,8 @@ use crate::events::Event;
 use crate::http::{err, ApiResult};
 use crate::Shared;
 
-#[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Level {
     Tentative,
     Restored,
@@ -138,15 +139,13 @@ impl Drop for StreamGuard {
 
 /// The asking panel, which must hold an event stream (its claim ends with it).
 fn client(app: &Shared, headers: &HeaderMap) -> Result<String, axum::response::Response> {
-    let c = headers
-        .get("x-fb-client")
-        .and_then(|v| v.to_str().ok())
+    let c = crate::api_state::client(headers)
         .filter(|c| !c.is_empty() && c.len() <= 64)
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "no_client", "X-FB-Client header required"))?;
-    if !app.panels.connected(c) {
+    if !app.panels.connected(&c) {
         return Err(err(StatusCode::CONFLICT, "not_connected", "Open the event stream (/api/events?client=…) first"));
     }
-    Ok(c.to_string())
+    Ok(c)
 }
 
 fn settle(app: &Shared, client: &str, window: Option<&str>, level: Level) -> ApiResult {
@@ -159,12 +158,8 @@ fn settle(app: &Shared, client: &str, window: Option<&str>, level: Level) -> Api
     if !lost.is_empty() {
         app.bus.send(Event::Unbind { clients: lost });
     }
-    let level = match level {
-        Level::Tentative => "tentative",
-        Level::Restored => "restored",
-        Level::Confirmed => "confirmed",
-    };
-    Ok(Json(json!({"window": if holds { window } else { None }, "level": if holds { Some(level) } else { None }})).into_response())
+    let (window, level) = if holds { (window, Some(level)) } else { (None, None) };
+    Ok(Json(json!({"window": window, "level": level})).into_response())
 }
 
 #[derive(Deserialize)]
@@ -195,7 +190,7 @@ pub async fn panel_bind(State(app): State<Shared>, headers: HeaderMap) -> ApiRes
 /// shows no Toolbelt (no panel can live there).
 async fn key_window(app: &Shared, client: &str) -> Result<Option<String>, axum::response::Response> {
     if !app.term.lock().bridge_alive() {
-        return Err(err(StatusCode::SERVICE_UNAVAILABLE, "no_bridge", "iTerm2 bridge not connected"));
+        return Err(crate::api_state::no_bridge());
     }
     let (id, rx) = app.panels.ask();
     let _ = app.commands.send(json!({"action": "which-window", "req": id, "by": client}));
@@ -212,11 +207,7 @@ async fn key_window(app: &Shared, client: &str) -> Result<Option<String>, axum::
 pub struct BoundBody {
     req: u64,
     window: Option<String>,
-    #[serde(default = "yes")]
     panel: bool,
-}
-fn yes() -> bool {
-    true
 }
 
 /// The bridge's answer to `which-window`: the key window, if it shows its Toolbelt.
