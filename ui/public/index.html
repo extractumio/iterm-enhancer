@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Files</title>
+<link rel="stylesheet" href="/main.css">
+<script type="module" src="/main.js"></script>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="top">
+      <span class="dot" id="dot"></span>
+      <span class="badge" id="mode">…</span>
+      <span class="title" id="title">connecting…</span>
+      <button class="icon" id="new-file" title="New File (⌥N)">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3.5 1.5h5l3 3v4M3.5 1.5v13h5M8.5 1.5v3h3M12 10.5v5M9.5 13h5"/></svg></button>
+      <button class="icon" id="new-folder" title="New Folder (⌥⇧N)">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.5 3.5h4l1.5 1.5h7.5v4M1.5 3.5v9.5h7M12 9.5v5M9.5 12h5"/></svg></button>
+      <button class="icon" id="hidden" title="Hide dotfiles">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg></button>
+      <button class="icon" id="collapse" title="Collapse all folders">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4-3 4 3M4 13l4-3 4 3"/></svg></button>
+      <button class="icon" id="refresh" title="Re-read folders and files">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5V5h-2.5"/></svg></button>
+    </div>
+    <div class="crumbs" id="crumbs"></div>
+    <div class="note" id="note"></div>
+    <input class="filter" id="filter" placeholder="Filter by name…   ( / )" spellcheck="false" autocomplete="off">
+  </header>
+  <div id="notice"></div>
+  <div id="empty"></div>
+  <div id="tree" tabindex="0"></div>
+  <div id="splitter" title="Drag to resize · double-click to reset"></div>
+  <div id="viewer">
+    <div class="vbar">
+      <div id="tabs"></div>
+      <div id="tools"></div>
+      <button class="icon" id="maximize" title="Maximize viewer">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg></button>
+    </div>
+    <div id="vbody"></div>
+  </div>
+</div>
+<div id="toast"></div>
+</body>
+</html>

@@ -1,0 +1,14 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cd ui && npm ci --no-fund --no-audit && npm run build && npx tsc -p . && npm test
+      - run: cd fbd && cargo test
+      - run: python3 -m unittest discover -s bridge/tests
+      - run: cd fbd && cargo build --release

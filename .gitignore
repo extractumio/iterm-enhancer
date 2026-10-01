@@ -1,0 +1,9 @@
+# build output
+fbd/target/
+ui/node_modules/
+ui/dist/
+# local tooling and caches
+.playwright-cli/
+.DS_Store
+__pycache__/
+*.pyc

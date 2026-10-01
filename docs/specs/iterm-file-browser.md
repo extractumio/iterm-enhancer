@@ -1,0 +1,1090 @@
+# iTerm2 File Browser — Specification
+
+## 0. Metadata
+
+| Field | Value |
+|---|---|
+| Version | 0.7.0 |
+| Date | 2026-10-01 |
+| Status | approved |
+| Author | Project maintainers |
+
+Change log:
+
+| Version | Date | Change |
+|---|---|---|
+| 0.1.0 | 2026-09-30 | Initial draft, based on the working Python demo in `demo/` |
+| 0.2.0 | 2026-09-30 | Pragmatic review + experiments: state keyed by session **and tmux pane**; AC-05 restart/scroll/GC split into AC-23 (P1); Markdown links split into AC-24 (P1); AC-02 progress row dropped (request waits); tab and pane caps removed; cache limit in MB; bridge secret for `/internal`; `Referrer-Policy`; etag = ns mtime + inode + size; SSE limit tested (14 streams OK); 500K read measured 0.8 s warm; OQ-07 (shortcuts) added |
+| 0.3.0 | 2026-09-30 | Stage 1 + 2 + 3 implemented. Shortcuts that iTerm2 owns avoided (⌥N, ⌥⇧N, ⌥W instead of ⌘N, ⌘⇧N, ⌘W); rename is F2, Enter opens (AC-10, AC-15); filter applies inside shown folders (AC-16); `FB_APP_DIR` added for isolated tests; DoD updated with the actual test commands and results |
+| 0.3.1 | 2026-09-30 | Prepared for open source: personal names, hosts and paths replaced by examples; the prototype in `demo/` removed (section 7 cites it as the starting point) |
+| 0.4.0 | 2026-09-30 | Simplification pass: `fs-change` carries file etags and renames (`moved`); workspace events carry the writing panel (`X-FB-Client` → `by`); `/api/file` answers 304 to `If-None-Match`; listing pages carry `writable`, rows drop `m`; `insert` takes `paths` and fbd quotes them |
+| 0.5.0 | 2026-10-01 | AC-25 (Toolbelt shown in new windows), AC-26 (⌘-click opens a viewer window; supersedes AC-20), AC-27 (layout defaults for new windows, own layout per open window), AC-28 (outdated panel link explained); Stage 4 |
+| 0.6.0 | 2026-10-01 | AC-29: HTML documents render (sandboxed, no scripts) and links between Markdown and HTML documents open them, with `#anchor` |
+| 0.7.0 | 2026-10-01 | AC-30 (P0): one bridge per iTerm2 — it exits with its iTerm2 or its API connection, a new bridge takes over from a leftover one (`bridge.lock`), a hung iTerm2 call cannot freeze the loop, and a panel nobody follows says so. Found when an iTerm2 restart left the old bridge and fbd running: the new bridge failed on the busy port, new windows got no Toolbelt and the panel showed an old directory as current. AS-08 added. Pragmatic review: lock taken only after the API connection is up, silence keyed on `bridge` (not `stale`), `make restart` exercises the takeover, Python unit tests join `make test`. Implementation review: a holder that exits during the takeover is not an error, a holder is judged again after 0.5 s, the silence event is sent under the state lock, a failing watchdog check is logged and the watch goes on; rejected: `make install` stopping a lockless bridge (no release has shipped one; the single local instance is stopped once by hand) |
+
+## 1. Overview
+
+**Problem.** In iTerm2, reading the current directory means `ls`, `cat`, `less` or another app; trees, Markdown and code are hard to scan; IDE trees do not follow the terminal's `cd`; huge folders freeze GUI browsers.
+
+**Who it affects.** Developers on macOS who work in iTerm2 with plain bash, local tmux, and tmux -CC, often with several panes per window. **Expected outcome.** A "Files" panel lives inside every iTerm2 window (the Toolbelt, right side). It always shows the directory of the pane that has focus. It works like the file tree of an IDE: browse, open, read with syntax highlighting, render Markdown nicely, edit and save, create, rename and delete files and folders. It stays responsive in a directory with 500,000 entries. It remembers, per pane, which folders were open, what was selected and which files were open.
+
+**Scenario, before and after.**
+- Before: Alex runs `cd ~/work/api/docs`, types `ls`, then `less ci-design.md`, reads raw Markdown with `**` and `|---|` noise, quits, `cd ../src`, `ls`, opens `vim` to fix a typo, then forgets which files they looked at when they come back to this pane an hour later.
+- After: Alex runs `cd ~/work/api/docs`. Within one second the Files panel shows `docs/`. Alex clicks `ci-design.md` and reads it rendered, with real tables and highlighted code blocks. Alex switches to the source view, fixes the typo, presses ⌘S. Alex switches to another pane: the panel shows that pane's directory with its own open folders. When Alex comes back, their folders, selection and open tabs are exactly where they left them.
+
+## 2. Scope and non-goals
+
+In scope:
+- A Toolbelt web-view tool "Files", a Rust backend `fbd` on 127.0.0.1, and a Python bridge (iTerm2 AutoLaunch) that tracks the focused pane, its cwd (plain shell, local tmux, local tmux -CC) and theme.
+- Reading (tree, 500K-entry folders, highlighted text, Markdown and HTML rendered, images), editing (save, create, rename, Trash, IDE context menu and keys), per-pane memory, theme and font from the profile, a separate viewer window.
+
+Out of scope (explicit):
+- Remote file systems (ssh, remote tmux -CC, sshfs): reading them needs a remote agent; the panel shows "remote" and freezes.
+- A panel on the left side: the Toolbelt is right side only; a glued native window needs Accessibility permission and breaks in fullscreen (owner accepted, 2026-09-30).
+- IDE features (LSP, project search), Windows/Linux (iTerm2 is macOS only), network access (loopback only).
+
+## 3. Assumptions, dependencies, open questions
+
+Assumptions:
+
+| ID | Assumption | Owner | Status |
+|---|---|---|---|
+| AS-01 | iTerm2 3.6.x with "Enable Python API" turned on (verified: 3.6.11, `EnableAPIServer = 1`). | Owner | verified |
+| AS-02 | Without shell integration, iTerm2 variable `path` updates ~0.5 s after `cd` in a plain shell (measured 2026-09-30). | Claude | verified |
+| AS-03 | In plain tmux, `tmux display -c <tty> -p '#{pane_current_path}'` returns the focused tmux pane's cwd (measured with tmux 3.6a). | Claude | verified |
+| AS-04 | In tmux -CC, `TmuxConnection.async_send_command("display -p -t %N ...")` returns `#{host}` and `#{pane_current_path}` for pane N. | Claude | verified in demo |
+| AS-05 | The Toolbelt web view is WebKit (WKWebView) and supports ES2022, `color-mix()`, `local()` fonts, EventSource. | Claude | verified in demo |
+| AS-06 | One user, one Mac, local SSD (APFS). Reading a 500K-entry directory takes about 1 s (measured 2026-09-30: `ls -f` on 500,000 files, 1.31 s first run, 0.81 s warm). | Claude | verified |
+| AS-07 | Several Toolbelt web views (one per iTerm2 window) can each hold SSE streams without starving each other (measured: 2 views × 7 streams, a plain request still answers in 8–10 ms). | Claude | verified |
+| AS-08 | When iTerm2 quits it does not signal its AutoLaunch scripts; it only closes the API connection. `it2_api_wrapper.sh` runs Python as a child, so both outlive iTerm2 (observed 2026-10-01: after a restart the old wrapper, bridge and fbd ran on with ppid 1). Inside the `iterm2` module the reader task dies on the closed connection while pending calls wait forever. | Claude | verified |
+
+Dependencies:
+
+| ID | Dependency | Owner | Status |
+|---|---|---|---|
+| DEP-01 | Rust stable 1.98 (installed 2026-09-30 via `rustup default stable`), crates: axum 0.8, tokio 1, notify 8, rust-embed 8, trash 5, serde_json 1. | Claude | available |
+| DEP-02 | Python `iterm2` module 2.14 inside iTerm2's own Python runtime (`~/Library/Application Support/iTerm2/iterm2env-*`). | Owner | available |
+| DEP-03 | Node 26 + npm 11 at build time only: esbuild, CodeMirror 6 (`codemirror`, `@codemirror/language-data`), `markdown-it` 14. The bundle is embedded in `fbd`; no runtime network access. | Claude | available |
+| DEP-04 | tmux ≥ 3.2 on PATH for tmux modes (verified 3.6a). | Owner | available |
+
+Open questions:
+
+| ID | Question | Owner | Status | Decision |
+|---|---|---|---|---|
+| OQ-01 | Where does a clicked file open: inside the panel, or in a wide iTerm2 pane? | Owner | resolved | Inside the panel: tree on top, viewer below, drag splitter, "maximize viewer" toggle. Wide iTerm2 browser pane is AC-20 (later). 2026-09-30 |
+| OQ-02 | What happens to per-pane state on `cd`? | Owner | resolved | Tree state (expanded, selection, scroll) is cleared. Open file tabs stay, because they hold absolute paths and may have unsaved edits. 2026-09-30 |
+| OQ-03 | What does "delete" do? | Owner | resolved | Move to macOS Trash (restorable in Finder). No permanent delete in the UI. 2026-09-30 |
+| OQ-04 | Where may the panel write? | Owner | resolved | Only under `$HOME` and `/tmp` by default (`writable_roots`). Elsewhere is read-only. 2026-09-30 |
+| OQ-05 | Does rendered Markdown execute raw HTML inside `.md` files? | Owner | resolved | No. Raw HTML is shown as text. A malicious README must not run script in the panel. 2026-09-30 |
+| OQ-06 | Should state survive an iTerm2 restart, when session IDs may change? | Owner | open | Not tested yet (needs an iTerm2 restart). Not blocking: restart survival is AC-23 (P1). |
+| OQ-07 | Which ⌘-shortcuts reach the panel and which are taken by iTerm2 menus (⌘S, ⌘W, ⌘N, ⌘F, ⌘⇧V)? ⌘W reaching iTerm2 would close the terminal session. | Owner | open | ⌘N/⌘W/⌘T are not used (⌥N, ⌥⇧N, ⌥W instead). ⌘S, ⌘⌫, ⌥⌘C are used and each also has a button or menu item; still to confirm by hand in the Toolbelt. |
+
+## 4. Acceptance cases
+
+| ID | Priority | Case |
+|---|---|---|
+| AC-01 | [MUST / P0] | The user can `cd` in the focused pane (bash, tmux, tmux -CC) and the tree re-roots at that directory within 1 s; a remote pane shows a frozen tree with a "remote" notice. |
+| AC-02 | [MUST / P0] | The user can expand a folder with 500,000 entries and scroll it smoothly; first rows appear within 2.5 s and the panel never freezes. |
+| AC-03 | [MUST / P0] | The user can click a text file and read it in a viewer tab with syntax highlighting chosen by file name. |
+| AC-04 | [MUST / P0] | The user can open a Markdown file rendered with typography by default and switch to highlighted source with one click. |
+| AC-05 | [MUST / P0] | The user gets back, per terminal pane (iTerm2 pane or tmux pane), the expanded folders, selection and open tabs after switching panes or reloading the panel; tree state clears on `cd`. |
+| AC-06 | [MUST / P0] | The user can install with one command, and after an iTerm2 restart the Files tool is available with no manual steps. |
+| AC-07 | [MUST / P0] | A web page or local process without the token cannot list, read or change files through the backend. |
+| AC-08 | [SHOULD / P1] | The user can edit a text file and save it with ⌘S; unsaved tabs are marked, and a save over a file changed on disk is refused with a clear choice. |
+| AC-09 | [SHOULD / P1] | The user can create an empty file or a folder in the selected folder through the context menu or a shortcut, with the name typed inline. |
+| AC-10 | [SHOULD / P1] | The user can rename a file or folder inline (F2 or context menu); open tabs follow the new path. |
+| AC-11 | [SHOULD / P1] | The user can move files and folders to the macOS Trash after one confirmation. |
+| AC-12 | [SHOULD / P1] | The user can copy absolute or relative path, reveal in Finder, open with the default app, insert the path into the terminal, and `cd` the terminal to a folder. |
+| AC-13 | [SHOULD / P1] | The user sees changes made by other programs (create, delete, rename, edit) in expanded folders and open tabs within 1 s. |
+| AC-14 | [SHOULD / P1] | The user sees the panel in the colors and font of the focused pane's iTerm2 profile, including light/dark variants. |
+| AC-15 | [SHOULD / P1] | The user can do every tree and tab action from the keyboard with IDE-standard shortcuts. |
+| AC-16 | [SHOULD / P1] | The user can filter the tree by name, including inside a 500K-entry folder. |
+| AC-17 | [SHOULD / P1] | The user can preview images (png, jpg, gif, webp, svg) in a viewer tab. |
+| AC-18 | [SHOULD / P1] | The user can toggle hidden (dot) files on or off; the choice is remembered. |
+| AC-19 | [SHOULD / P1] | The user can select several items (⌘-click, ⇧-click) and trash them or copy their paths in one action. |
+| AC-20 | [NICE TO HAVE / later] | The user can open a file in a wide iTerm2 browser pane next to the terminal. [DROPPED — superseded by AC-26 (a separate viewer window), 2026-10-01] |
+| AC-21 | [NICE TO HAVE / later] | The user sees git status colors (modified, added, ignored) in the tree. |
+| AC-22 | [NICE TO HAVE / later] | The user can move files between folders by drag and drop. |
+| AC-23 | [SHOULD / P1] | The user gets the per-pane state back after the backend restarts, with the scroll position; idle state is cleaned up after 14 days. |
+| AC-24 | [SHOULD / P1] | The user can follow links in rendered Markdown: local `.md` links open in a new tab, web links open in the default browser, the panel never navigates away. |
+| AC-25 | [SHOULD / P1] | The user sees the Files panel in every new iTerm2 window without pressing ⇧⌘B; windows where the user hid it stay hidden. |
+| AC-26 | [SHOULD / P1] | The user can ⌘-click a file (or ⌘↩, or "Open in Window") to read and edit it in a large separate viewer window; further files open as tabs there. |
+| AC-27 | [SHOULD / P1] | The user's latest Toolbelt width and tree/viewer split become the default for new windows, while every open window keeps its own until it is closed. |
+| AC-28 | [SHOULD / P1] | The user whose panel holds an outdated link sees what is wrong and how to fix it instead of an endless "connecting…". |
+| AC-29 | [SHOULD / P1] | The user reads HTML files rendered (scripts never run) and follows links inside Markdown and HTML documents to other documents, including `#anchors`. |
+| AC-30 | [MUST / P0] | The user finds the panel following the terminal again after iTerm2 quits, restarts or the bridge is relaunched, with no manual cleanup; a panel that nothing follows says so instead of showing an old directory as current. |
+
+## 5. BDD scenarios
+
+### AC-01 — Tree follows the focused pane's directory [MUST / P0]
+
+```gherkin
+Scenario Outline: AC-01 happy path — cd re-roots the tree
+  Given the Files panel is visible in window "w1"
+  And pane "p1" runs "<mode>" and has focus
+  When the user runs "cd /Users/alex/work/api" in "p1"
+  Then within 1 s the panel header shows mode badge "<badge>" and path "~/work/api"
+  And the tree root lists the entries of "/Users/alex/work/api"
+
+  Examples:
+    | mode          | badge    |
+    | bash          | BASH     |
+    | tmux (plain)  | TMUX     |
+    | tmux -CC      | TMUX -CC |
+
+Scenario: AC-01 happy path — focus moves between split panes
+  Given pane "p1" is in "/Users/alex/work/api" and pane "p2" is in "/tmp"
+  When the user clicks into "p2"
+  Then within 1 s the tree root is "/tmp"
+
+Scenario: AC-01 edge — foreground program in a subdirectory
+  Given pane "p1" shell cwd is "/Users/alex/work/api" and "vim" runs there after ":cd src"
+  Then the tree root stays "/Users/alex/work/api" (the shell's cwd, not the job's)
+
+Scenario: AC-01 failure — remote session
+  Given the focused pane runs "ssh devbox" or a tmux -CC session whose host is "devbox.example"
+  Then the badge shows "REMOTE", the note shows "remote host devbox.example"
+  And the tree keeps the last local root, marked "cwd unavailable — showing last known"
+```
+
+### AC-02 — Very large folders stay responsive [MUST / P0]
+
+```gherkin
+Scenario: AC-02 happy path — 500K folder
+  Given "/tmp/fb-big" holds 500,000 files named "f000000.txt".."f499999.txt"
+  When the user expands "fb-big"
+  Then the folder shows a spinner row while the backend reads, and other folders stay usable
+  And within 2.5 s (warm disk cache) the first rows "f000000.txt".. are visible, sorted naturally
+  And the scrollbar reflects 500,000 rows
+  And the tree never renders more than 300 DOM rows at once
+
+Scenario: AC-02 edge — scrolling to the end
+  Given "fb-big" is expanded and loaded
+  When the user drags the scrollbar to the bottom
+  Then within 300 ms rows "f499700.txt".."f499999.txt" are visible
+  And typing "j"/"k" still moves the selection without delay
+
+Scenario: AC-02 failure — permission denied
+  Given "/private/var/root" is not readable by the user
+  When the user expands it
+  Then the folder shows one row "⚠ Permission denied (os error 13)"
+  And the rest of the tree remains usable
+```
+
+### AC-03 — Read a file with syntax highlighting [MUST / P0]
+
+```gherkin
+Scenario Outline: AC-03 happy path — highlighting by name
+  When the user clicks "<file>"
+  Then a viewer tab "<file>" opens read-only with "<language>" highlighting and line numbers
+
+  Examples:
+    | file          | language   |
+    | server.rs     | Rust       |
+    | app.py        | Python     |
+    | Dockerfile    | Dockerfile |
+    | config.yaml   | YAML       |
+    | notes.txt     | Plain text |
+
+Scenario: AC-03 edge — binary file
+  When the user clicks "logo.ico"
+  Then the tab shows "Binary file (image/vnd.microsoft.icon), 15 K" and a button "Open with default app"
+
+Scenario: AC-03 edge — huge file
+  Given "access.log" is 48.2 MB
+  When the user clicks it
+  Then the tab shows the first 1 MB as plain text with the banner "48.2 MB — showing first 1 MB, editing disabled"
+
+Scenario: AC-03 error — file deleted before open
+  Given "old.txt" was deleted by another program
+  When the user clicks it
+  Then the tab shows "⚠ No such file or directory (os error 2)" and no other tab changes
+```
+
+### AC-04 — Markdown rendered and source views [MUST / P0]
+
+```gherkin
+Scenario: AC-04 happy path — rendered by default
+  When the user clicks "README.md"
+  Then the tab opens in "Rendered" mode with proportional body text, headings, tables, task lists
+  And fenced ```rust blocks are syntax highlighted
+  And relative images like "![arch](docs/arch.png)" are displayed
+
+Scenario: AC-04 happy path — toggle to source
+  Given "README.md" is open rendered
+  When the user clicks "Source"
+  Then the tab shows the Markdown source with Markdown highlighting
+  And the choice is remembered for this tab
+
+Scenario: AC-04 edge — raw HTML is inert
+  Given "evil.md" contains "<img src=x onerror=alert(1)>"
+  When the user opens it rendered
+  Then the HTML appears as literal text and no script runs (OQ-05)
+```
+
+### AC-05 — Per-pane memory [MUST / P0]
+
+```gherkin
+Scenario: AC-05 happy path — switching panes restores state
+  Given in pane "p1" (root "~/work/api") folders "src" and "src/db" are expanded, "src/db/pool.rs" is selected
+  And tabs "README.md" and "pool.rs" are open, "pool.rs" active
+  When focus moves to pane "p2" and back to "p1"
+  Then "src" and "src/db" are expanded, "pool.rs" is selected and scrolled into view
+  And tabs "README.md" and "pool.rs" are open with "pool.rs" active
+
+Scenario: AC-05 happy path — survives a panel reload
+  Given the state above
+  When the user closes and reopens the Files tool (View → Toolbelt → Files)
+  Then the same state is shown for "p1"
+
+Scenario: AC-05 edge — tmux panes inside one iTerm2 pane
+  Given pane "p1" runs plain tmux with tmux panes "%3" in "~/work/api" and "%4" in "/tmp"
+  And in "%3" folder "src" is expanded
+  When the user switches tmux panes "%3" → "%4" → "%3"
+  Then "src" is expanded again (state is keyed by "tmux:default:%3", not by "p1")
+
+Scenario: AC-05 edge — cd clears tree state, keeps tabs
+  Given the state above
+  When the user runs "cd ~/work/web" in "p1"
+  Then the tree shows "~/work/web" with no folder expanded and nothing selected
+  And tabs "README.md" and "pool.rs" are still open (OQ-02)
+
+Scenario: AC-05 edge — expanded folder was deleted
+  Given "src/db" is remembered as expanded but was deleted
+  When the state is restored
+  Then "src/db" is silently dropped from the expanded set
+```
+
+### AC-06 — One-command install and autostart [MUST / P0]
+
+```gherkin
+Scenario: AC-06 happy path — install
+  Given the repo is at "~/src/iterm-filebrowser"
+  When the user runs "make install"
+  Then "fbd" is copied to "~/.local/bin/fbd"
+  And "fb_bridge.py" is copied to "~/Library/Application Support/iTerm2/Scripts/AutoLaunch/"
+  And the command prints "Installed. Restart iTerm2 or run Scripts → AutoLaunch → fb_bridge.py"
+
+Scenario: AC-06 happy path — autostart
+  Given the install above
+  When iTerm2 starts
+  Then within 5 s "View → Toolbelt → Files" exists and the panel shows the focused pane's directory
+
+Scenario: AC-06 failure — port busy
+  Given another program listens on 127.0.0.1:47821
+  When the bridge starts "fbd"
+  Then "fbd" exits with "error: port 47821 in use (set FB_PORT)" in "~/Library/Logs/iterm-filebrowser/fbd.log"
+```
+
+### AC-07 — Only the panel can use the backend [MUST / P0]
+
+```gherkin
+Scenario Outline: AC-07 error — requests without a valid token or host are refused
+  When a client sends "<request>"
+  Then the response is "<status>" with body {"error": "<code>"}
+  And no file is read or changed
+
+  Examples:
+    | request                                                           | status | code          |
+    | GET /api/ls?path=/Users/alex (no token)                           | 401    | bad_token     |
+    | GET /api/ls?path=/Users/alex, Host: evil.example:47821            | 403    | bad_host      |
+    | POST /api/fs/mkdir with token, Origin: http://evil.example        | 403    | bad_origin    |
+    | POST /api/fs/mkdir with token, Content-Type: text/plain           | 415    | bad_content_type |
+
+Scenario: AC-07 happy path — the Files tool works
+  Given the tool URL "http://127.0.0.1:47821/?t=<token>"
+  When the panel loads
+  Then GET /api/state returns 200
+```
+
+### AC-08 — Edit and save [SHOULD / P1]
+
+```gherkin
+Scenario: AC-08 happy path — save
+  Given "app.py" is open in a tab
+  When the user types "import os" at line 1 and presses ⌘S
+  Then the tab title loses its "●" dirty marker
+  And "app.py" on disk contains "import os" at line 1 and keeps its permissions
+
+Scenario: AC-08 error — changed on disk since opened
+  Given "app.py" was opened with etag "1727690000123456789-8812345-2048" and then changed by vim
+  When the user presses ⌘S
+  Then the save is refused with "app.py changed on disk" and buttons "Overwrite", "Reload (discard mine)", "Cancel"
+  And the file on disk is unchanged until the user picks "Overwrite"
+
+Scenario: AC-08 error — outside writable roots
+  Given "/etc/hosts" is open
+  Then the tab is read-only with banner "Read-only: outside writable folders"
+
+Scenario: AC-08 edge — close a dirty tab
+  Given "app.py" has unsaved changes
+  When the user closes the tab (⌘W)
+  Then a prompt asks "Save changes to app.py?" with "Save", "Don't save", "Cancel"
+```
+
+### AC-09 — Create file or folder [SHOULD / P1]
+
+```gherkin
+Scenario: AC-09 happy path — new file
+  Given folder "src" is selected
+  When the user presses ⌥N (or the header button, or context menu "New File…") and types "util.rs" then Enter
+  Then "src/util.rs" exists with size 0, is selected, and opens in a tab
+
+Scenario: AC-09 happy path — new folder
+  When the user presses ⌥⇧N in "src" and types "db/migrations" then Enter
+  Then "src/db/migrations" exists (intermediate folders created) and is expanded
+
+Scenario Outline: AC-09 error — invalid name
+  When the user types "<name>" for a new file in "src"
+  Then the inline field shows "<message>" in red and nothing is created
+
+  Examples:
+    | name      | message                                   |
+    | util.rs   | "util.rs" already exists in src            |
+    | (empty)   | A name is required                         |
+    | ..        | ".." is not a valid name                   |
+
+Scenario: AC-09 error — no permission
+  Given "/usr/local" is outside writable roots
+  Then "New File…" and "New Folder…" are disabled in its context menu
+```
+
+### AC-10 — Rename [SHOULD / P1]
+
+```gherkin
+Scenario: AC-10 happy path — rename a file with an open tab
+  Given "notes.md" is selected and open in a tab
+  When the user presses F2 (or context menu "Rename…"), types "ideas", presses Enter (the extension stays preselected-out)
+  Then "ideas.md" exists, "notes.md" does not, and the tab is titled "ideas.md"
+
+Scenario: AC-10 edge — Esc cancels
+  When the user presses F2, types "x", presses Esc
+  Then nothing is renamed
+
+Scenario: AC-10 error — target exists
+  Given "ideas.md" already exists
+  When the user renames "notes.md" to "ideas.md"
+  Then the field shows ""ideas.md" already exists" and both files are unchanged
+```
+
+### AC-11 — Move to Trash [SHOULD / P1]
+
+```gherkin
+Scenario: AC-11 happy path — trash a folder
+  When the user selects "build" and presses ⌘⌫
+  Then a dialog asks "Move "build" to Trash?" with "Move to Trash" and "Cancel"
+  When the user confirms
+  Then "build" is in "~/.Trash" and gone from the tree; open tabs under it close
+
+Scenario: AC-11 error — file is gone already
+  Given "build" was deleted by another program
+  When the user confirms trashing it
+  Then a toast shows "build: No such file or directory" and the tree refreshes
+
+Scenario: AC-11 edge — dirty tab inside
+  Given "build/out.txt" has unsaved edits in a tab
+  Then the dialog adds "1 unsaved file will be lost" before confirming
+```
+
+### AC-12 — Standard utility actions [SHOULD / P1]
+
+```gherkin
+Scenario Outline: AC-12 happy path — context menu actions
+  Given the tree root is "/Users/alex/work/api" and "src/db/pool.rs" is selected
+  When the user picks "<action>"
+  Then "<result>"
+
+  Examples:
+    | action                  | result                                                       |
+    | Copy Path (⌥⌘C)         | the clipboard holds "/Users/alex/work/api/src/db/pool.rs"    |
+    | Copy Relative Path      | the clipboard holds "src/db/pool.rs"                         |
+    | Reveal in Finder        | Finder opens "src/db" with "pool.rs" selected                |
+    | Open with Default App   | macOS opens the file with its default app                    |
+    | Insert Path in Terminal | the focused pane receives the text "src/db/pool.rs " (no Enter) |
+    | Open Terminal Here      | the focused pane receives "cd 'src/db'" + Enter              |
+
+Scenario: AC-12 error — pane runs a full-screen program
+  Given the focused pane runs "vim"
+  When the user picks "Open Terminal Here"
+  Then a toast shows "Terminal is busy (vim) — command not sent" and nothing is typed
+```
+
+### AC-13 — Live refresh from disk [SHOULD / P1]
+
+```gherkin
+Scenario: AC-13 happy path — new file appears
+  Given folder "src" is expanded
+  When another program runs "touch src/new.rs"
+  Then within 1 s "new.rs" appears in "src" in sorted position
+
+Scenario: AC-13 happy path — open clean tab reloads
+  Given "app.py" is open with no unsaved edits
+  When another program changes "app.py"
+  Then within 1 s the tab shows the new content and keeps its scroll position
+
+Scenario: AC-13 edge — open dirty tab
+  Given "app.py" has unsaved edits
+  When another program changes "app.py"
+  Then the tab shows the banner "Changed on disk" with "Reload" and "Keep mine"
+
+Scenario: AC-13 edge — burst of changes
+  When "npm install" writes 40,000 files into expanded "node_modules"
+  Then the tree updates at most twice per second and the panel stays responsive
+```
+
+### AC-14 — Theme and font from the iTerm2 profile [SHOULD / P1]
+
+```gherkin
+Scenario: AC-14 happy path — profile colors and font
+  Given the focused pane's profile has background "#311d30", foreground "#dcdcdc", font "JetBrainsMonoNFM-Regular 14"
+  Then the panel background is "#311d30", text is "#dcdcdc", and tree text uses JetBrains Mono
+
+Scenario: AC-14 edge — profile changes live
+  When the user edits the profile background to "#101418"
+  Then within 2 s the panel background is "#101418"
+
+Scenario: AC-14 edge — font not installed for WebKit
+  Given the profile font is "SomeMissingFont 13"
+  Then the panel falls back to "SF Mono" at size 13 without broken layout
+```
+
+### AC-15 — Keyboard operation [SHOULD / P1]
+
+```gherkin
+Scenario Outline: AC-15 happy path — shortcuts in the tree
+  Given the tree has focus and "src" is selected
+  When the user presses "<key>"
+  Then "<result>"
+
+  Examples:
+    | key      | result                                   |
+    | ↓ / ↑    | selection moves one row                  |
+    | → / ←    | folder expands / collapses (or goes to parent) |
+    | Enter    | file opens; on a folder: expand/collapse |
+    | F2       | rename (AC-10)                           |
+    | ⌥N, ⌥⇧N  | new file, new folder (AC-09)             |
+    | ⌘⌫       | move to Trash (AC-11)                    |
+    | /        | focus the filter field                   |
+    | ⌥W, ⌃Tab | close tab, next tab                      |
+
+Scenario: AC-15 edge — shortcuts do not leak to the terminal
+  Given the ⌘ shortcuts chosen after the probe (OQ-07)
+  When the user presses any of them in the panel
+  Then iTerm2 does not open a window, tab, split, or close a session
+```
+
+### AC-16 — Filter by name [SHOULD / P1]
+
+```gherkin
+Scenario: AC-16 happy path — filter loaded tree
+  When the user types "pool" in the filter field
+  Then every shown folder lists only entries whose names contain "pool", expanded folders stay visible, the match is highlighted
+
+Scenario: AC-16 happy path — filter inside a 500K folder
+  Given "fb-big" (500,000 entries) is expanded
+  When the user types "f49999"
+  Then within 500 ms "fb-big" shows 10 rows "f499990.txt".."f499999.txt" and "10 of 500,000"
+
+Scenario: AC-16 edge — no match
+  When the user types "zzz"
+  Then the tree shows "No items match "zzz"" and Esc clears the filter
+```
+
+### AC-17 — Image preview [SHOULD / P1]
+
+```gherkin
+Scenario: AC-17 happy path — png
+  When the user clicks "docs/arch.png" (1920×1080, 240 K)
+  Then a tab shows the image fitted to the viewer with "1920 × 1080 · 240 K"
+
+Scenario: AC-17 edge — svg is inert
+  Given "icon.svg" contains a <script> element
+  When the user opens it
+  Then it is shown as an <img> and the script does not run
+```
+
+### AC-18 — Hidden files toggle [SHOULD / P1]
+
+```gherkin
+Scenario: AC-18 happy path — hide dotfiles
+  Given hidden files are shown (default) and ".git" is visible
+  When the user clicks the "eye" button (or ⌘⇧.)
+  Then ".git" and ".env" disappear and the choice persists after a panel reload
+
+Scenario: AC-18 edge — selected item becomes hidden
+  Given ".env" is selected
+  When hidden files are turned off
+  Then the selection moves to the parent folder
+```
+
+### AC-19 — Multi-select [SHOULD / P1]
+
+```gherkin
+Scenario: AC-19 happy path — trash two files
+  When the user clicks "a.log", ⌘-clicks "c.log", presses ⌘⌫ and confirms "Move 2 items to Trash?"
+  Then both files are in the Trash
+
+Scenario: AC-19 edge — range select
+  When the user clicks "a.log" and ⇧-clicks "e.log"
+  Then 5 rows are selected and "Copy Path" copies 5 lines
+
+Scenario: AC-19 edge — selection is remembered
+  Given 3 items are selected in pane "p1"
+  When focus moves to "p2" and back
+  Then the same 3 items are selected (AC-05)
+```
+
+### AC-21 — Git status colors [NICE TO HAVE / later]
+
+```gherkin
+Scenario: AC-21 happy path — modified file
+  Given "src/app.rs" is modified in git
+  Then its name is shown in the "modified" color with "M" at the right
+
+Scenario: AC-21 edge — not a git repo
+  Given the root is "/tmp"
+  Then no git colors are shown and no git process runs more than once per 5 s
+```
+
+### AC-22 — Drag and drop move [NICE TO HAVE / later]
+
+```gherkin
+Scenario: AC-22 happy path — move a file
+  When the user drags "notes.md" onto folder "docs"
+  Then "docs/notes.md" exists and "notes.md" does not
+
+Scenario: AC-22 error — name clash
+  Given "docs/notes.md" exists
+  Then the drop is refused with ""notes.md" already exists in docs"
+```
+
+### AC-23 — State survives a backend restart [SHOULD / P1]
+
+```gherkin
+Scenario: AC-23 happy path — restart fbd
+  Given in pane "p1" folders "src" and "src/db" are expanded and the tree is scrolled to row 412
+  When the user runs "pkill fbd" and the bridge restarts it within 2 s
+  Then the panel reconnects and shows "src", "src/db" expanded, scrolled to row 412
+
+Scenario: AC-23 edge — idle state cleanup
+  Given a pane state was last updated 15 days ago
+  When fbd starts
+  Then that state is removed from "workspaces.json"
+
+Scenario: AC-23 failure — corrupt state file
+  Given "workspaces.json" contains "{not json"
+  When fbd starts
+  Then it renames the file to "workspaces.json.bak", starts empty, and logs "event=workspace.reset reason=parse_error"
+```
+
+### AC-24 — Links in rendered Markdown [SHOULD / P1]
+
+```gherkin
+Scenario: AC-24 happy path — local Markdown link
+  When the user clicks the rendered link "[design](docs/design.md)"
+  Then "docs/design.md" opens in a new tab in Rendered mode
+
+Scenario: AC-24 happy path — web link
+  When the user clicks "[iTerm2](https://iterm2.com)"
+  Then the default browser opens "https://iterm2.com" and the panel stays on the file
+
+Scenario: AC-24 error — broken local link
+  When the user clicks "[old](gone.md)" and "gone.md" does not exist
+  Then a toast shows "gone.md: No such file or directory"
+```
+
+### AC-25 — Panel in every new window [SHOULD / P1]
+
+```gherkin
+Scenario: AC-25 happy path — new window
+  Given the bridge runs and FB_AUTO_TOOLBELT is not "0"
+  When the user opens a new iTerm2 window (⌘N)
+  Then within 1 s after the window becomes key, its Toolbelt is shown with the Files panel
+
+Scenario: AC-25 edge — the user hides it
+  Given the Toolbelt was shown automatically in window "w2"
+  When the user presses ⇧⌘B in "w2"
+  Then it stays hidden in "w2"; windows older than the bridge are left alone unless iTerm2 launched < 30 s ago
+
+Scenario: AC-25 edge — viewer windows
+  When a viewer window opens (AC-26)
+  Then no Toolbelt is shown in it
+```
+
+### AC-26 — Viewer window [SHOULD / P1]
+
+```gherkin
+Scenario: AC-26 happy path — ⌘-click opens a large window
+  Given "README.md" is in the tree
+  When the user ⌘-clicks it
+  Then a separate iTerm2 window ("Files Viewer" browser profile) opens at the last viewer size, showing README.md rendered
+  And the Files panel keeps following the terminal pane, not the viewer window
+
+Scenario: AC-26 happy path — next file joins the open viewer
+  Given a viewer window is open
+  When the user ⌘-clicks "app.py"
+  Then "app.py" opens as a new tab in that window and the window comes to the front
+
+Scenario: AC-26 edge — the URL bar shows no secret
+  Then the viewer window's URL holds a one-time code that is already spent, never the token
+
+Scenario: AC-26 failure — bridge not connected
+  Given the bridge is not running
+  When the user ⌘-clicks a file
+  Then a toast shows "iTerm2 bridge not connected" and nothing opens
+```
+
+### AC-27 — Layout defaults and per-window layout [SHOULD / P1]
+
+```gherkin
+Scenario: AC-27 happy path — new windows take the latest layout
+  Given in window "w1" the user widened the Toolbelt to 420 px and dragged the split to 35 %
+  When the user opens window "w2"
+  Then "w2" shows the Toolbelt 420 px wide with a 35 % split
+
+Scenario: AC-27 edge — open windows keep their own
+  Given windows "w1" (split 35 %) and "w2" (split 60 %) are open
+  When the user changes the split in "w2" to 50 %
+  Then "w1" stays at 35 % and the next new window starts at 50 %
+
+Scenario: AC-27 edge — viewer window size
+  Given the user resized the viewer window to 1400 × 900
+  When the next viewer window opens after it was closed
+  Then it opens at 1400 × 900
+```
+
+### AC-28 — Outdated panel link [SHOULD / P1]
+
+```gherkin
+Scenario: AC-28 failure — token rejected
+  Given a panel loaded with a link whose token fbd no longer accepts
+  Then the header shows "Outdated panel link" and the note "Reopen View → Toolbelt → Files, or restart iTerm2"
+  And the panel stops retrying (no request every second)
+
+Scenario: AC-28 edge — backend down
+  Given fbd is not running
+  Then the header shows "Backend not running" and retries every 2 s until it is back
+```
+
+### AC-29 — HTML documents and links between documents [SHOULD / P1]
+
+```gherkin
+Scenario: AC-29 happy path — link from Markdown to an HTML section
+  Given "docs/guide.md" links "[the page](page.html#sec2)"
+  When the user clicks it in the rendered guide
+  Then "page.html" opens rendered in a new tab, scrolled to "#sec2", with its relative images loaded
+
+Scenario: AC-29 happy path — link from HTML to Markdown
+  When the user clicks "<a href='../README.md#sandbox'>" inside page.html
+  Then "README.md" opens rendered at "#sandbox"; the panel never navigates
+
+Scenario: AC-29 edge — scripts and frames are inert
+  Given page.html contains "<script>parent.document.title='PWNED'</script>" and "onclick" handlers
+  Then nothing runs; the page shows in a sandboxed frame without scripts
+
+Scenario: AC-29 failure — broken link
+  When the user clicks "<a href='gone.html'>"
+  Then a toast shows "gone.html: No such file or directory"
+```
+
+### AC-30 — Bridge lifecycle and recovery [MUST / P0]
+
+```gherkin
+Scenario: AC-30 happy path — iTerm2 restart
+  Given the bridge and fbd run for iTerm2 instance A
+  When the user quits iTerm2 and starts it again (instance B)
+  Then within 3 s of A's exit A's bridge has stopped its fbd and exited, with "exit: iTerm2 pid 4242 gone" in bridge.log
+  And B's bridge starts its fbd on 127.0.0.1:47821 and "/api/health" shows "bridge_connected": true
+  And a new window shows the Toolbelt (AC-25) with the focused pane's directory
+
+Scenario: AC-30 edge — a leftover bridge holds the lock
+  Given a bridge from an earlier iTerm2 still runs and holds "bridge.lock" (as after a crash or a missed exit)
+  When a new bridge starts
+  Then, once its own iTerm2 API connection is up, it sends SIGTERM to the pid in "bridge.lock", and SIGKILL if the lock is not free after 3 s
+  And it starts its fbd only after it holds the lock; the old fbd exits with its bridge, so the new fbd binds port 47821 within its 3 s bind retry
+  And bridge.log shows "took over from bridge pid 23515"
+
+Scenario: AC-30 edge — the bridge is relaunched by hand
+  Given a bridge runs
+  When the user runs Scripts → AutoLaunch → fb_bridge.py, or "make restart" (which only launches the script)
+  Then afterwards exactly one bridge and one fbd run, and the newest bridge is the connected one
+
+Scenario: AC-30 edge — a bridge that cannot connect evicts nothing
+  Given a bridge runs
+  When "fb_bridge.py" is started outside iTerm2 and cannot authenticate to the API
+  Then it keeps retrying the connection and never takes "bridge.lock", so the running bridge and its fbd are untouched
+
+Scenario: AC-30 failure — the lock holder is not a bridge
+  Given "bridge.lock" is held by a process whose command line does not contain "fb_bridge.py"
+  When a bridge starts
+  Then after looking again 0.5 s later (a holder may be exiting or not have written its pid yet) it signals nothing, logs "bridge.lock held by pid 777 (<command>), not a bridge" and exits with status 1
+
+Scenario: AC-30 failure — API connection lost while iTerm2 runs
+  Given the bridge's connection to the iTerm2 API closes (the API server is turned off; also the only check for a bridge with no iTerm2 ancestor)
+  Then within 3 s the bridge stops fbd and exits with "exit: iTerm2 API connection closed"
+  And open panels show "Backend not running" (AC-28)
+
+Scenario: AC-30 failure — an iTerm2 call never answers
+  Given one poll of the focused pane waits on an iTerm2 call for 10 s while the connection stays open
+  Then the poll is abandoned with "poll timed out after 10 s" in bridge.log and the next poll runs 0.5 s later
+
+Scenario: AC-30 failure — nothing follows the terminal
+  Given fbd runs but no bridge has pushed state for 10 s (fbd started by hand, or the bridge hangs)
+  Then within 12 s every panel shows "Not following iTerm2" in the header with the note "Bridge not running: Scripts → AutoLaunch → fb_bridge.py, or restart iTerm2" and a red dot
+  And "/api/state" and an SSE "state" event carry "bridge": false; "stale" keeps its meaning (cwd unavailable)
+  And the tree, tabs and file operations keep working
+  When a bridge pushes state again
+  Then the note disappears within 1 s
+
+Scenario: AC-30 edge — fbd left without its bridge
+  Given fbd was started by a bridge (FB_BRIDGE_SECRET set)
+  When that bridge is killed with SIGKILL
+  Then fbd saves the workspaces and exits within 3 s with "event=stop reason=\"bridge exited\"", freeing the port
+```
+
+## 6. Flow and sequence diagrams
+
+### Following the focused pane (AC-01, AC-05, AC-14)
+
+```mermaid
+sequenceDiagram
+  participant T as iTerm2
+  participant B as fb_bridge.py
+  participant D as fbd (Rust)
+  participant U as Files panel (WebKit)
+  T->>B: FocusMonitor: session p2 active
+  loop every 500 ms, focused session only
+    B->>B: resolve cwd (see flowchart)
+    B->>T: async_get_profile (on session change, then every 2 s)
+  end
+  B->>D: POST /internal/state {key:"p2", cwd:"/tmp", mode:"bash", theme:{...}}
+  D-->>U: SSE event "state" {version: 42, key:"p2", cwd:"/tmp"}
+  U->>D: GET /api/workspace?key=p2
+  D-->>U: {root:"/tmp", expanded:[...], tabs:[...]}
+  U->>D: GET /api/ls?path=/tmp&offset=0&limit=500
+```
+
+The state key is the iTerm2 session ID for a plain shell, `tmux:<socket>:%N` for plain tmux and `tmuxcc:<session>:%N` for tmux -CC, so tmux panes that share one iTerm2 session keep separate state. The bridge is the only process that talks to iTerm2. `fbd` pushes changes to the panel over Server-Sent Events, so the panel never polls. The workspace for each pane lives in `fbd`, which is why it survives a panel reload (AC-05).
+
+### Bridge lifecycle (AC-06, AC-30)
+
+```mermaid
+sequenceDiagram
+  participant I as iTerm2 (instance B)
+  participant N as new bridge
+  participant O as old bridge (instance A, orphaned)
+  participant D as fbd
+  I->>N: AutoLaunch fb_bridge.py
+  N->>I: connect to the API (a bridge that cannot connect stops here)
+  N->>N: flock(bridge.lock) busy → read pid, check it is fb_bridge.py
+  N->>O: SIGTERM (SIGKILL after 3 s)
+  O->>D: terminate own fbd, exit
+  Note over D: an fbd whose bridge died anyway exits within 2 s (ppid check)
+  N->>N: flock acquired, write own pid
+  N->>D: start fbd (bind retries 3 s), register tool, follow panes
+  loop every 1 s (watchdog thread)
+    N->>N: iTerm2 pid alive? API connection open?
+  end
+  I--xN: iTerm2 quits (no signal, connection closes)
+  N->>D: terminate (SIGKILL after 2 s), log reason, exit
+```
+
+One bridge runs per user: `bridge.lock` in the app folder holds an exclusive `flock` for the bridge's lifetime and its pid as text; the kernel frees it on any exit, including SIGKILL. The newest bridge wins, because macOS runs one iTerm2 at a time and the bridge it launched last is the one connected to it. The lock is taken only after the API connection is up, so a bridge that cannot connect never evicts a working one, and fbd starts only after the lock is held. The watchdog checks the API connection (a unix socket: quit, crash and SIGKILL of iTerm2 all close it) and, when the bridge has an iTerm2 ancestor, that process by pid and start time, so a reused pid does not look alive. Every poll of the focused pane runs under a 10 s timeout, so an iTerm2 call that never answers costs one poll, not the loop. fbd stops reporting a silent bridge as connected: 10 s after the last push it sends a `state` event with `bridge: false`; the panel's "Not following iTerm2" note depends on `bridge` alone, `stale` still means "cwd unavailable".
+
+### Resolving the cwd of a pane (AC-01)
+
+```mermaid
+flowchart TD
+  A["focused session"] --> B{"tmuxRole == client?"}
+  B -- yes --> C["tmux -CC: send_command display -t %N host+pane_current_path"]
+  C --> C1{"host == local host?"}
+  C1 -- yes --> OK["cwd"]
+  C1 -- no --> R["REMOTE: freeze"]
+  B -- no --> D{"foreground job name"}
+  D -- tmux --> E["tmux -S sock display -c tty pane_current_path"] --> OK
+  D -- "ssh, mosh, et" --> R
+  D -- other --> F["nearest shell ancestor of jobPid, proc_pidinfo cwd"] --> OK
+  F -- EPERM --> S["keep last cwd, mark stale"]
+```
+
+The resolver is `resolve()` in `bridge/fb_bridge.py`. `realpath` is applied to the result so symlinked paths do not cause a re-root.
+
+### Listing a 500K folder (AC-02, AC-16)
+
+```mermaid
+sequenceDiagram
+  participant U as Files panel
+  participant D as fbd
+  participant W as blocking reader thread
+  U->>D: GET /api/ls?path=/tmp/fb-big&offset=0&limit=500
+  D->>W: spawn_blocking read_dir (not cached), request awaits
+  W-->>D: done: 500,000 names with d_type (no stat), sorted
+  D-->>U: 200 {status:"ready", total:500000, entries:[500 rows]}
+  U->>D: GET ...&offset=249500&limit=500 (on scroll)
+```
+
+`fbd` keeps the sorted name list in memory; each page stats only its own 500 rows. The request waits for the read (up to 15 s, then `status:"loading"` and the panel retries), but other requests are served meanwhile. The panel renders a virtual list: it knows the total and draws only the rows in view.
+
+### Save with conflict check (AC-08, AC-13)
+
+```mermaid
+sequenceDiagram
+  participant U as Files panel
+  participant D as fbd
+  participant FS as Disk
+  U->>D: PUT /api/file?path=app.py, If-Match "1727690000123456789-8812345-2048"
+  D->>FS: stat app.py
+  alt etag matches
+    D->>FS: write app.py.fb-tmp, fsync, rename over app.py
+    D-->>U: 200 {etag:"1727690123456789012-8812345-2059"}
+  else changed on disk
+    D-->>U: 409 {error:"conflict", etag:"1727690099000000000-8812345-2101"}
+    U->>U: "app.py changed on disk" Overwrite / Reload / Cancel
+  end
+```
+
+The write is atomic: a crash never leaves a half-written file. "Overwrite" repeats the PUT with `If-Match: *`.
+
+## 7. Current behavior and gaps
+
+State when this spec was written: a Python prototype in `demo/` (removed in 0.3.1; the `demo/…` evidence below refers to it). Everything below is implemented as of 0.3.0 (section 11).
+
+| AC | Today | Gap | Evidence |
+|---|---|---|---|
+| AC-01 | Resolver for bash, tmux, tmux -CC, remote freeze; polling 500 ms. | Port to the bridge; push to fbd instead of serving HTTP itself. | `demo/fb_demo.py:112`, `demo/fb_demo.py:190` |
+| AC-02 | Reads the whole folder in Python, sorts, pages 300 rows; "show more" button; DOM grows with each page. | Rust reader, progress events, virtual list. | `demo/fb_demo.py:219`, `demo/index.html:222` |
+| AC-03 | Plain text preview, first 128 KB, no highlighting. | CodeMirror viewer, language by name, limits. | `demo/fb_demo.py:254`, `demo/index.html:346` |
+| AC-04 | Markdown shown as plain text. | Renderer and source toggle. | `demo/index.html:346` |
+| AC-05 | Expanded folders and selection per session in `localStorage`; no tabs. | Server-side workspace with tabs and scroll. | `demo/index.html:132` |
+| AC-06 | Started by hand: `python3 demo/fb_demo.py`. | Makefile install, AutoLaunch, fbd supervision. | `demo/fb_demo.py:307` |
+| AC-07 | Token, Host check, GET only. | Origin and Content-Type checks for writes, CSP. | `demo/fb_demo.py:276` |
+| AC-08 | not implemented | everything | — |
+| AC-09 | not implemented | everything | — |
+| AC-10 | not implemented | everything | — |
+| AC-11 | not implemented | everything | — |
+| AC-12 | not implemented | everything | — |
+| AC-13 | Manual refresh button only. | FSEvents watcher and SSE. | `demo/index.html:222` |
+| AC-14 | Profile colors, font and size applied; profile re-read every 2 s. | Port as is. | `demo/fb_demo.py:159`, `demo/index.html:166` |
+| AC-15 | Arrows, Enter, `/`, Esc. | Full shortcut set. | `demo/index.html:310` |
+| AC-16 | Client-side filter over loaded rows only. | Server-side filter for big folders. | `demo/index.html:265` |
+| AC-17 | Images shown as "binary file". | Image tab. | `demo/fb_demo.py:254` |
+| AC-18 | Dotfiles always shown, dimmed. | Toggle. | `demo/index.html:272` |
+| AC-19 | Single selection only. | Multi-select. | `demo/index.html:310` |
+| AC-20 | not implemented (dropped) | — | — |
+| AC-21 | not implemented | everything | — |
+| AC-22 | not implemented | everything | — |
+| AC-23 | Nothing persists outside the panel's `localStorage`. | Workspace file, GC. | `demo/index.html:132` |
+| AC-24 | not implemented | everything | — |
+| AC-25 | The Toolbelt is hidden in every new window until ⇧⌘B. | Bridge shows it once per new window. | `bridge/fbbridge/windows.py` |
+| AC-26 | Files open only inside the narrow panel. | Viewer window, one-time code, routing of further files. | `ui/src/viewer.ts` |
+| AC-27 | One global split in prefs, applied to every panel at load. | Default for new windows, per-window value in each panel. | `ui/src/main.ts` |
+| AC-29 | HTML opens as highlighted source only; links work in Markdown only and lose `#anchor`. | Sandboxed HTML view, shared link routing, anchors. | `ui/src/viewer.ts` |
+| AC-28 | A rejected token shows "connecting…" forever (seen with the prototype's stale registration). | Clear message, no retry loop. | `ui/src/main.ts` |
+| AC-30 | After an iTerm2 restart the old bridge and fbd run on (ppid 1, loop stuck on a dead call); the new bridge exits on the busy port ("fbd did not start"); a silent bridge still shows as followed (`stale: false`, green dot, no event when it goes silent). | Exit with iTerm2 or the connection, lock and takeover, poll timeout, `bridge: false` event and header note. | `bridge/fbbridge/app.py`, `fbd/src/api_state.rs`, `ui/src/main.ts` |
+
+## 8. Recommendation and ownership
+
+**Recommended approach.** Three pieces, one direction of data each:
+1. `fb_bridge.py`, an iTerm2 AutoLaunch script (the Python API has no Rust client). It starts `fbd` as a child, registers the Toolbelt web-view tool, tracks the focused session with a 500 ms poll of that one session (10 s timeout per poll), and POSTs `{session, cwd, mode, theme}` to `fbd` when anything changes. It listens on `GET /internal/commands` (SSE) to type text into the terminal (AC-12). It generates a fresh bridge secret on each start and passes it to `fbd` in the `FB_BRIDGE_SECRET` environment variable; `/internal/*` accepts only that secret, so the panel token cannot drive the terminal. If `fbd` exits, the bridge restarts it within 2 s. One bridge runs at a time (`bridge.lock`, newest wins) and it exits with its iTerm2 instance or its API connection, taking `fbd` with it (AC-30).
+2. `fbd`, a single Rust binary (axum + tokio). It owns the listing cache, the FSEvents watcher, file reads and writes, the per-pane workspaces (JSON on disk) and the SSE stream. The UI bundle is embedded with `rust-embed`, so there is one file to install.
+3. The UI, plain TypeScript bundled by esbuild: a virtual-list tree, CodeMirror 6 for viewing and editing (one engine for highlighting in both), and markdown-it for rendered Markdown, with fenced code highlighted by the same CodeMirror language parsers.
+
+**Rejected alternative.** A native Swift window glued to the left edge of the iTerm2 window with AXObserver — rejected because it needs Accessibility permission, lags when the window is dragged, has no room when iTerm2 is maximized or fullscreen, and the owner accepted the Toolbelt on 2026-09-30. Keeping the whole backend in Python was also rejected: the demo's Python listing needs about 1 s of CPU per 500K entries under the GIL, which would block cwd tracking, and Rust was requested.
+
+| Part | Owner |
+|---|---|
+| `fbd` (Rust backend) | Claude |
+| `fb_bridge.py` (iTerm2 bridge) | Claude |
+| UI (tree, viewer, editor) | Claude |
+| Acceptance testing on a real iTerm2 setup | Owner |
+
+## 9. Technical details and specifications
+
+### Interfaces
+
+All `/api/*` calls need header `X-FB-Token: <token>` (or `?t=<token>` on GET, used by image tags). JSON in and out. Errors are `{"error": "<code>", "message": "<human text>"}`.
+
+| Method and path | Purpose | Case |
+|---|---|---|
+| `GET /` | UI (embedded) | all |
+| `GET /api/state` | the focused pane's state (also the first SSE event) | AC-01, AC-14 |
+| `GET/PUT /api/prefs` | panel preferences: `{hidden, split}` | AC-18 |
+| `GET /api/events` | SSE: `state`, `workspace {key, rev, by}`, `fs-change {dirs, files: [{path, etag}], moved: [{from, to}]}` | AC-01, AC-05, AC-13 |
+| `GET /api/ls?path&offset&limit&filter&hidden&locate` | page of a folder, with `writable` for the folder and `located` index of a name | AC-02, AC-16, AC-18 |
+| `GET /api/file?path` | text content + meta; `If-None-Match: "<etag>"` → 304 when unchanged | AC-03, AC-04, AC-13 |
+| `GET /api/raw?path` | raw bytes with MIME type (images) | AC-04, AC-17 |
+| `PUT /api/file?path` | save text, `If-Match: <etag>` | AC-08 |
+| `POST /api/fs/{mkdir,touch,rename,trash}` | file operations | AC-09, AC-10, AC-11, AC-19 |
+| `POST /api/os/{reveal,open}` | Finder, default app | AC-12 |
+| `POST /api/terminal/{insert,cd}` | `{key, paths}` / `{key, path}`; fbd quotes, refuses control characters, a changed focus and a busy shell | AC-12 |
+| `GET/PUT /api/workspace?key` | per-pane state, `PUT` carries `rev` (409 if stale) and `X-FB-Client` | AC-05 |
+| `POST /internal/state`, `GET /internal/commands` | bridge only, header `X-FB-Bridge: <FB_BRIDGE_SECRET>`; a bridge silent for 10 s turns `state` into `bridge: false` (AC-30) | AC-01, AC-12, AC-30 |
+| `GET /api/health` | counters for diagnostics | all |
+
+Example — a page of a big folder:
+
+```bash
+curl -H "X-FB-Token: q7Wm2xR9vKp4Lz8NcY3aTg" "http://127.0.0.1:47821/api/ls?path=/tmp/fb-big&offset=0&limit=3"
+```
+
+```json
+{"path": "/tmp/fb-big", "status": "ready", "total": 500000, "offset": 0, "writable": true, "gen": 1,
+ "entries": [
+   {"n": "f000000.txt", "k": "f", "s": 0},
+   {"n": "f000001.txt", "k": "f", "s": 0},
+   {"n": "f000002.txt", "k": "f", "s": 0}]}
+```
+
+`k` is the kind: `d` folder, `f` file, `l` symlink to file, `L` symlink to folder; `s` is the size. `writable` says whether the panel may create and rename in this folder (inside `FB_WRITABLE_ROOTS`).
+
+Example — save:
+
+```bash
+curl -X PUT -H "X-FB-Token: q7Wm2xR9vKp4Lz8NcY3aTg" -H 'If-Match: "1727690000123456789-8812345-2048"' \
+  -H "Content-Type: application/json" -d '{"text": "import os\nprint(os.getcwd())\n"}' \
+  "http://127.0.0.1:47821/api/file?path=/Users/alex/work/api/app.py"
+```
+
+Response `200` `{"etag": "1727690123456789012-8812345-31"}`; on conflict `409` `{"error":"conflict","message":"app.py changed on disk","etag":"1727690099000000000-8812345-2101"}`. The etag is `<mtime ns>-<inode>-<size>`. Save resolves symlinks first (writes the target), writes a temp file in the same folder, copies mode and extended attributes from the original (`copyfile(COPYFILE_METADATA)`), then renames over the original.
+
+### Data formats
+
+Workspace file `~/Library/Application Support/iterm-filebrowser/workspaces.json` (written by fbd, debounced 500 ms, atomic rename):
+
+```json
+{"version": 1, "prefs": {"hidden": true, "split": 0.45},
+ "panes": {"58C2EF9E-CDB9-4EE5-AA24-7AAA2B282B89": {"rev": 17, "root": "/Users/alex/work/api",
+   "expanded": ["/Users/alex/work/api/src"], "selected": ["/Users/alex/work/api/src/db/pool.rs"], "scroll": 412,
+   "tabs": [{"path": "/Users/alex/work/api/README.md", "view": "rendered"}], "active_tab": 0, "updated": 1790772426}}}
+```
+
+Bridge lock `~/Library/Application Support/iterm-filebrowser/bridge.lock` (AC-30): the running bridge's pid as text, e.g. `23515`, under an exclusive `flock` held until the bridge exits. A stale pid in an unlocked file is ignored.
+
+Unsaved edits are not stored in this file. The panel keeps editor buffers per state key in memory, so switching panes never drops them; closing a dirty tab prompts (AC-08). Every panel (one per iTerm2 window) follows the focused pane; each `PUT` sends the `rev` it last read and gets `409 {"error":"stale_rev"}` if another panel wrote first, then re-reads.
+
+### Configuration
+
+Environment variables of `fbd` (set by the bridge; defaults shown):
+
+| Key | Default | Example | Effect |
+|---|---|---|---|
+| `FB_PORT` | `47821` | `47900` | Loopback port. |
+| `FB_WRITABLE_ROOTS` | `$HOME:/tmp` | `$HOME:/tmp:/opt/work` | Folders where writes are allowed (OQ-04). |
+| `FB_LIST_CACHE_MB` | `128` | `64` | Max memory for cached listings (names + kinds); least recently used folders are dropped. |
+| `FB_TEXT_MAX_BYTES` | `10485760` | `5242880` | Above this, files open read-only, first 1 MB only. |
+| `FB_WORKSPACE_TTL_DAYS` | `14` | `30` | Idle pane state is removed after this (OQ-06). |
+| `FB_LOG` | `info` | `debug` | Log level. |
+| `FB_APP_DIR` | `~/Library/Application Support/iterm-filebrowser` | `/tmp/fb-test-app` | Token and workspace folder; tests use a private one so they never touch the live state. |
+
+### Performance
+
+Measured on a MacBook (Apple Silicon, APFS SSD).
+
+| Operation | Target | Measured by |
+|---|---|---|
+| cd → tree re-rooted (bash, tmux, tmux -CC) | p95 < 1 s | `scripts/e2e_cwd.py` runs 20 `cd`s and times the SSE `state` event |
+| First page of a 500K folder, warm disk cache, not in fbd cache | p95 < 2.5 s | `scripts/bench_ls.sh /tmp/fb-big` (restarts fbd, curl, 10 runs) |
+| Any later page of a cached folder | p95 < 50 ms | same script, random offsets |
+| Filter a 500K folder | p95 < 500 ms | `curl "/api/ls?path=/tmp/fb-big&filter=f49999"` × 10 |
+| Scroll in the panel | no frame over 50 ms | WebKit timeline in Safari Web Inspector attached to the tool view |
+| fbd memory with one 500K folder cached | RSS < 150 MB | `ps -o rss= -p $(pgrep fbd)` |
+| fbd idle CPU | < 1% | `top -l 2 -pid $(pgrep fbd)` |
+
+### Constraints and limits
+
+| Limit | Value | When exceeded |
+|---|---|---|
+| Page size | 500 entries | Larger `limit` is clamped to 500. |
+| Text viewer and editor | 10 MB (`FB_TEXT_MAX_BYTES`) | First 1 MB, read-only, banner "48.2 MB — showing first 1 MB, editing disabled". |
+| Non-UTF-8 text | — | Shown with U+FFFD, banner "Not UTF-8 — editing disabled". |
+| Binary detection | NUL byte in first 8 KB | Tab shows "Binary file (<mime>), <size>" + "Open with default app". |
+| Listing cache | 128 MB (`FB_LIST_CACHE_MB`) | Least recently used folders are dropped and re-read on demand. |
+| Watched folders | expanded folders of the focused pane + open tab files | Others are re-validated by mtime on access. |
+| Name length | 255 bytes | "Name is too long (max 255 bytes)". |
+| Workspace entries | idle 14 days (AC-23) | Removed at fbd start. |
+
+### Security
+
+- Loopback only (`127.0.0.1`), never `0.0.0.0`.
+- Token: 128 random bits in `~/Library/Application Support/iterm-filebrowser/token`, mode `0600`, created on first run, kept across restarts so the registered tool URL stays valid.
+- Every request: `Host` must be `127.0.0.1:<port>` (defeats DNS rebinding); token must match.
+- Writes (`PUT`, `POST`): `Content-Type: application/json` and `Origin` either absent or `http://127.0.0.1:<port>`. No CORS headers are ever sent.
+- Writes only under `FB_WRITABLE_ROOTS`, after `realpath` (a symlink cannot escape). `..` in names is rejected.
+- Delete only moves to Trash.
+- `/internal/*` requires `X-FB-Bridge: <FB_BRIDGE_SECRET>` (per-launch secret known only to the bridge and fbd).
+- UI response headers: `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'`, `X-Content-Type-Options: nosniff`.
+- Markdown: `markdown-it` with `html: false`; links with `javascript:` are dropped; web links go to `POST /api/os/open` (default browser), so the panel never navigates away and the token never leaves in a Referer. SVG is shown only through an image tag.
+- The bridge types into the terminal only for explicit user actions (AC-12), never Enter for "Insert Path".
+
+Denied request — a write from another origin:
+
+```bash
+curl -X POST -H "X-FB-Token: q7Wm2xR9vKp4Lz8NcY3aTg" -H "Origin: http://evil.example" -H "Content-Type: application/json" \
+  -d '{"paths": ["/Users/alex/work"]}' http://127.0.0.1:47821/api/fs/trash
+# 403 {"error": "bad_origin", "message": "Origin http://evil.example is not allowed"}
+```bash
+make install     # build fbd (release), bundle UI, copy fbd and fb_bridge.py, print next step
+make uninstall   # stop fbd, remove ~/.local/bin/fbd and the AutoLaunch script; keeps workspaces.json and token
+```
+
+### Logging and observability
+
+`~/Library/Logs/iterm-filebrowser/fbd.log` (rotated at 5 MB, 3 files) and `bridge.log`:
+
+```text
+2026-09-30T12:41:07.512Z level=info event=ls.done path=/tmp/fb-big entries=500000 read_ms=1184 sort_ms=212
+2026-09-30T12:41:09.003Z level=info event=state session=58C2EF9E mode=bash cwd=/Users/alex/work/api
+2026-09-30T12:42:15.771Z level=warn event=save.conflict path=/Users/alex/work/api/app.py
+2026-09-30T12:43:01.020Z level=warn event=auth.denied reason=bad_origin origin=http://evil.example
+```
+
+`bridge.log` lifecycle lines (AC-30): `took over from bridge pid 23515`, `exit: iTerm2 pid 4242 gone`, `exit: iTerm2 API connection closed`, `poll timed out after 10 s`, `bridge.lock held by pid 777 (<command>), not a bridge`.
+
+`GET /api/health` returns uptime, `bridge_connected`, cache size, SSE clients, workspaces, watched folders, writable roots and the denied-request count.
+
+The panel shows a red dot in the header when `bridge_connected` is false or SSE is disconnected.
+
+## 10. Delivery stages
+
+| Stage | Cases | What a user can do once it ships | Effort |
+|---|---|---|---|
+| Stage 1 (fast lane) | AC-01, AC-02, AC-03, AC-04, AC-05, AC-06, AC-07 | Install once; the Files panel follows every pane, browses huge folders, reads code highlighted and Markdown rendered, and remembers state per pane — safely. | L (est. 2–3 days) |
+| Stage 2 | AC-08, AC-09, AC-10, AC-11, AC-12, AC-13, AC-19, AC-23, AC-24 | Work with files like in an IDE: edit and save, create, rename, trash, copy paths, talk to the terminal; see disk changes live; follow Markdown links; keep state across backend restarts. | L (est. 2 days) |
+| Stage 3 | AC-14, AC-15, AC-16, AC-17, AC-18 | Polish: terminal theme, full keyboard, filter in huge folders, images, hidden files. | M (est. 1 day) |
+| Stage 4 | AC-25, AC-26, AC-27, AC-28, AC-29 | The panel is there in every window, files open in a big window, the layout is remembered, broken links explain themselves. | M (est. 1 day) |
+| Stage 5 | AC-30 | iTerm2 restarts, crashes and manual relaunches leave exactly one working bridge; a panel nothing follows says so. | — |
+| Backlog | AC-21, AC-22 | Git colors, drag and drop. | M |
+
+## 11. Checklist with Definition of Done
+
+Results of 2026-09-30 on a MacBook (Apple Silicon) (iTerm2 3.6.11, tmux 3.6a). `e2e_panel` = `cd ui && node test/e2e_panel.mjs` (41 browser checks against a private fbd, green in repeated runs).
+
+- [x] AC-01 — Verified by: `python3 scripts/e2e_cwd.py 8` → `bash p95=399ms`, `tmux p95=467ms`, `tmux -CC p95=493ms`, all `PASS`; remote tmux -CC (ssh devbox) shows `REMOTE` with key `tmux:devbox:…:%77` (live). Test tmux servers use `-f /dev/null`: with a `tmux-continuum` setup (`@continuum-restore on`) every new server restores session `main`, which switches the client and makes iTerm2 refuse a second `-CC` attach ("Cannot Attach").
+- [x] AC-02 — Verified by: `scripts/bench_ls.sh <500K dir>` → `cold_p95_ms=317 page_p95_ms=9 rss_mb=31 PASS`; 61 DOM rows while scrolled to 80 %.
+- [x] AC-03 — Verified by: `cargo test files` (text, binary, 2 MB truncated, non-UTF-8, missing, directory) → pass; `.rs`/`.py`/`.md` highlighted in the panel (screenshots).
+- [x] AC-04 — Verified by: `cd ui && npm test` → 6 pass (tables, task lists, fences, raw HTML escaped, `javascript:` dropped, relative image via `/api/raw`, remote image not loaded, GitHub slugs); `e2e_panel` image + raw-HTML checks.
+- [x] AC-05 — Verified by: `cargo test workspace` → pass; `e2e_panel` "switch pane … back: tabs restored, expanded folders restored".
+- [x] AC-06 — Verified by: `make install && make restart` → `/api/health` shows `"bridge_connected": true`; the Files tool appears in View → Toolbelt.
+- [x] AC-07 — Verified by: `scripts/security_check.sh` → 9 ok, `PASS`.
+- [x] AC-08 — Verified by: `cargo test ops::tests::save` (etag conflict, mode kept, symlink target written, `*` recreates) → pass; `e2e_panel` dirty marker, ⌘S, conflict dialog, overwrite.
+- [x] AC-09 — Verified by: `cargo test create_rename_validate` → pass; `e2e_panel` new file opens, duplicate name inline error, `db/migrations`.
+- [x] AC-10 — Verified by: `e2e_panel` F2 preselects "hello", rename on disk, tab follows and keeps content.
+- [x] AC-11 — Verified by: `e2e_panel` "Move 4 items to Trash?" → files gone from disk and tree; `cargo test trash_reports_missing`.
+- [x] AC-12 — Verified by: `python3 scripts/e2e_terminal.py` → insert path (no Enter), `cd` into a path with a space, busy terminal → `409 Terminal is busy (sleep)`.
+- [x] AC-13 — Verified by: `e2e_panel` clean tab reload ≈180 ms, new/deleted file in tree ≈780 ms, dirty tab banner "Changed on disk".
+- [ ] AC-14 — Verified by: manual: panel colors and JetBrains Mono follow the profile (seen in the real Toolbelt); live profile edit not yet re-checked.
+- [ ] AC-15 — Verified by: manual in the real Toolbelt: ⌘S, ⌘⌫, ⌥⌘C reach the panel and not iTerm2 (OQ-07).
+- [x] AC-16 — Verified by: `curl "/api/ls?path=<500K>&filter=f49999"` → 10 rows in 328 ms; `e2e_panel` filter check.
+- [x] AC-17 — Verified by: `e2e_panel` image tab shows "1 × 1".
+- [ ] AC-18 — Verified by: manual: eye button hides dotfiles and persists after reopening the tool.
+- [x] AC-19 — Verified by: `e2e_panel` ⇧-click range of 4, ⌘⌫ trashes all 4.
+- [ ] AC-21 — Verified by: manual: modified file shows "M" color in a git repo; none in `/tmp`.
+- [ ] AC-22 — Verified by: manual: drag file onto folder moves it; clash refused.
+- [x] AC-23 — Verified by: `cargo test workspace` (corrupt file → `.bak`, reload from disk); `pkill -x fbd` → bridge restarts it in 2 s and `GET /api/workspace` returns the same expanded/selected/tabs and `scroll: 412`.
+- [x] AC-25 — Verified by: `python3 scripts/e2e_windows.py` → `PASS AC-25 new window shows the Toolbelt`; the viewer window is excluded (`known` set).
+- [x] AC-26 — Verified by: `scripts/e2e_windows.py` → viewer window opens with profile "Files Viewer", its focus does not replace the terminal pane, a second file reuses it; `e2e_panel` → ⌘-click sends `{action: viewer, code}`, the viewer page renders with no tree, the URL keeps no code or token, the code works once.
+- [x] AC-27 — Verified by: `e2e_panel` → a new panel takes the default split (30 %), the open one keeps its own (50 %); viewer frame persisted in `bridge.json`; Toolbelt width: manual (drag the divider, open a new window).
+- [x] AC-28 — Verified by: `e2e_panel` → wrong token shows "Outdated panel link" in 11 ms and 0 requests in the next 2.5 s.
+- [x] AC-29 — Verified by: `e2e_panel` → md link opens page.html rendered at `#sec2`, its image loads, its script does not run, its link opens README.md; Source toggle present.
+- [ ] AC-30 — Verified by: `make test` → bridge `unittest` 14 pass (takeover by SIGTERM < 3 s, SIGKILL when ignored, holder exiting before the signal, holder caught before writing its pid, non-bridge holder left alone, stale pid ignored, failing watchdog check logged, old and new websocket clients, exit on iTerm2 gone / reused pid / closed connection, a never-answered call abandoned), `cargo test` 12 pass incl. `bridge_silence_is_announced_once`; `e2e_panel` 64/64 (×2): silent fake bridge → "Not following iTerm2" in 11.4 s, `/api/state` `bridge: false`, tree usable, note clears in 6 ms; live 2026-10-01: `make restart` with a bridge running → "exit: SIGTERM", "took over from bridge pid 73818" in the same second, one bridge and one fbd, `bridge_connected: true`; `kill -STOP` 13 s → `event="bridge.silent"`, `kill -CONT` → connected; `e2e_cwd.py 5`, `e2e_terminal.py`, `e2e_windows.py`, `security_check.sh` PASS. Open: owner quits and restarts iTerm2 and sees one bridge, one fbd and the Toolbelt in a new window.
+- [x] AC-24 — Verified by: `e2e_panel` local `.md` link opens a tab, `../README.md#sandbox` back, panel URL unchanged.

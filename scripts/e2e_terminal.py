@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+"""AC-12 end-to-end: the panel's "Insert Path" and "Open Terminal Here" reach the pane.
+
+Opens its own iTerm2 window and sends commands only after fbd reports that this window's
+session has focus, so nothing is ever typed into another terminal. Needs the installed
+bridge (make install && make restart).
+"""
+import asyncio
+import json
+import os
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+import iterm2
+
+PORT = int(os.environ.get("FB_PORT", "47821"))
+APP_DIR = Path(os.environ.get("FB_APP_DIR") or Path.home() / "Library/Application Support/iterm-filebrowser")
+TOKEN = (APP_DIR / "token").read_text().strip()
+TARGET = Path(tempfile.mkdtemp(prefix="fb term ")).resolve()  # a space, to test quoting
+
+
+def call(method, path, body=None):
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"X-FB-Token": TOKEN, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return r.status, (json.loads(r.read() or b"null"))
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"null")
+
+
+async def main(conn):
+    app = await iterm2.async_get_app(conn)
+    before = {w.window_id for w in app.terminal_windows}
+    await iterm2.Window.async_create(conn)
+    await asyncio.sleep(1.5)
+    win = [w for w in app.terminal_windows if w.window_id not in before][0]
+    s = win.current_tab.current_session
+    ok = True
+    try:
+        await win.async_activate()
+        for _ in range(40):
+            await asyncio.sleep(0.25)
+            if call("GET", "/api/state")[1].get("session") == s.session_id:
+                break
+        else:
+            print("FAIL focus: fbd never reported the test window; nothing sent")
+            return
+        key = call("GET", "/api/state")[1]["key"]
+        # a name with control characters must never reach the terminal
+        status, body = call("POST", "/api/terminal/insert", {"paths": ["a\x03echo PWNED\r"], "key": key})
+        passed = status == 400
+        ok &= passed
+        print(f"{'PASS' if passed else 'FAIL'} AC-12 control characters refused → {status} {(body or {}).get('error')}")
+        # the panel shows another pane than the focused one → refused
+        status, body = call("POST", "/api/terminal/insert", {"paths": ["x"], "key": "some-other-pane"})
+        passed = status == 409 and (body or {}).get("error") == "focus_changed"
+        ok &= passed
+        print(f"{'PASS' if passed else 'FAIL'} AC-12 stale pane key refused → {status} {(body or {}).get('error')}")
+        # Insert Path: typed without Enter
+        status, _ = call("POST", "/api/terminal/insert", {"paths": ["src/db/pool.rs"], "key": key})
+        await asyncio.sleep(0.7)
+        screen = await s.async_get_screen_contents()
+        lines = [screen.line(i).string for i in range(screen.number_of_lines)]
+        line = next((x for x in reversed(lines) if x.strip()), "")
+        if any("PWNED" in x for x in lines):
+            print("FAIL control characters reached the terminal"); ok = False
+        passed = status == 204 and line.rstrip().endswith("src/db/pool.rs")
+        ok &= passed
+        print(f"{'PASS' if passed else 'FAIL'} AC-12 insert path → prompt line ends with {line.strip()[-20:]!r}")
+        await s.async_send_text("\x15")  # clear the prompt line
+        # Open Terminal Here: cd with quoting, pane follows
+        status, _ = call("POST", "/api/terminal/cd", {"path": str(TARGET), "key": key})
+        for _ in range(20):
+            await asyncio.sleep(0.25)
+            if call("GET", "/api/state")[1].get("cwd") == str(TARGET):
+                break
+        cwd = call("GET", "/api/state")[1].get("cwd")
+        passed = status == 204 and cwd == str(TARGET)
+        ok &= passed
+        print(f"{'PASS' if passed else 'FAIL'} AC-12 open terminal here → cwd {cwd!r}")
+        # busy terminal: cd refused, nothing typed
+        await s.async_send_text("sleep 5\r")
+        await asyncio.sleep(1.2)
+        st = call("GET", "/api/state")[1]
+        status, body = call("POST", "/api/terminal/cd", {"path": "/tmp", "key": key})
+        passed = status == 409 and "busy" in (body or {}).get("error", "")
+        ok &= passed
+        print(f"{'PASS' if passed else 'FAIL'} AC-12 busy terminal → {status} {(body or {}).get('message')}"
+              + ("" if passed else f" (state job={st.get('job')} busy={st.get('busy')} note={st.get('note')})"))
+        await s.async_send_text("\x03")
+    finally:
+        await asyncio.sleep(0.3)
+        await win.async_close(force=True)
+        TARGET.rmdir()
+    print("PASS" if ok else "FAIL")
+
+
+iterm2.run_until_complete(main)
