@@ -3,10 +3,15 @@
 An IDE-style **Files** panel inside every iTerm2 window (View → Toolbelt → Files) that
 always shows the directory of the pane you are working in. New windows open with it shown.
 
+![The Files panel beside a terminal: the tree of the pane's folder and a rendered README](docs/images/file-browser-screen.png)
+
 ## What the panel does
 
 - **Follows the cwd** of the focused pane in bash, tmux and tmux -CC; the tree re-roots in
-  about 0.2–0.5 s. Remote sessions (ssh, remote tmux) freeze the tree and show `REMOTE`.
+  about 0.2–0.5 s. A tmux -CC session on another machine shows that machine's files once
+  you enable it (see [Remote hosts](#remote-hosts)); other remote sessions (plain ssh,
+  mosh) freeze the tree and show `REMOTE`.
+- **Many windows**: up to 100 iTerm2 windows, each with its own panel, stay responsive.
 - **Large folders**: 500,000 files open in 0.3 s, scrolling to any position takes 9 ms per
   page, filtering by name 0.33 s; the backend uses about 31 MB of memory.
 - **Viewing**: syntax highlighting by file name. Markdown opens rendered with proper
@@ -36,21 +41,38 @@ always shows the directory of the pane you are working in. New windows open with
   windows; every open window keeps its own until it is closed.
 - **Theme and font** come from the pane's iTerm2 profile.
 
-## Requirements
-
-- macOS 14+, iTerm2 3.5+ with **Settings → General → Magic → Enable Python API**
-- Rust (stable) and Node.js 20+ to build; tmux 3.2+ for tmux panes
-
 ## Install
 
 ```bash
 curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/download/install.sh | sh
 ```
 
-It downloads the latest release, checks its checksum, and installs it into one folder,
-`~/.iterm-filebrowser/`, plus the bridge entry in iTerm2's AutoLaunch. Then in iTerm2:
-**View → Toolbelt → Show Toolbelt** and check **Files**. Needs macOS, iTerm2 with its Python
-API enabled (Settings → General → Magic), and no build tools.
+Then in iTerm2: **View → Toolbelt → Show Toolbelt** and check **Files**. The same line
+upgrades an existing install. It downloads the latest release, checks its signature, and
+installs it into one folder, `~/.iterm-filebrowser/`, plus the bridge entry in iTerm2's
+AutoLaunch. Needs macOS 14+ and iTerm2 3.5+ with **Settings → General → Magic → Enable
+Python API**; no build tools (tmux 3.2+ for tmux panes).
+
+## Uninstall
+
+The command lives in `~/.iterm-filebrowser/bin`, which is not on your PATH unless you added it.
+
+1. Remote hosts first, if you want them clean: the Mac's uninstall does not touch them. In
+   the panel, right click → **Remove Helper from devbox…**, or
+   `~/.iterm-filebrowser/bin/iterm-filebrowser hosts remove devbox.example`.
+2. On the Mac:
+   ```bash
+   ~/.iterm-filebrowser/bin/iterm-filebrowser uninstall
+   ```
+   This stops the bridge and fbd and removes the builds, the commands and the AutoLaunch
+   entry. Your token, workspaces and logs stay in `~/.iterm-filebrowser`; delete that
+   folder to remove them too.
+3. Optional: to take **Files** out of the Toolbelt menu (iTerm2 keeps registered tools in
+   its preferences), quit iTerm2 and run `make clean-registrations` in a checkout.
+
+From a checkout, `make uninstall` does step 2.
+
+## Installed layout and commands
 
 ```text
 ~/.iterm-filebrowser/
@@ -72,21 +94,22 @@ iterm-filebrowser uninstall       # remove it; your settings and logs stay in ~/
 ```
 
 From a checkout: `make install` builds the same package and installs it (`make toolchain`
-once for the Linux helpers); `make rollback`, `make uninstall`.
+once for the Linux helpers); `make rollback`, `make uninstall`. Building needs Rust (stable)
+and Node.js 20+.
 
 ## Remote hosts
 
-A tmux -CC pane on another machine, for example from `ssh -tt ai4 "tmux -CC new-session
--A -s work"`, can show that machine's files. The first time you focus such a pane, the
+A tmux -CC pane on another machine, for example from `ssh -tt devbox.example "tmux -CC
+new-session -A -s work"`, can show that machine's files. The first time you focus such a pane, the
 Files panel asks:
 
-> **ai4 is a remote host.** Browse its files here? This copies a small helper (about 6 MB)
-> to ~/.iterm-filebrowser/bin on ai4 over your ssh connection; it runs only while you use it.
+> **devbox is a remote host.** Browse its files here? This copies a small helper (about 6 MB)
+> to ~/.iterm-filebrowser on devbox over your ssh connection; it runs only while you use it.
 > **[Enable]** [Not now]
 
 **Enable** is all. Nothing is run on the remote host by hand and nothing needs a password:
 the bridge uses the very ssh command the tmux session was started with (destination, port,
-user, key, jump host) with your own ssh configuration. The panel then shows `ai4:/path` and
+user, key, jump host) with your own ssh configuration. The panel then shows `devbox:/path` and
 works as for local files: open, edit, save, create, rename, Trash, live refresh.
 
 - **On the host**: the helper is `~/.iterm-filebrowser/bin/fbd-agent` (one older version kept),
@@ -97,12 +120,16 @@ works as for local files: open, edit, save, create, rename, Trash, live refresh.
   helper a fresh token over ssh. The host must accept your key or ssh-agent without a
   prompt and allow socket forwarding (sshd's default).
 - **Not now** hides the question until iTerm2 restarts; the panel's menu (right click) has
-  **Browse Files of ai4…** any time, and **Remove Helper from ai4…** deletes the helper and
+  **Browse Files of devbox…** any time, and **Remove Helper from devbox…** deletes the helper and
   its log there (and `~/.iterm-filebrowser` once empty; a Mac host keeps its own install).
-- **Upgrades** of the Mac side update the helper on the host at its next connection.
-- From the command line: `iterm-filebrowser hosts`, `iterm-filebrowser hosts enable ai4`
+- **Upgrades** of the Mac side update the helper by themselves: right after the upgrade,
+  every enabled host with an open tmux -CC window gets the new helper, focused or not, and
+  its panel says "updating the helper on devbox…", then "Helper on devbox updated to
+  v0.16.0". A host with no window open is updated when you next open one. If the copy fails,
+  the panel says why and it is tried again after 10 minutes.
+- From the command line: `iterm-filebrowser hosts`, `iterm-filebrowser hosts enable devbox.example`
   (any ssh destination and options, e.g. `-p 2222 alex@10.0.0.5`),
-  `iterm-filebrowser hosts remove ai4`.
+  `iterm-filebrowser hosts remove devbox.example`.
 - Helpers exist for macOS (arm64, x86_64) and Linux (x86_64, arm64; one static file for any
   Ubuntu or Debian). Plain `ssh` panes without tmux -CC, and mosh, stay frozen as "remote".
   On Linux, saving keeps a file's mode and owner, not its extended attributes; Trash is
