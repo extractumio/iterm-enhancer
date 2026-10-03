@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-"""Publish a release (AC-39, AC-40) from the Mac, the one machine that builds both the macOS
-and the Linux helpers: only from a clean tree at the tag's commit, with the tag on main;
-dependencies exactly as locked (npm ci, cargo --locked); SHA256SUMS signed with the
-maintainer's release key (FB_RELEASE_KEY, see signing_key.py) and checked against
-release-signers before anything is uploaded. Attaches the package, install.sh, SHA256SUMS
-and SHA256SUMS.sig to the GitHub release <tag> (created when missing, from the tag).
+"""Publish a release (AC-39, AC-40) from the maintainer's Mac, the one machine that builds
+both the macOS and the Linux helpers and holds the release key. In this order, so that a
+failure leaves nothing public:
 
-    python3 scripts/release.py v0.13.0
+  1. checks: a clean tree; a new version is above every v* tag and made at origin/main's
+     HEAD, an existing tag must be HEAD; its release must not be published yet
+  2. build with dependencies exactly as locked (npm ci, cargo --locked)
+  3. sign SHA256SUMS through ssh-agent with the maintainer's key (FB_RELEASE_KEY, see
+     signing_key.py), loaded for two minutes with the passphrase the login Keychain keeps
+     (no prompt) and removed from the agent afterwards; check it against release-signers
+  4. tag HEAD and push the tag; a draft release gets the package, install.sh, SHA256SUMS
+     and SHA256SUMS.sig, and is published only then
+
+    python3 scripts/release.py v0.15.0
 """
+import os
+import re
 import subprocess
 import sys
 
@@ -17,8 +25,8 @@ import package
 import signing_key
 
 
-def run(*cmd, cwd=package.REPO):
-    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+def run(*cmd, cwd=None):
+    r = subprocess.run(cmd, cwd=cwd or package.REPO, capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"{' '.join(cmd[:3])}: {(r.stderr or r.stdout).strip()}")
     return r.stdout.strip()
@@ -31,43 +39,91 @@ def gh(*args, check=True):
     return r
 
 
+def tag_exists(tag):
+    return subprocess.run(["git", "rev-parse", "-q", "--verify", f"refs/tags/{tag}"], cwd=package.REPO,
+                          capture_output=True).returncode == 0
+
+
 def check_source(tag):
-    """What users run is exactly the public tag: a clean tree at its commit, on main."""
-    run("git", "fetch", "--quiet", "origin", "main")  # judge against main as it is now
+    """What users run is exactly the public tag: a clean tree at its commit, on main; a new
+    version only above every earlier one, from main as it is now."""
+    run("git", "fetch", "--quiet", "--tags", "origin", "main")
     if run("git", "status", "--porcelain"):
         sys.exit("the tree has changes: commit or stash them (a release is built from the tag only)")
-    if run("git", "rev-parse", f"{tag}^{{commit}}") != run("git", "rev-parse", "HEAD"):
-        sys.exit(f"HEAD is not {tag}: check out the tag first")
-    if subprocess.run(["git", "merge-base", "--is-ancestor", "HEAD", "origin/main"], cwd=package.REPO).returncode != 0:
-        sys.exit(f"{tag} is not on origin/main (git fetch, or push main first)")
+    head = run("git", "rev-parse", "HEAD")
+    if tag_exists(tag):
+        if run("git", "rev-parse", f"{tag}^{{commit}}") != head:
+            sys.exit(f"{tag} exists and is not HEAD: check it out, or release a new version")
+        if subprocess.run(["git", "merge-base", "--is-ancestor", "HEAD", "origin/main"], cwd=package.REPO).returncode != 0:
+            sys.exit(f"{tag} is not on origin/main")
+        return
+    if head != run("git", "rev-parse", "origin/main"):
+        sys.exit("HEAD is not origin/main: push main (or pull) first")
+    newest = max((cli.version(t) for t in run("git", "tag", "-l", "v*").split() if cli.version(t)), default=None)
+    if newest and cli.version(tag) <= newest:
+        sys.exit(f"{tag} is not above the newest release tag v{'.'.join(map(str, newest))}")
+
+
+def check_unpublished(tag):
+    """A published release is never changed: its files are what users checked. True if a
+    draft left by an earlier run exists (it is completed)."""
+    r = gh("release", "view", tag, "--json", "isDraft", "--jq", ".isDraft", check=False)
+    if r.returncode == 0 and r.stdout.strip() != "true":
+        sys.exit(f"{tag} is already published: release a new version")
+    return r.returncode == 0
 
 
 def sign(sums):
-    """Sign SHA256SUMS, then check the signature as installs will."""
+    """Sign SHA256SUMS through ssh-agent, then check the signature as installs will. The key
+    is in the agent only for this, at most two minutes."""
     if not signing_key.KEY.is_file():
         sys.exit(f"no release key at {signing_key.KEY}: run make signing-key once")
-    run("ssh-keygen", "-Y", "sign", "-q", "-f", str(signing_key.KEY), "-n", cli.NAMESPACE, str(sums))
+    pub = signing_key.KEY.with_suffix(".pub")
+    sums.with_name("SHA256SUMS.sig").unlink(missing_ok=True)
+    # no terminal and no askpass: it fails rather than asks when the Keychain has no passphrase
+    r = subprocess.run(["ssh-add", "-t", "120", "--apple-use-keychain", str(signing_key.KEY)], stdin=subprocess.DEVNULL,
+                       capture_output=True, text=True, start_new_session=True, timeout=30,
+                       env={**os.environ, "SSH_ASKPASS_REQUIRE": "never"})
+    if r.returncode != 0:
+        sys.exit(f"could not load the release key into ssh-agent ({r.stderr.strip()}); once, in a terminal:\n"
+                 f"  ssh-add --apple-use-keychain {signing_key.KEY} && ssh-add -d {pub}")
+    try:
+        run("ssh-keygen", "-Y", "sign", "-q", "-f", str(pub), "-n", cli.NAMESPACE, str(sums))
+    finally:
+        subprocess.run(["ssh-add", "-d", str(pub)], capture_output=True)
     if not cli.verify(sums, sums.with_name("SHA256SUMS.sig")):
         sys.exit("the signature does not match release-signers: commit the key's public half (make signing-key)")
 
 
+def publish(tag, draft):
+    """Tag HEAD, push the tag (again, if an earlier run stopped after tagging), fill a draft
+    release and publish it."""
+    if not tag_exists(tag):
+        run("git", "tag", "-a", tag, "-m", tag)
+    run("git", "push", "--quiet", "origin", f"refs/tags/{tag}")
+    if not draft:
+        gh("release", "create", tag, "--verify-tag", "--draft", "--title", tag, "--notes",
+           "Install or upgrade: curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/download/install.sh | sh\n\n"
+           f"SHA256SUMS is signed with the release key {signing_key.fingerprint()}.")
+    files = [str(package.OUT / f) for f in (package.TARBALL, "install.sh", "SHA256SUMS", "SHA256SUMS.sig")]
+    gh("release", "upload", tag, *files, "--clobber")  # into the draft only
+    gh("release", "edit", tag, "--draft=false", "--latest")  # public once complete; it is the newest
+    return gh("release", "view", tag, "--json", "url", "--jq", ".url").stdout.strip()
+
+
 def main(argv):
-    if len(argv) != 1 or not argv[0].startswith("v"):
-        sys.exit("usage: release.py v<version>")
+    if len(argv) != 1 or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", argv[0]):
+        sys.exit("usage: release.py vX.Y.Z")
     tag = argv[0]
     check_source(tag)
+    draft = check_unpublished(tag)
     run("npm", "ci", "--ignore-scripts", "--no-fund", "--no-audit", cwd=package.REPO / "ui")
     run("npm", "run", "-s", "build", cwd=package.REPO / "ui")
     package.main(["--build", tag])
     if not (package.OUT / package.NAME / "agents/linux-x86_64/fbd").is_file():
         sys.exit("the package has no Linux helpers (run make toolchain): not released")
     sign(package.OUT / "SHA256SUMS")
-    files = [str(package.OUT / f) for f in (package.TARBALL, "install.sh", "SHA256SUMS", "SHA256SUMS.sig")]
-    if gh("release", "view", tag, check=False).returncode != 0:
-        gh("release", "create", tag, "--verify-tag", "--title", tag, "--notes",
-           "Install or upgrade: curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/download/install.sh | sh")
-    gh("release", "upload", tag, *files, "--clobber")
-    print(f"{tag}: {', '.join(f.rsplit('/', 1)[-1] for f in files)}")
+    print(f"{tag}: {publish(tag, draft)}")  # only now does anything become public
 
 
 if __name__ == "__main__":

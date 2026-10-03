@@ -1216,8 +1216,10 @@ Scenario: AC-40 failure — a bad download
 
 Scenario: AC-40 security — signed releases
   Given the maintainer's release key (ssh-keygen ed25519, namespace "iterm-filebrowser-release"); its public half is in "release/allowed_signers", in install.sh and in every package
-  When "make release TAG=v…" runs
-  Then it refuses unless the tree is clean, HEAD is the tag's commit and the tag is on main; it builds with "npm ci" and "cargo --locked" and signs SHA256SUMS ("SHA256SUMS.sig")
+  When "make release TAG=vX.Y.Z" runs (only on the maintainer's request, CLAUDE.md §10)
+  Then it refuses unless the tree is clean, a new version is above every v* tag and HEAD is origin/main (an existing tag must be HEAD), and the release is not published yet
+  And it builds with "npm ci" and "cargo --locked" and signs SHA256SUMS ("SHA256SUMS.sig") through ssh-agent, the key loaded for 2 minutes with the passphrase the login Keychain keeps and removed after signing (no prompt; it fails rather than asks when the Keychain has none)
+  And only then it tags HEAD, pushes the tag and fills a draft release, published once the package, install.sh, SHA256SUMS and its signature are attached; a failure before leaves nothing public
   And install.sh and "iterm-filebrowser upgrade" verify the signature with the key they carry (upgrade: the installed package's) before the checksum, and install nothing on a missing or wrong signature
 
 Scenario: AC-40 security — unpacking
@@ -1522,7 +1524,7 @@ Environment variables of `fbd` (set by the bridge; defaults shown):
 | `FB_LOG` | `info` | `debug` | Log level. |
 | `FB_APP_DIR` | `~/.iterm-filebrowser/state` | `/tmp/fb-test-app` | Token, workspaces and the bridge's socket `fbd.sock` (path ≤ 103 bytes); made 0700; tests use a private one so they never touch the live state. |
 | `FB_NEW_TOKEN` | unset | `1` | Set by the bridge at a cold start: fbd makes a new token (AC-07). |
-| `FB_RELEASE_KEY` | `~/.config/iterm-filebrowser/release-key` | — | The maintainer's release signing key (`make signing-key`, `make release`). |
+| `FB_RELEASE_KEY` | `~/.config/iterm-filebrowser/release-key` | — | The maintainer's release signing key (`make signing-key`, `make release`), passphrase in the login Keychain, used through ssh-agent. |
 
 ### Performance
 

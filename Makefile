@@ -7,7 +7,7 @@
 #   make uninstall  remove builds and scripts (keeps workspaces.json and token)
 #   make toolchain  the pinned cross toolchain (zig, cargo-zigbuild) for the Linux helpers
 #   make package    the release package in dist/package (tarball, install.sh, SHA256SUMS)
-#   make release TAG=v…   build the package from that tag, sign it and upload it
+#   make release TAG=vX.Y.Z   tag HEAD, build, sign (key via ssh-agent and the Keychain) and publish
 #   make signing-key       the maintainer's release key (once)
 #   make test       unit tests (Rust, bridge, installer) + typecheck and unit tests (UI)
 
@@ -59,7 +59,7 @@ package: ui
 
 release: ui
 	@test -n "$(TAG)" || { echo "usage: make release TAG=v0.13.0"; exit 2; }
-	python3 scripts/release.py $(TAG)
+	python3 scripts/release.py "$(TAG)"
 
 # the maintainer's release key, once (run it in your own terminal: it asks for a passphrase)
 signing-key:

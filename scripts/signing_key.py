@@ -32,6 +32,12 @@ def write(pub):
     sh.write_text(re.sub(r"(?m)^SIGNERS='.*'$", f"SIGNERS='{line}'", sh.read_text()))
 
 
+def fingerprint():
+    """The key's SHA256 fingerprint, for people who check the first install by hand."""
+    pub = KEY.with_suffix(".pub")
+    return subprocess.run(["ssh-keygen", "-lf", str(pub)], capture_output=True, text=True).stdout.split()[1]
+
+
 def main():
     if KEY.exists():
         sys.exit(f"{KEY} exists: not replaced (a new key would refuse every install that trusts the old one)")
