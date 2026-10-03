@@ -456,6 +456,10 @@ try {
   await page.click(".modal button[data-id=remove]");
   await page.waitForTimeout(300);
   check("AC-38 Remove (confirmed) asks the bridge to take the helper off", cmds.some((c) => c.action === "host-remove" && c.host === "devbox"));
+  // AC-42 a helper the bridge updated by itself is announced, and the header says so
+  await push("e2eO", null, "w1", true, undefined, { mode: "remote", note: "devbox (helper updated to v9.9.0)", stale: true, remote: { key: "devbox", name: "devbox", state: "up", updated: "v9.9.0" } });
+  await within("AC-42 the helper update is announced", (ms) => page.waitForFunction(() => document.getElementById("toast").textContent === "Helper on devbox updated to v9.9.0", null, { timeout: ms }));
+  check("AC-42 … and the header says so", (await page.textContent("#note")).includes("helper updated to v9.9.0"));
   await push("e2eA", SB);
 
   await manyPanels(browser, row);

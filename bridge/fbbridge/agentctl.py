@@ -121,10 +121,14 @@ def remove(target):
 
 class Tunnel:
     """One ssh process to the host that runs the agent and forwards its socket to the Mac.
-    The token goes on the agent's stdin; when this process ends, so does the agent."""
+    The token goes on the agent's stdin; when this process ends, so does the agent. With
+    `agent_id` it runs that version's file when the host has it, else whatever bin/fbd-agent
+    points at: two Macs of different builds on one host each run their own, and neither
+    copies its helper over the other's on every connect (AC-42)."""
 
-    def __init__(self, target, local_socket):
+    def __init__(self, target, local_socket, agent_id=None):
         self.target, self.local = list(target), Path(local_socket)
+        self.own = agent_id if agent_id and re.fullmatch(r"[0-9a-f]{12}|dev", agent_id) else None  # goes into a shell line
         self.token = secrets.token_hex(16)
         self.proc = None
         self.ready = None  # (agent_id, host, user, platform) once the agent said so
@@ -134,10 +138,12 @@ class Tunnel:
         if self.local.exists() or self.local.is_symlink():
             self.local.unlink()
         remote = f"/tmp/fbd-{secrets.token_hex(6)}/s"
+        b = f'"$HOME/{HOME_DIR}/bin/fbd-agent'
+        pick = f'f={b}-{self.own}"; [ -x "$f" ] || f={b}"; ' if self.own else f"f={b}\"; "
         self.proc = subprocess.Popen(
             [SSH, *SSH_OPTS, "-T", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15",
              "-L", f"{self.local}:{remote}", *self.target,
-             f'FB_LOG=info "$HOME/{HOME_DIR}/bin/fbd-agent" --agent --socket {remote} --log "$HOME/{HOME_DIR}/logs/agent.log"'],
+             pick + f'FB_LOG=info exec "$f" --agent --socket {remote} --log "$HOME/{HOME_DIR}/logs/agent.log"'],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.proc.stdin.write((self.token + "\n").encode())
         self.proc.stdin.flush()

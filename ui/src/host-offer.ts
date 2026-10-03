@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // A remote host's files (AC-38): the one-time offer to browse them (Enable / Not now) and
 // the menu entries to enable later or to take the helper off the host again. The bridge
-// does the work over the pane's own ssh; a failure comes back as a bridge-error toast.
+// does the work over the pane's own ssh; a failure comes back as a bridge-error toast. After
+// the Mac's build changed, the bridge updates the helper by itself and this says so (AC-42).
 
-import { apiOrToast, esc, type TermState } from "./api";
+import { apiOrToast, esc, toast, type TermState } from "./api";
 import { ask, type MenuEntry } from "./dialogs";
 
 type Remote = NonNullable<TermState["remote"]>;
@@ -11,8 +12,14 @@ type Remote = NonNullable<TermState["remote"]>;
 const act = (action: "enable" | "dismiss" | "remove", host: string) =>
   apiOrToast("POST", `/api/remote/${action}`, { body: { host } });
 
+let told = "";  // the last helper update announced: the state repeats it for a minute
+
 /** Show the offer while the host is new to this bridge run ("ask") or being set up. */
 export function renderOffer(el: HTMLElement, r?: Remote) {
+  if (r?.updated && told !== `${r.key}\n${r.updated}`) {
+    told = `${r.key}\n${r.updated}`;
+    toast(`Helper on ${r.name} updated to ${r.updated}`);
+  }
   const show = r && (r.state === "ask" || r.state === "enabling");
   el.classList.toggle("on", !!show);
   if (!show) { el.innerHTML = ""; delete el.dataset.at; return; }

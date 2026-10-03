@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-"""AC-37 / AC-38: preparing hosts and keeping their agents connected, with a fake `ssh`
+"""AC-37 / AC-38 / AC-42: preparing hosts and keeping their agents connected, with a fake `ssh`
 that runs the command on this Mac under a temporary home (no network, no real host).
 The real tunnel is exercised by scripts/e2e_remote.sh against a container with sshd."""
+import asyncio
 import importlib
 import json
 import os
@@ -9,6 +10,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -16,6 +18,7 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "bridge"))
 sys.path.insert(0, str(REPO / "scripts"))
+sys.modules.setdefault("iterm2", __import__("types").ModuleType("iterm2"))  # resolve needs it, not these tests
 
 FAKE_SSH = """#!/bin/sh
 # fake ssh: the last argument is the remote command; run it here, in the fake home
@@ -121,6 +124,21 @@ class AgentsTest(unittest.TestCase):
                 t.start(timeout=5)
         self.assertIn("Connection refused", str(cm.exception))
 
+    def test_two_macs_on_one_host_each_run_their_own_helper(self):
+        b = self.root / "home/.iterm-filebrowser/bin"
+        b.mkdir(parents=True)
+        for aid in ("aaaaaaaaaaaa", "bbbbbbbbbbbb"):
+            f = b / f"fbd-agent-{aid}"
+            f.write_text(f"#!/bin/sh\necho fbd-agent ready {aid} devbox alex linux-x86_64\ncat >/dev/null\n")
+            f.chmod(0o755)
+        (b / "fbd-agent").symlink_to("fbd-agent-bbbbbbbbbbbb")  # the other Mac installed last
+        for own, want in (("aaaaaaaaaaaa", "aaaaaaaaaaaa"), ("cccccccccccc", "bbbbbbbbbbbb"), (None, "bbbbbbbbbbbb")):
+            t = self.ctl.Tunnel(["vm"], self.ctl.socket_for("vm"), own)
+            try:
+                self.assertEqual(t.start(timeout=5)[0], want, f"Mac of {own}")
+            finally:
+                t.stop()
+
     def test_enable_records_the_host_by_its_ssh_arguments(self):
         hosts = importlib.reload(importlib.import_module("fbbridge.hosts"))
         aid = "abcdef012345"
@@ -219,15 +237,17 @@ class AgentsTest(unittest.TestCase):
         self.assertNotIn("devbox", r.hosts)
         self.assertFalse([p for p in posted if p[0] == "/internal/remote" and p[1].get("socket")], "never registered")
 
-    def test_an_outdated_agent_is_replaced_from_the_running_build(self):
+    def outdated(self, install, answers=None):
+        """Connect "vm", whose agent says "old", with the running build's "new"; `install`
+        plays agentctl.install. Returns the Remotes."""
         self.ctl.save({"vm": {"ssh": ["vm"], "name": "devbox", "agent_id": "old"}})
         binary = self.root / "build/agents/linux-x86_64/fbd"
-        binary.parent.mkdir(parents=True)
+        binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("new agent")
-        answers = iter([("old", "devbox", "alex", "linux-x86_64"), ("new", "devbox", "alex", "linux-x86_64")])
+        answers = iter(answers or [("old", "devbox", "alex", "linux-x86_64"), ("new", "devbox", "alex", "linux-x86_64")])
 
         class FakeTunnel:
-            def __init__(self, target, local):
+            def __init__(self, target, local, agent_id=None):
                 self.local, self.token = local, "t"
 
             def start(self):
@@ -235,18 +255,79 @@ class AgentsTest(unittest.TestCase):
 
             def stop(self):
                 pass
-        installed = []
+        r = self.remote.Remotes(lambda p, b: None)
         with mock.patch.object(self.remote.hosts, "LOCAL_AGENT_ID", "new"), \
                 mock.patch.object(self.remote, "BUILD_DIR", self.root / "build"), \
+                mock.patch.object(self.remote, "BUILD", "v9.9.0"), \
                 mock.patch.object(self.remote.agentctl, "Tunnel", FakeTunnel), \
-                mock.patch.object(self.remote.agentctl, "install", lambda target, b, aid: installed.append((target, b, aid))):
-            self.remote.Remotes(lambda p, b: None)._connect("vm", ["vm"])
+                mock.patch.object(self.remote.agentctl, "install", lambda target, b, aid: install(r, target, b, aid)):
+            r._connect("vm", ["vm"])
+            r._set("vm", status="up")
+            st = r.status("vm", ["vm"], "devbox")
+        return r, binary, st
+
+    def test_an_outdated_agent_is_replaced_from_the_running_build(self):
+        installed, during = [], []
+
+        def install(r, target, b, aid):
+            installed.append((target, b, aid))
+            during.append(r.status("vm", ["vm"], "devbox"))   # asked meanwhile: no second connection
+        r, binary, st = self.outdated(install)
         self.assertEqual(installed, [(["vm"], binary, "new")])
         self.assertEqual(self.ctl.load()["vm"]["agent_id"], "new")
+        self.assertEqual((during[0]["state"], during[0]["note"]), ("updating", "updating the helper on devbox…"))
+        self.assertEqual([t for t in threading.enumerate() if t.name == "agent-vm"], [], "updating starts no other connection")
+        self.assertEqual((st["state"], st["updated"], st["note"]), ("up", "v9.9.0", "devbox (helper updated to v9.9.0)"))
+        r._set("vm", updated_at=time.monotonic() - 61)
+        st = r.status("vm", ["vm"], "devbox")
+        self.assertNotIn("updated", st, "said for a minute")
+        self.assertEqual(st["note"], "devbox (helper)")
+
+    def test_a_failed_update_says_so(self):
+        def install(r, target, b, aid):
+            raise self.ctl.AgentError("vm: No space left on device")
+        with self.assertRaises(self.ctl.AgentError) as cm:
+            self.outdated(install)
+        self.assertEqual(str(cm.exception), "Could not update the helper on devbox: vm: No space left on device")
+        self.assertEqual(self.ctl.load()["vm"]["agent_id"], "old")
+
+    def test_a_failed_update_waits_before_trying_again(self):
+        self.ctl.save({"vm": {"ssh": ["vm"], "name": "devbox"}})
+        r = self.remote.Remotes(lambda p, b: None)
+        with mock.patch.object(self.remote.Remotes, "_connect", side_effect=self.remote.UpdateError("Could not update the helper on devbox: full")):
+            r.status("vm", ["vm"], "devbox")
+            self.wait(r, "vm", "down")
+        self.assertGreater(r.hosts["vm"]["retry_at"] - time.monotonic(), 590, "not every 30 s")
+        self.assertEqual(r.status("vm", ["vm"], "devbox")["note"], "Could not update the helper on devbox: full")
+
+    def test_a_host_removed_during_an_update_stays_removed(self):
+        self.outdated(lambda r, target, b, aid: self.ctl.forget("vm"))
+        self.assertNotIn("vm", self.ctl.load())
+
+    def test_the_same_build_copies_nothing_and_says_nothing(self):
+        installed = []
+        r, _, st = self.outdated(lambda *a: installed.append(a), answers=[("new", "devbox", "alex", "linux-x86_64")])
+        self.assertEqual(installed, [])
+        self.assertNotIn("updated", st)
+
+    def test_open_windows_of_enabled_hosts_are_found_unfocused(self):
+        from fbbridge import resolve
+        self.ctl.save({"ai4": {"ssh": ["ai4"], "name": "ai4"}})
+        conns = [types.SimpleNamespace(connection_id=n, target=t) for n, t in
+                 [(1, ["ai4"]), (2, ["ai4"]), (3, ["devbox"]), (4, None)]]  # devbox: not enabled; 4: local tmux
+
+        async def gateway(tc):
+            return tc.target
+
+        async def connections(conn):
+            return conns
+        with mock.patch.object(resolve.iterm2, "async_get_tmux_connections", connections, create=True), \
+                mock.patch.object(resolve, "gateway_target", gateway):
+            self.assertEqual(asyncio.run(resolve.open_hosts(None)), {"ai4": ["ai4"]})
 
     def test_an_outdated_agent_without_a_build_says_how(self):
         class FakeTunnel:
-            def __init__(self, target, local):
+            def __init__(self, target, local, agent_id=None):
                 self.local, self.token = local, "t"
 
             def start(self):

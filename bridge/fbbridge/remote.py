@@ -2,16 +2,23 @@
 """The bridge's side of remote hosts (AC-37, AC-38). A focused tmux -CC pane names its host
 by the ssh arguments of its gateway (`key`). An enabled host (agents.json) gets one ssh
 connection carrying its agent, registered with fbd, its agent brought up to the running
-build, reconnected with back-off. Any other host is offered once per bridge run: Enable
+build (AC-42: for every open window of the host, not only the focused one; the panel says
+so), reconnected with back-off. Any other host is offered once per bridge run: Enable
 copies the agent over that ssh (hosts.enable), "Not now" hides the offer until the bridge
 restarts. Threads, so ssh never blocks the poll loop."""
 import threading
 import time
 
 from . import agentctl, hosts
-from .common import BUILD_DIR, log
+from .common import BUILD, BUILD_DIR, log
 
 BACKOFF_MAX = 30.0
+UPDATE_RETRY = 600.0  # s before a failed helper update is tried again (or the next bridge start)
+UPDATED_NOTE = 60.0  # s the panel keeps saying a host's helper was updated
+
+
+class UpdateError(agentctl.AgentError):
+    """The helper on a host could not be brought up to the running build."""
 
 
 class Remotes:
@@ -35,11 +42,13 @@ class Remotes:
                 state = "dismissed" if key in self.dismissed else "ask"
                 return {"state": state, "note": h["note"] or f"remote host {name}", "enabled": False}
             if h["status"] == "up":
+                if time.monotonic() - h.get("updated_at", -UPDATED_NOTE) < UPDATED_NOTE:
+                    return {"state": "up", "note": f"{name} (helper updated to {BUILD})", "enabled": True, "updated": BUILD}
                 return {"state": "up", "note": f"{name} (helper)", "enabled": True}
-            if h["status"] not in ("connecting", "enabling") and time.monotonic() >= h["retry_at"]:
+            if h["status"] not in ("connecting", "enabling", "updating") and time.monotonic() >= h["retry_at"]:
                 h.update(status="connecting", note=f"connecting to {name}…")
                 threading.Thread(target=self._run, args=(key, e["ssh"]), name=f"agent-{key}", daemon=True).start()
-            return {"state": h["status"] if h["status"] in ("connecting", "down") else "connecting", "note": h["note"], "enabled": True}
+            return {"state": h["status"] if h["status"] in ("connecting", "updating", "down") else "connecting", "note": h["note"], "enabled": True}
 
     # ── the panel's buttons ──────────────────────────────────────────────────
 
@@ -105,25 +114,34 @@ class Remotes:
             self.hosts.setdefault(key, {"status": "new", "note": "", "retry_at": 0.0, "backoff": 1.0}).update(kw)
 
     def _connect(self, key, target):
-        t = agentctl.Tunnel(target, agentctl.socket_for(key))
+        t = agentctl.Tunnel(target, agentctl.socket_for(key), hosts.LOCAL_AGENT_ID)
         agent_id, _, _, platform = t.start()
         if hosts.LOCAL_AGENT_ID and agent_id != hosts.LOCAL_AGENT_ID:  # bring it up to the running build
             t.stop()
             binary = BUILD_DIR / "agents" / platform / "fbd"
             if not binary.is_file():
                 raise agentctl.AgentError(f"helper outdated · iterm-filebrowser hosts enable {key}")
+            name = (agentctl.entry(key) or {}).get("name", key)
+            self._set(key, status="updating", note=f"updating the helper on {name}…")
             log(f"agent on {key}: {agent_id} → {hosts.LOCAL_AGENT_ID}")
-            agentctl.install(target, binary, hosts.LOCAL_AGENT_ID)
+            try:
+                agentctl.install(target, binary, hosts.LOCAL_AGENT_ID)
+            except agentctl.AgentError as e:
+                raise UpdateError(f"Could not update the helper on {name}: {e}") from e
             record = agentctl.load()
-            record.setdefault(key, {"ssh": list(target)})["agent_id"] = hosts.LOCAL_AGENT_ID
-            agentctl.save(record)
-            t = agentctl.Tunnel(target, agentctl.socket_for(key))
+            if key in record:  # removed meanwhile: it stays removed
+                record[key]["agent_id"] = hosts.LOCAL_AGENT_ID
+                agentctl.save(record)
+            t = agentctl.Tunnel(target, agentctl.socket_for(key), hosts.LOCAL_AGENT_ID)
             t.start()
+            self._set(key, updated_at=time.monotonic())
         return t
 
     def _run(self, key, target):
         try:
             t = self._connect(key, target)
+        except UpdateError as e:  # copying 6 MB again every 30 s would not help
+            return self._failed(key, str(e), wait=UPDATE_RETRY)
         except (agentctl.AgentError, OSError) as e:
             return self._failed(key, str(e))
         with self.lock:  # removed while connecting: this connection must not come back
@@ -146,11 +164,11 @@ class Remotes:
         if key in self.hosts:                           # not removed meanwhile
             self._failed(key, f"{key}: connection closed")
 
-    def _failed(self, key, why):
+    def _failed(self, key, why, wait=0.0):
         log(f"agent: {why}")
         with self.lock:
             h = self.hosts.setdefault(key, {"status": "new", "note": "", "retry_at": 0.0, "backoff": 1.0})
-            h.update(status="down", note=why, retry_at=time.monotonic() + h["backoff"], backoff=min(h["backoff"] * 2, BACKOFF_MAX))
+            h.update(status="down", note=why, retry_at=time.monotonic() + max(h["backoff"], wait), backoff=min(h["backoff"] * 2, BACKOFF_MAX))
 
     def reregister(self):
         """A restarted fbd knows no hosts: tell it the connected ones again."""

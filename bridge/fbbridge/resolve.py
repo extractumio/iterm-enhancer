@@ -5,6 +5,7 @@ import subprocess
 
 import iterm2
 
+from . import agentctl
 from .common import LOCAL_HOST, REMOTE_JOBS, SHELLS
 from .procinfo import find_descendant, foreground_pid, proc_argv, proc_children, proc_cwd, proc_name, shell_of, tmux_command
 from .sshargs import key as ssh_key
@@ -26,6 +27,17 @@ async def gateway_target(tc):
         ssh = find_descendant(pid, "ssh") if pid else None
         cached = _gateways[tc.connection_id] = (sid, ssh_target(proc_argv(ssh)) if ssh else None)
     return cached[1]
+
+
+async def open_hosts(conn):
+    """{key: ssh arguments} of the enabled hosts that have an open tmux -CC window, focused
+    or not, so their helpers follow the Mac's build without waiting for focus (AC-42)."""
+    found = {}
+    for tc in await iterm2.async_get_tmux_connections(conn):
+        target = await gateway_target(tc)
+        if target and agentctl.entry(ssh_key(target)):
+            found[ssh_key(target)] = target
+    return found
 
 
 async def static_vars(session):

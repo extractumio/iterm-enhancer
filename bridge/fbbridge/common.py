@@ -20,6 +20,7 @@ POLL = 0.5
 POLL_TIMEOUT = 10.0  # one poll of the focused pane (AC-30)
 HEARTBEAT = 5.0
 THEME_EVERY = 4  # polls (≈2 s) between profile re-reads
+HOSTS_EVERY = 60  # polls (≈30 s) between checks of every open remote host's helper (AC-42)
 AUTO_TOOLBELT = os.environ.get("FB_AUTO_TOOLBELT", "1") != "0"
 
 SHELLS = {"bash", "zsh", "sh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "xonsh"}

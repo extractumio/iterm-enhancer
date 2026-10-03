@@ -82,7 +82,10 @@ export interface TermState {
   build?: string;   // fbd's build: another one than this page's means an upgrade (AC-34)
   host?: string;    // a remote pane's host: its files are reached through that host's agent (AC-37)
   /** a remote pane's host as offered to the user (AC-38): key = its ssh arguments */
-  remote?: { key: string; name: string; state: "ask" | "dismissed" | "enabling" | "connecting" | "up" | "down" };
+  remote?: {
+    key: string; name: string; state: "ask" | "dismissed" | "enabling" | "connecting" | "updating" | "up" | "down";
+    updated?: string;  // the build its helper was just updated to (AC-42)
+  };
 }
 export interface FileView {
   path: string; size: number; etag: string; binary: boolean; mime: string | null;

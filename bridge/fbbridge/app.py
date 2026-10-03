@@ -12,11 +12,12 @@ import urllib.error
 import iterm2
 
 from .backend import Backend
-from .common import APP_DIR, BASE, HEARTBEAT, POLL, POLL_TIMEOUT, THEME_EVERY, TOOL_ID, UserError, log
+from . import agentctl
+from .common import APP_DIR, BASE, HEARTBEAT, HOSTS_EVERY, POLL, POLL_TIMEOUT, THEME_EVERY, TOOL_ID, UserError, log
 from .lifecycle import LockError, bounded, connection_closed, take_lock, watch
 from .procinfo import iterm_process
 from .registry import heal
-from .resolve import resolve, static_vars, theme_of
+from .resolve import open_hosts, resolve, static_vars, theme_of
 from .remote import Remotes
 from .viewer_profile import install_viewer_profile
 from .windows import Windows
@@ -111,6 +112,12 @@ class Follower:
         self.tick += 1
         app, windows = self.app, self.windows
         await windows.tick(self.conn)
+        if self.tick % HOSTS_EVERY == 1:  # at start (an upgrade restarts the bridge), then every 30 s
+            try:
+                for key, target in (await open_hosts(self.conn)).items():
+                    remotes.status(key, target, (agentctl.entry(key) or {}).get("name", key))
+            except Exception as e:  # never at the cost of following the focused pane
+                log(f"open hosts: {type(e).__name__}: {e}")
         win = app.current_terminal_window
         sess = win.current_tab.current_session if win and win.current_tab else None
         if await is_terminal(sess, windows):
@@ -128,7 +135,7 @@ class Follower:
             if r.get("remote_key"):  # a host's own path, never resolved on this Mac (AC-37, AC-38)
                 st = remotes.status(r["remote_key"], r["ssh"], r["remote_host"])
                 state["note"] = st["note"]
-                state["remote"] = {"key": r["remote_key"], "name": r["remote_host"], "state": st["state"]}
+                state["remote"] = {"key": r["remote_key"], "name": r["remote_host"], "state": st["state"], **({"updated": st["updated"]} if st.get("updated") else {})}
                 if st["enabled"]:
                     # always with its host: while disconnected the panel's requests fail
                     # with "not connected" instead of reading the same path on this Mac
