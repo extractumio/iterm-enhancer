@@ -63,7 +63,13 @@ async def main(conn):
         status, _ = call("POST", "/api/terminal/cd", {"path": str(TARGET), "key": key})
         await asyncio.sleep(1.0)
         screen = await s.async_get_screen_contents()
-        line = next((x for x in reversed([screen.line(i).string for i in range(screen.number_of_lines)]) if x.strip()), "")
+        # the typed line is longer than the window: join soft-wrapped rows into lines
+        rows, lines = [screen.line(i) for i in range(screen.number_of_lines)], [""]
+        for r in rows:
+            lines[-1] += r.string
+            if r.hard_eol:
+                lines.append("")
+        line = next((x for x in reversed(lines) if x.strip()), "")
         passed = status == 204 and line.rstrip().endswith(f"cd '{TARGET}'") and call("GET", "/api/state")[1].get("cwd") != str(TARGET)
         ok &= passed
         print(f"{'PASS' if passed else 'FAIL'} AC-12 open terminal here types, runs nothing → {line.strip()[-40:]!r}")
