@@ -63,10 +63,11 @@ pub async fn ui(req: Request) -> Response {
     let mut res = Response::new(Body::from(file.data.into_owned()));
     res.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_str(mime.as_ref()).unwrap());
     if path == "index.html" {
-        res.headers_mut().insert(
-            "content-security-policy",
-            HeaderValue::from_static("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self'; frame-ancestors 'none'"),
-        );
+        // the event socket by name: WebKit's 'self' may not cover ws: (AC-41); the guard
+        // admitted only our exact Host
+        let host = req.headers().get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or_default();
+        let csp = format!("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self' ws://{host}; frame-ancestors 'none'");
+        res.headers_mut().insert("content-security-policy", HeaderValue::from_str(&csp).unwrap_or(HeaderValue::from_static("default-src 'self'")));
     }
     res
 }

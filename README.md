@@ -112,7 +112,7 @@ works as for local files: open, edit, save, create, rename, Trash, live refresh.
 
 ```
 iTerm2 ──Python API──▶ fb_bridge.py ──POST /internal/state──▶ fbd (Rust, 127.0.0.1:47821)
- (focus, cwd, theme)    (AutoLaunch)  ◀─SSE /internal/commands─┘         │ SSE /api/events
+ (focus, cwd, theme)    (AutoLaunch)  ◀─SSE /internal/commands─┘         │ WebSocket /api/ws
                                                                           ▼
                                              Toolbelt web view: tree · tabs · editor
 ```
@@ -120,7 +120,7 @@ iTerm2 ──Python API──▶ fb_bridge.py ──POST /internal/state──�
 | Part | Path | Role |
 |---|---|---|
 | Bridge | `bridge/fb_bridge.py` + `bridge/fbbridge/` | iTerm2 AutoLaunch script and its package: starts `fbd`, registers the tool, tracks the focused pane, resolves its cwd and theme, shows the Toolbelt in new windows, opens viewer windows, types into the terminal on request |
-| Backend | `fbd/` | Rust (axum): listings, file operations, per-pane workspaces, FSEvents watcher, SSE; serves the embedded UI |
+| Backend | `fbd/` | Rust (axum): listings, file operations, per-pane workspaces, FSEvents watcher, events to panels over a WebSocket (up to 100 windows); serves the embedded UI |
 | UI | `ui/` | TypeScript: virtual tree, CodeMirror 6 viewer/editor, markdown-it rendering |
 | Spec | `docs/specs/iterm-file-browser.md` | Behavior as BDD scenarios, design, limits, test evidence |
 

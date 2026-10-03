@@ -23,7 +23,7 @@ use crate::termtext;
 use crate::workspace::Pane;
 use crate::{App, Shared, Term};
 
-fn state_json(app: &App) -> Value {
+pub(crate) fn state_json(app: &App) -> Value {
     state_of(&app.term.lock())
 }
 
@@ -108,7 +108,7 @@ pub async fn internal_state(State(app): State<Shared>, Json(mut body): Json<Valu
 
 #[derive(Deserialize)]
 pub struct EventsQuery {
-    client: Option<String>,
+    pub(crate) client: Option<String>,
 }
 
 /// A panel's event stream; when it names its `client`, the panel's window claim (AC-36)
@@ -116,8 +116,9 @@ pub struct EventsQuery {
 pub async fn events(State(app): State<Shared>, Query(q): Query<EventsQuery>) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
     let first = SseEvent::default().event("state").data(Event::State(state_json(&app)).data());
     let guard = q.client.map(|c| crate::panels::StreamGuard::new(app.clone(), c));
+    let count = crate::socket::Counted::sse(&app);
     let rx = BroadcastStream::new(app.bus.subscribe()).filter_map(move |e| {
-        let _ = &guard;
+        let _ = (&guard, &count);
         e.ok().map(|e| Ok(SseEvent::default().event(e.name()).data(e.data())))
     });
     Sse::new(tokio_stream::once(Ok(first)).chain(rx)).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
@@ -333,7 +334,8 @@ pub async fn health(State(app): State<Shared>) -> Json<Value> {
         "bridge_connected": app.term.lock().bridge_alive(),
         "cache_bytes": cache_bytes,
         "cache_dirs": cache_dirs,
-        "sse_clients": app.bus.subscribers(),
+        "sse_clients": app.streams.sse.load(Ordering::Relaxed),
+        "ws_clients": app.streams.ws.load(Ordering::Relaxed),
         "workspaces": app.store.len(),
         "watched_dirs": app.watcher.as_ref().map_or(0, |w| w.len()),
         "writable_roots": app.roots.list(),

@@ -143,7 +143,7 @@ fn client(app: &Shared, headers: &HeaderMap) -> Result<String, axum::response::R
         .filter(|c| !c.is_empty() && c.len() <= 64)
         .ok_or_else(|| err(StatusCode::BAD_REQUEST, "no_client", "X-FB-Client header required"))?;
     if !app.panels.connected(&c) {
-        return Err(err(StatusCode::CONFLICT, "not_connected", "Open the event stream (/api/events?client=…) first"));
+        return Err(err(StatusCode::CONFLICT, "not_connected", "Open the event socket (/api/ws?client=…) first"));
     }
     Ok(c)
 }

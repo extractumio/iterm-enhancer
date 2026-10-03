@@ -6,7 +6,7 @@ only by the Files panel:
 | Threat | Defense |
 |---|---|
 | Other machines | binds `127.0.0.1` only |
-| Web pages in any browser (CSRF, DNS rebinding) | random 128-bit token (file mode 0600) on every request; exact `Host` check; writes need `Content-Type: application/json` and a same-origin or absent `Origin`; no CORS headers |
+| Web pages in any browser (CSRF, DNS rebinding) | random 128-bit token (file mode 0600) on every request; exact `Host` check; writes need `Content-Type: application/json` and a same-origin or absent `Origin`; the panels' event WebSocket needs the exact panel `Origin` (a missing one is refused); no CORS headers |
 | Local processes of other users | everything under `~/.iterm-filebrowser` is private (folder 0700, files 0600); the bridge and the installer talk to fbd only through a Unix socket there, never over TCP, so a program that takes port 47821 while fbd is not running gets neither the bridge secret nor terminal commands |
 | A program on fbd's port (fbd not running: login, an upgrade, a crash) | before a panel sends its token it asks fbd to prove it knows it (HMAC-SHA256 of a fresh nonce): another program cannot, so it never sees the token; a token that may have reached it is replaced (fbd could not get its port, or iTerm2 was just started); fbd restarts at once after a crash. Left: a panel opened or reloaded exactly while another program holds the port loads that program's page |
 | The panel page itself (a malicious README or SVG) | Markdown raw HTML disabled, `javascript:` links dropped, remote images not loaded, CSP `script-src 'self'`, SVG only through `<img>`, `Referrer-Policy: no-referrer`, links never navigate the panel; only regular files are read (a link to `/dev/zero` or a FIFO is refused at once) |

@@ -12,6 +12,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { manyPanels } from "./e2e_sockets.mjs";
 import { base, bringBack, check, cleanup, cmds, FBD, internal, PORT, push, restartFbd, results, resume, SB, silence, stopFbd, TOKEN, within } from "./e2e_harness.mjs";
 
 // playwright-core is a devDependency; PLAYWRIGHT_CORE may point at another copy
@@ -456,6 +457,8 @@ try {
   await page.waitForTimeout(300);
   check("AC-38 Remove (confirmed) asks the bridge to take the helper off", cmds.some((c) => c.action === "host-remove" && c.host === "devbox"));
   await push("e2eA", SB);
+
+  await manyPanels(browser, row);
 
   // AC-28 an outdated link says so and stops retrying
   const op = await browser.newPage();

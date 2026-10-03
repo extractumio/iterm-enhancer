@@ -134,7 +134,7 @@ export const setScope = (host: string | null) => { scope = host || null; };
 /** An image's URL carries the token: none until fbd proved itself. */
 export const rawUrl = (path: string) => !isProven ? "data:," :
   `/api/raw?path=${encodeURIComponent(path)}&t=${encodeURIComponent(TOKEN)}${scope ? `&host=${encodeURIComponent(scope)}` : ""}`;
-export const eventsUrl = () => `/api/events?t=${encodeURIComponent(TOKEN)}&client=${CLIENT}`;
+export const socketUrl = () => `ws://${location.host}/api/ws?t=${encodeURIComponent(TOKEN)}&client=${CLIENT}`;
 
 /** Run an API call; on failure show its message and resolve to undefined. */
 export const apiOrToast = <T>(...args: Parameters<typeof api<T>>) => api<T>(...args).catch((e: Error) => { toast(e.message); return undefined; });

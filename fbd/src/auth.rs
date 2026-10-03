@@ -78,7 +78,7 @@ pub async fn guard(State(app): State<Shared>, req: Request, next: Next) -> Respo
     // /api/hello is how the panel checks it talks to fbd before it sends the token (AC-07);
     // /internal/* is not served here at all, only on the bridge's socket
     if path.starts_with("/api/") && path != "/api/hello" {
-        // the query token exists for GETs a header cannot carry (EventSource, <img>)
+        // the query token exists for GETs a header cannot carry (EventSource, WebSocket, <img>)
         let query_token = req.uri().query().and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("t=")));
         let token = app.cfg.token.as_str();
         let ok = |t: Option<&str>| t.is_some_and(|t| same(t, token));

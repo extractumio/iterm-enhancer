@@ -3,7 +3,7 @@
 //!
 //! Serves the embedded UI and a token-protected JSON API on 127.0.0.1. The iTerm2 bridge
 //! (fb_bridge.py) pushes the focused pane's state to /internal/state; panels receive it
-//! over SSE (/api/events).
+//! over a WebSocket (/api/ws, socket.rs), the agent relay and scripts over SSE (/api/events).
 
 mod agent;
 mod api_fs;
@@ -17,6 +17,7 @@ mod local;
 mod ops;
 mod panels;
 mod remote;
+mod socket;
 mod termtext;
 mod watcher;
 mod workspace;
@@ -111,6 +112,8 @@ pub struct App {
     remotes: remote::Remotes,
     /// the build the bridge last said it is (AC-33)
     bridge_build: Mutex<Value>,
+    /// open event streams by transport (AC-41)
+    streams: socket::Streams,
 }
 
 pub type Shared = Arc<App>;
@@ -175,6 +178,7 @@ fn routes(app: Shared) -> Router {
         .route("/api/hello", get(local::hello))
         .route("/api/state", get(get_state))
         .route("/api/events", get(events))
+        .route("/api/ws", get(socket::socket))
         .route("/api/ls", get(ls))
         .route("/api/file", get(file).put(save_file).layer(axum::extract::DefaultBodyLimit::max(save_body_limit(app.cfg.text_max))))
         .route("/api/raw", get(raw))
@@ -272,6 +276,7 @@ async fn main() {
         panels: Default::default(),
         remotes: Default::default(),
         bridge_build: Mutex::new(Value::Null),
+        streams: Default::default(),
         started: Instant::now(),
         denied: Default::default(),
         commands: tokio::sync::broadcast::channel(32).0,
@@ -298,6 +303,7 @@ async fn main() {
         return;
     }
     let listener = listener.expect("bound above");
+    socket::raise_open_files();
     if foreign {
         tracing::warn!(event = "token.renewed", reason = "another program held the port");
     }

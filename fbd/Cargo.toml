@@ -3,12 +3,12 @@ name = "fbd"
 version = "0.3.1"
 edition = "2024"
 authors = ["Gregory Zemskov <info@extractum.io>"]
-description = "Backend of the iTerm2 File Browser panel: listings, file operations, workspaces, SSE"
+description = "Backend of the iTerm2 File Browser panel: listings, file operations, workspaces, events"
 license = "AGPL-3.0-only OR LicenseRef-Commercial"
 publish = false
 
 [dependencies]
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }  # panels take events over a WebSocket: WebKit gives all web views 6 HTTP connections (AC-41)
 futures-util = "0.3.34"
 # client side of the remote agent proxy (AC-37); already in the tree through axum
 http-body-util = "0.1.5"
