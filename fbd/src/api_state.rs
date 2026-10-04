@@ -113,15 +113,20 @@ pub struct EventsQuery {
 
 /// A panel's event stream; when it names its `client`, the panel's window claim (AC-36)
 /// lasts as long as the stream.
-pub async fn events(State(app): State<Shared>, Query(q): Query<EventsQuery>) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
+pub async fn events(State(app): State<Shared>, Query(q): Query<EventsQuery>) -> Sse<impl Stream<Item = Result<SseEvent, std::io::Error>>> {
     let first = SseEvent::default().event("state").data(Event::State(state_json(&app)).data());
     let guard = q.client.map(|c| crate::panels::StreamGuard::new(app.clone(), c));
     let count = crate::socket::Counted::sse(&app);
-    let rx = BroadcastStream::new(app.bus.subscribe()).filter_map(move |e| {
+    let rx = BroadcastStream::new(app.bus.subscribe()).map(move |e| {
         let _ = (&guard, &count);
-        e.ok().map(|e| Ok(SseEvent::default().event(e.name()).data(e.data())))
+        stream_event(e)
     });
     Sse::new(tokio_stream::once(Ok(first)).chain(rx)).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+}
+
+fn stream_event(e: Result<Event, tokio_stream::wrappers::errors::BroadcastStreamRecvError>) -> Result<SseEvent, std::io::Error> {
+    e.map(|e| SseEvent::default().event(e.name()).data(e.data()))
+        .map_err(|e| std::io::Error::other(format!("event stream lost changes: {e}")))
 }
 
 #[derive(Deserialize)]
@@ -199,11 +204,11 @@ pub async fn terminal(State(app): State<Shared>, UrlPath(action): UrlPath<String
     };
     // quoted for the pane's shell; never Enter: the user runs the line (AC-12)
     let text = termtext::line(&job, &action, &b.paths, b.path.as_deref()).map_err(|m| err(StatusCode::BAD_REQUEST, "not_typed", m))?;
-    command(&app, json!({"action": "type", "session": session, "text": text}), &headers);
+    command(&app, json!({"action": "type", "session": session, "key": b.key, "job": job, "intent": action, "text": text}), &headers);
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize, Clone)]
 pub struct ViewBody {
     path: String,
     /// a remote file's host (AC-37)
@@ -243,7 +248,7 @@ pub async fn remote_action(State(app): State<Shared>, UrlPath(action): UrlPath<S
 /// The bridge reused the open viewer window: tell its page to add a tab.
 pub async fn internal_viewer_open(State(app): State<Shared>, Json(b): Json<ViewBody>) -> StatusCode {
     let mut pending = app.viewer_pending.lock();
-    pending.push(b.path.clone());
+    pending.push(b.clone());
     let len = pending.len();
     pending.drain(..len.saturating_sub(20)); // a page that never connects must not grow this
     drop(pending);
@@ -274,8 +279,17 @@ fn bridge_error(message: &str, by: Option<String>) -> Event {
 }
 
 /// The viewer page takes the files sent while it was still loading (then they are gone).
-pub async fn view_pending(State(app): State<Shared>) -> Json<Vec<String>> {
-    Json(std::mem::take(&mut *app.viewer_pending.lock()))
+pub async fn view_pending(State(app): State<Shared>, headers: HeaderMap) -> Json<Vec<String>> {
+    let host = headers.get("x-fb-host").and_then(|h| h.to_str().ok());
+    Json(take_pending(&mut app.viewer_pending.lock(), host))
+}
+
+fn take_pending(pending: &mut Vec<ViewBody>, host: Option<&str>) -> Vec<String> {
+    let mut own = Vec::new();
+    pending.retain(|b| {
+        if b.host.as_deref() == host { own.push(b.path.clone()); false } else { true }
+    });
+    own
 }
 
 /// A panel's Toolbelt was resized by the user: make it the default for new windows (AC-27).
@@ -348,6 +362,24 @@ pub async fn health(State(app): State<Shared>) -> Json<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_lagged_file_stream_errors_instead_of_silently_skipping_changes() {
+        let bus = crate::events::Bus::new();
+        let mut stream = BroadcastStream::new(bus.subscribe()).map(stream_event);
+        for _ in 0..300 { bus.send(Event::Rescan { host: None }); }
+        assert!(stream.next().await.unwrap().is_err());
+    }
+
+    #[test]
+    fn pending_viewers_keep_their_host() {
+        let mut pending = vec![ViewBody { path: "/same".into(), host: Some("devbox".into()) },
+            ViewBody { path: "/same".into(), host: None }];
+        assert_eq!(serde_json::to_value(take_pending(&mut pending, None)).unwrap(), json!(["/same"]), "old viewers still receive string paths");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(take_pending(&mut pending, Some("devbox")), vec!["/same"]);
+        assert!(pending.is_empty());
+    }
 
     #[test]
     fn bridge_errors_are_capped_and_addressed() {

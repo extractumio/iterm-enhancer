@@ -12,21 +12,16 @@ from .sshargs import key as ssh_key
 from .sshargs import target as ssh_target
 
 _static = {}
-_gateways = {}  # tmux connection id → (gateway session id, the ssh arguments it runs, or None)
 
 
 async def gateway_target(tc):
     """The ssh arguments of a tmux -CC connection's gateway session (AC-38): the `ssh`
     process below it (tms, autossh and scripts exec or start one), read exactly. iTerm2
-    reuses a connection id once its connection is gone, so the gateway session is checked."""
+    can reconnect in the same session, so the process is read again on every lookup."""
     s = tc.owning_session
-    sid = s.session_id if s else None
-    cached = _gateways.get(tc.connection_id)
-    if not cached or cached[0] != sid:
-        pid = await s.async_get_variable("pid") if s else None
-        ssh = find_descendant(pid, "ssh") if pid else None
-        cached = _gateways[tc.connection_id] = (sid, ssh_target(proc_argv(ssh)) if ssh else None)
-    return cached[1]
+    pid = await s.async_get_variable("pid") if s else None
+    ssh = find_descendant(pid, "ssh") if pid else None
+    return ssh_target(proc_argv(ssh)) if ssh else None
 
 
 async def open_hosts(conn):
@@ -50,12 +45,16 @@ async def static_vars(session):
 TMUX_FMT = "#{host}\t#{socket_path}\t#{pane_id}\t#{pane_current_path}\t#{pane_current_command}"
 
 
-def tmux_result(mode, out, via_ssh=False):
+def tmux_result(mode, out, via_ssh=False, destination=None):
     """A tmux pane from `display -p TMUX_FMT`. Remote when its tmux -CC gateway runs ssh,
     whatever the server calls itself (a host must not pose as this Mac, AC-37), or when
     the server's host name is not this Mac's."""
-    host, sock, pane, path, cmd = (out.strip().split("\t") + [""] * 5)[:5]
-    key = f"tmux:{host.split('.')[0].lower()}:{sock}:{pane}"
+    fields = out.removesuffix("\n").split("\t", 3)
+    host, sock, pane, rest = (fields + [""] * 4)[:4]
+    path, sep, cmd = rest.rpartition("\t")
+    if not sep:
+        path, cmd = rest, ""
+    key = f"tmux-remote:{destination}:{sock}:{pane}" if destination else f"tmux:{host.split('.')[0].lower()}:{sock}:{pane}"
     if via_ssh or host.split(".")[0].lower() != LOCAL_HOST:  # its files are reached through an agent, if any (AC-37)
         return {"mode": "remote", "key": key, "cwd": None, "note": f"remote host {host}", "job": cmd, "busy": True,
                 "remote_host": host.split(".")[0].lower(), "path": path or None, "idle": cmd in SHELLS}
@@ -79,7 +78,7 @@ async def resolve(conn, session):
             return {"mode": "tmux -CC", "key": session.session_id, "cwd": None, "note": "tmux connection not found"}
         out = await tc.async_send_command(f"display -p -t %{pane} '{TMUX_FMT}'")
         target = await gateway_target(tc)
-        r = tmux_result("tmux -CC", out, via_ssh=bool(target))
+        r = tmux_result("tmux -CC", out, via_ssh=bool(target), destination=ssh_key(target) if target else None)
         if r["mode"] == "remote":
             r.update(ssh=target, remote_key=ssh_key(target) if target else None)
         return r

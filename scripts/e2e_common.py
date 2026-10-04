@@ -2,14 +2,17 @@
 """Shared by the iTerm2 end-to-end scripts: the installed fbd's address and token (the
 bridge's own settings), a JSON call that returns errors instead of raising, and checks."""
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bridge"))
-from fbbridge.common import APP_DIR, PORT  # noqa: E402,F401
+from fbbridge.common import APP_DIR, PORT, ROOT  # noqa: E402,F401
 
+if not os.environ.get("FB_APP_DIR") or APP_DIR.resolve() == (ROOT / "state").resolve():
+    raise RuntimeError("Integration tests require an isolated FB_APP_DIR; the live installation is refused")
 TOKEN = (APP_DIR / "token").read_text().strip()
 REPO = Path(__file__).resolve().parent.parent
 

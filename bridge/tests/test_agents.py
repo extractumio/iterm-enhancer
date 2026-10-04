@@ -154,8 +154,8 @@ class AgentsTest(unittest.TestCase):
 
     def test_a_stage8_record_still_reads(self):
         self.ctl.RECORD.parent.mkdir(parents=True, exist_ok=True)
-        self.ctl.RECORD.write_text(json.dumps({"ai4": {"host": "ai4", "user": "alex", "platform": "linux-x86_64", "agent_id": "x"}}))
-        self.assertEqual(self.ctl.load()["ai4"]["ssh"], ["ai4"])
+        self.ctl.RECORD.write_text(json.dumps({"devbox.example": {"host": "devbox.example", "user": "alex", "platform": "linux-x86_64", "agent_id": "x"}}))
+        self.assertEqual(self.ctl.load()["devbox.example"]["ssh"], ["devbox.example"])
 
     def wait(self, r, key, status):
         for _ in range(100):
@@ -220,7 +220,7 @@ class AgentsTest(unittest.TestCase):
             def stop(self):
                 stopped.append(True)
 
-        def slow_connect(_self, key, target):
+        def slow_connect(_self, key, target, owner=None):
             gate.wait(5)
             return SlowTunnel()
         r = self.remote.Remotes(lambda path, body: posted.append((path, body)))
@@ -257,7 +257,7 @@ class AgentsTest(unittest.TestCase):
                 pass
         r = self.remote.Remotes(lambda p, b: None)
         with mock.patch.object(self.remote.hosts, "LOCAL_AGENT_ID", "new"), \
-                mock.patch.object(self.remote, "BUILD_DIR", self.root / "build"), \
+                mock.patch.object(self.remote.hosts, "BUILD_DIR", self.root / "build"), \
                 mock.patch.object(self.remote, "BUILD", "v9.9.0"), \
                 mock.patch.object(self.remote.agentctl, "Tunnel", FakeTunnel), \
                 mock.patch.object(self.remote.agentctl, "install", lambda target, b, aid: install(r, target, b, aid)):
@@ -312,9 +312,9 @@ class AgentsTest(unittest.TestCase):
 
     def test_open_windows_of_enabled_hosts_are_found_unfocused(self):
         from fbbridge import resolve
-        self.ctl.save({"ai4": {"ssh": ["ai4"], "name": "ai4"}})
+        self.ctl.save({"devbox.example": {"ssh": ["devbox.example"], "name": "devbox.example"}})
         conns = [types.SimpleNamespace(connection_id=n, target=t) for n, t in
-                 [(1, ["ai4"]), (2, ["ai4"]), (3, ["devbox"]), (4, None)]]  # devbox: not enabled; 4: local tmux
+                 [(1, ["devbox.example"]), (2, ["devbox.example"]), (3, ["devbox"]), (4, None)]]  # devbox: not enabled; 4: local tmux
 
         async def gateway(tc):
             return tc.target
@@ -323,7 +323,7 @@ class AgentsTest(unittest.TestCase):
             return conns
         with mock.patch.object(resolve.iterm2, "async_get_tmux_connections", connections, create=True), \
                 mock.patch.object(resolve, "gateway_target", gateway):
-            self.assertEqual(asyncio.run(resolve.open_hosts(None)), {"ai4": ["ai4"]})
+            self.assertEqual(asyncio.run(resolve.open_hosts(None)), {"devbox.example": ["devbox.example"]})
 
     def test_an_outdated_agent_without_a_build_says_how(self):
         class FakeTunnel:

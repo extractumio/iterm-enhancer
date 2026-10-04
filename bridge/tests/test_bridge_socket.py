@@ -121,7 +121,11 @@ class FbdPortTest(unittest.TestCase):
         env = dict(os.environ, FB_APP_DIR=str(self.dir), FB_PORT=str(port), FB_LOG="warn")
         env.pop("FB_NEW_TOKEN", None)
         p = subprocess.Popen([str(FBD)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        self.addCleanup(lambda: (p.kill(), p.wait()))
+        def reap():
+            if p.poll() is None:
+                p.kill()
+            p.communicate()
+        self.addCleanup(reap)
         return p
 
     def wait_for(self, cond, seconds=5):

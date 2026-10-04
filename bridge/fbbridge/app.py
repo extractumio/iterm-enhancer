@@ -13,7 +13,7 @@ import iterm2
 
 from .backend import Backend
 from . import agentctl
-from .common import APP_DIR, BASE, HEARTBEAT, HOSTS_EVERY, POLL, POLL_TIMEOUT, THEME_EVERY, TOOL_ID, UserError, log
+from .common import APP_DIR, BASE, HEARTBEAT, HOSTS_EVERY, POLL, POLL_TIMEOUT, SHELLS, THEME_EVERY, TOOL_ID, UserError, log
 from .lifecycle import LockError, bounded, connection_closed, take_lock, watch
 from .procinfo import iterm_process
 from .registry import heal
@@ -40,8 +40,36 @@ signal.signal(signal.SIGTERM, lambda *_: stop("SIGTERM"))  # Script Console, a n
 
 
 def typable(text):
-    """No C0, DEL or C1 character: each would act as a key (Enter, Ctrl-C, Meta)."""
-    return isinstance(text, str) and not any(ord(ch) < 0x20 or 0x7f <= ord(ch) <= 0x9f for ch in text)
+    """No keystrokes or invisible format characters (the same refusal as fbd, AC-12)."""
+    return isinstance(text, str) and not any(
+        ord(ch) < 0x20 or 0x7f <= ord(ch) <= 0x9f
+        or ord(ch) in (0xad, 0x061c, 0x180e, 0xfeff)
+        or 0x200b <= ord(ch) <= 0x200f or 0x202a <= ord(ch) <= 0x202e
+        or 0x2060 <= ord(ch) <= 0x206f or 0xfff9 <= ord(ch) <= 0xfffb
+        for ch in text)
+
+
+async def send_command(conn, app, command):
+    """Resolve immediately before typing: an iTerm2 session can show another tmux pane."""
+    session = app.get_session_by_id(command.get("session", ""))
+    if session is None:
+        raise UserError("The terminal pane is gone — command not sent")
+    state = await resolve(conn, session)
+    if not command.get("key") or command["key"] != state.get("key"):
+        raise UserError("The terminal pane changed — command not sent")
+    if "job" not in command or command["job"] != (state.get("job") or ""):
+        raise UserError("The terminal job changed — command not sent")
+    intent = command.get("intent")
+    if intent not in ("insert", "cd"):
+        raise UserError("Unknown terminal command — command not sent")
+    if intent == "cd":
+        idle = state.get("idle", False) if state.get("mode") == "remote" else not state.get("busy", True)
+        if not idle or state.get("job") not in SHELLS:
+            raise UserError("The terminal is busy — command not sent")
+    if not typable(command.get("text")):
+        raise UserError("Text with control or invisible characters — not sent to the terminal")
+    await session.async_send_text(command["text"])
+    await session.async_activate()
 
 
 async def run_commands(conn, app, windows, queue):
@@ -50,13 +78,7 @@ async def run_commands(conn, app, windows, queue):
         try:
             action = c.get("action")
             if action == "type":
-                s = app.get_session_by_id(c.get("session", ""))
-                if s is None:
-                    raise UserError("The terminal pane is gone — command not sent")
-                if not typable(c["text"]):  # fbd never sends Enter or another key (AC-12)
-                    raise UserError("Text with control characters — not sent to the terminal")
-                await s.async_send_text(c["text"])
-                await s.async_activate()
+                await send_command(conn, app, c)
             elif action == "viewer":
                 await windows.open_viewer(conn, c["path"], c["code"], c.get("host"))
             elif action == "default-width":

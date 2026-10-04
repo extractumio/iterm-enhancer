@@ -10,12 +10,12 @@ from fbbridge.sshargs import key, target  # noqa: E402
 
 class TargetTest(unittest.TestCase):
     def test_tms(self):
-        self.assertEqual(target(["ssh", "-tt", "ai4", "tmux -CC new-session -A -f pause-after=5 -s work"]), ["ai4"])
+        self.assertEqual(target(["ssh", "-tt", "devbox.example", "tmux -CC new-session -A -f pause-after=5 -s work"]), ["devbox.example"])
 
     def test_proxy_command_keeps_its_value_whole(self):
         # an exact argv (sysctl): the ProxyCommand's spaces do not split it
-        argv = ["ssh", "-o", "ProxyCommand=ssh -W %h:%p jump", "-tt", "ai4", "tmux", "-CC"]
-        self.assertEqual(target(argv), ["-o", "ProxyCommand=ssh -W %h:%p jump", "ai4"])
+        argv = ["ssh", "-o", "ProxyCommand=ssh -W %h:%p jump", "-tt", "devbox.example", "tmux", "-CC"]
+        self.assertEqual(target(argv), ["-o", "ProxyCommand=ssh -W %h:%p jump", "devbox.example"])
 
     def test_port_user_config_jump(self):
         argv = ["/usr/bin/ssh", "-F", "/Users/alex/x", "-J", "jump", "-p", "2222", "-l", "alex", "10.0.0.5", "tmux", "-CC"]
@@ -43,7 +43,7 @@ class TargetTest(unittest.TestCase):
 
     def test_key(self):
         self.assertEqual(key(["-p", "2222", "alex@vm"]), "-p 2222 alex@vm")
-        self.assertEqual(key(["ai4"]), "ai4")
+        self.assertEqual(key(["devbox.example"]), "devbox.example")
 
 
 if __name__ == "__main__":

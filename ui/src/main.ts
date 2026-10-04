@@ -17,6 +17,8 @@ import { Viewer } from "./viewer";
 import { PathBar } from "./viewer-path";
 import { Stream } from "./stream";
 import { Upgrade } from "./upgrade";
+import { commitPath, trashPaths } from "./file-actions";
+import { refreshScope } from "./panel-refresh";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -26,6 +28,7 @@ let unseen = false;                   // fbd has no state of that window yet
 let updateNote = "";                  // an upgrade waits for unsaved work (AC-34)
 let key: string | null = null;        // state key of the pane shown (session or tmux pane)
 let ws: Pane | null = null;           // its workspace as last read or written
+let workspaceRun = 0;                // orders reads and accepted write replies, even after a revision reset
 let prefs: Prefs = { ...DEFAULT_PREFS };
 let saveTimer = 0;
 let filterTimer = 0;
@@ -82,26 +85,33 @@ async function saveNow() {
   clearTimeout(saveTimer);
   const snap = snapshot(), k = key;
   if (!snap || !k || content(snap) === content(ws!)) return;
+  const previous = ws, run = workspaceRun;
   try {
     const r = await api<{ rev: number }>("PUT", "/api/workspace", { query: { key: k }, body: snap });
-    if (key === k) ws = { ...snap, rev: r.rev };
+    if (key === k && ws === previous && run === workspaceRun) { workspaceRun++; ws = { ...snap, rev: r.rev }; }
   } catch (e) {
     // another panel (other iTerm2 window) or a cd won the race: take the server's version
-    if (e instanceof ApiError && e.code === "stale_rev" && key === k) await applyWorkspace(e.body.current as Pane);
+    if (e instanceof ApiError && e.code === "stale_rev" && key === k && ws === previous && run === workspaceRun) {
+      workspaceRun++;
+      await applyWorkspace(e.body.current as Pane);
+    }
   }
 }
 
 async function loadWorkspace(k: string) {
+  const run = ++workspaceRun;
   const pane = await api<Pane>("GET", "/api/workspace", { query: { key: k } });
-  if (key === k) await applyWorkspace(pane);
+  if (key === k && run === workspaceRun) await applyWorkspace(pane);
 }
 
 async function applyWorkspace(pane: Pane) {
+  const paneKey = key;
   const sameTree = ws?.root === pane.root && tree.root?.path === pane.root &&
     JSON.stringify([...tree.expanded].sort()) === JSON.stringify([...pane.expanded].sort());
   ws = pane; // restoring it below is then a no-op for saveNow
   if (sameTree) { tree.selected = new Set(pane.selected); tree.queue(); }
   else await tree.setRoot(pane.root, pane.expanded, pane.selected, pane.scroll);
+  if (key !== paneKey || ws !== pane) return;
   if (JSON.stringify(viewer.tabs) !== JSON.stringify(pane.tabs) || viewer.active !== pane.active_tab) viewer.setTabs(pane.tabs, pane.active_tab);
   renderHeader(term);
 }
@@ -173,7 +183,7 @@ async function onState(s: TermState) {
     return;
   }
   $("empty").textContent = "";
-  if (s.key === key) return; // same pane, new cwd: fbd resets the workspace and sends "workspace"
+  if (s.key === key && (s.host ?? null) === scope) return; // same pane and host: cwd changes arrive as "workspace"
   const leaving = key, snap = snapshot();
   key = s.key;                // switch at once: a quick A→B→A must end on A
   if (leaving && snap && ws && content(snap) !== content(ws)) {
@@ -200,6 +210,7 @@ const stream = new Stream({
     // our own writes echo back with by === CLIENT
     workspace: ({ key: k, rev, by }) => { if (k === key && by !== CLIENT && (!ws || rev > ws.rev)) void loadWorkspace(k); },
     "fs-change": onFsChange,
+    rescan: ({ host }) => refreshScope(host ?? null, scope, tree, viewer),
     "viewer-open": ({ path, host }) => { if (VIEW && (host ?? null) === scope) viewer.open(path); },
     "bridge-error": ({ message, by }) => { if (by === CLIENT) toast(message); }, // only the panel that asked
     unbind: ({ clients }) => { if (clients.includes(CLIENT)) binding.lost(); },
@@ -207,10 +218,12 @@ const stream = new Stream({
   open() {
     notice("", "");
     if (upgrade.back()) { // fbd was away: what changed meanwhile was not announced
-      viewer.recheck();
-      if (tree.root) void tree.refreshDirs([tree.root.path, ...tree.expanded]);
+      refreshScope(scope, scope, tree, viewer);
     }
-    if (VIEW) return void api<string[]>("GET", "/api/view/pending").then((ps) => ps.forEach((p) => viewer.open(p)), () => {});
+    if (VIEW) {
+      const host = scope;
+      return void api<string[]>("GET", "/api/view/pending", { host }).then((ps) => { if (host === scope) ps.forEach((p) => viewer.open(p)); }, () => {});
+    }
     void binding.claim().then(() => showOwnWindow()).catch(() => {});
     renderHeader(term);
     if (key) void loadWorkspace(key);
@@ -228,26 +241,11 @@ const stream = new Stream({
 
 // ── file operations ──────────────────────────────────────────────────────────
 
-async function commit(mode: EditMode, dir: string, name: string, path?: string): Promise<string | null> {
-  try {
-    let created: string;
-    if (mode === "rename") {
-      if (!path || name === basename(path)) return null;
-      created = (await api<{ path: string }>("POST", "/api/fs/rename", { body: { path, name } })).path;
-      tree.renamed(path, created);
-      viewer.renamed(path, created);
-    } else {
-      created = (await api<{ path: string }>("POST", `/api/fs/${mode === "folder" ? "mkdir" : "touch"}`, { body: { parent: dir, name } })).path;
-      if (mode === "file") viewer.open(created);
-    }
-    await tree.refreshDirs([dir]);
-    tree.selected = new Set([created]);
-    await tree.reveal(created);
-    scheduleSave();
-    return null;
-  } catch (e) {
-    return e instanceof Error ? e.message : String(e);
-  }
+function commit(mode: EditMode, dir: string, name: string, path?: string): Promise<string | null> {
+  const host = scope, paneKey = key;
+  return commitPath(mode, dir, name, path, {
+    host, current: () => scope === host && key === paneKey, tree, viewer, changed: scheduleSave,
+  });
 }
 
 /** The pane changed hosts while the user was deciding: the decision was about other files. */
@@ -258,21 +256,14 @@ function switchedSince(host: string | null) {
 }
 
 async function trashSelected() {
-  const host = scope;
+  const host = scope, paneKey = key;
   const paths = [...tree.selected];
   if (!paths.length) return;
   if (paths.some((p) => !tree.isWritable(dirname(p)))) return toast("Read-only: outside writable folders");
-  const dirty = paths.flatMap((p) => viewer.dirtyUnder(p));
-  const what = paths.length === 1 ? `"${basename(paths[0])}"` : `${paths.length} items`;
-  const extra = dirty.length ? `${dirty.length} unsaved file${dirty.length > 1 ? "s" : ""} will be lost. ` : "";
-  const ok = await ask(`Move ${what} to Trash?`, `${extra}You can restore from the Trash in Finder.`,
-    [{ id: "trash", label: "Move to Trash", danger: true, primary: true }, { id: "cancel", label: "Cancel" }]);
-  if (ok !== "trash" || switchedSince(host)) return;
-  type Failed = { failed: { path: string; message: string }[] };
-  const r: Failed = await api<Failed>("POST", "/api/fs/trash", { body: { paths }, host })
-    .catch((e: ApiError) => (e.body?.failed ? e.body : { failed: [{ path: "", message: e.message }] }));
-  if (r.failed.length) toast(r.failed.map((f) => f.message).join("; "));
-  viewer.removed(paths.filter((p) => !r.failed.some((f) => f.path === p)));
+  const current = () => !switchedSince(host) && key === paneKey;
+  const removed = await trashPaths(paths, host, paths.flatMap((p) => viewer.dirtyUnder(p)), current);
+  if (!removed || !current()) return;
+  viewer.removed(removed);
   tree.selected.clear();
   await tree.refreshDirs([...new Set(paths.map(dirname))]);
   scheduleSave();

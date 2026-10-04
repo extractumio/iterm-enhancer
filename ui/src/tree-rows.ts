@@ -16,6 +16,7 @@ export interface DirNode {
   gen: number;
   pages: Map<number, Row[]>;
   pending: Set<number>;
+  read?: number; // invalidates requests started before a forced refresh
   /** expanded children with their index in this folder's (filtered) listing */
   children: Map<string, { idx: number; node: DirNode }>;
   sorted?: { idx: number; node: DirNode }[];

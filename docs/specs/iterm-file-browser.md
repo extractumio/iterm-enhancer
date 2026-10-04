@@ -192,6 +192,17 @@ Scenario: AC-02 failure — permission denied
   When the user expands it
   Then the folder shows one row "⚠ Permission denied (os error 13)"
   And the rest of the tree remains usable
+
+Scenario: Invalidation while a folder scan is running
+  Given a listing scan has started and two callers are waiting for it
+  When the folder changes before the scan publishes
+  Then one scanner rereads the folder and both callers receive the fresh listing
+  And completed empty and failed listings count toward the cache memory budget
+
+Scenario: Unreadable filenames do not alias another file
+  Given a folder contains a byte-invalid UTF-8 name and a valid replacement-character name
+  When the panel lists the folder
+  Then it reports the unreadable name explicitly without presenting an actionable alias
 ```
 
 ### AC-03 — Read a file with syntax highlighting [MUST / P0]
@@ -280,6 +291,17 @@ Scenario: AC-05 edge — expanded folder was deleted
   Given "src/db" is remembered as expanded but was deleted
   When the state is restored
   Then "src/db" is silently dropped from the expanded set
+
+Scenario: AC-05 edge — a superseded workspace restoration finishes late
+  Given one pane's workspace restoration waits for a directory listing
+  When the panel switches panes and the earlier listing completes
+  Then the earlier tabs never replace or persist into the current pane's workspace
+
+Scenario: Workspace replies for the same pane arrive out of order
+  Given a workspace read for a pane is pending
+  When a newer read or accepted write has restored that pane's current workspace
+  Then the older reply cannot replace its root or tabs
+  And a backend restart with reset revisions is still accepted
 ```
 
 ### AC-06 — One-command install and autostart [MUST / P0]
@@ -336,6 +358,12 @@ Scenario: AC-07 security — a token that may have leaked is replaced
 
 Scenario: AC-07 security — private files
   Then "~/.iterm-filebrowser" is mode 0700 and everything fbd, the bridge and the installer create in it is 0600 (files) or 0700 (folders); an existing install is tightened on the next install
+
+Scenario: AC-07 security — ticket expiry never authenticates a different code
+  Given an unused viewer code has expired and another code is still valid
+  When an unauthenticated client redeems an unknown, empty or expired code
+  Then the response is 401 and contains no token
+  And the other valid code still works exactly once
 ```
 
 ### AC-08 — Edit and save [SHOULD / P1]
@@ -366,6 +394,42 @@ Scenario: AC-08 edge — a large text file
   Given a 9 MB text file (below the 10 MB text limit) opened for editing
   When the user saves it
   Then the save succeeds; a request body larger than the limit allows for (6 × the text limit, JSON escaping) answers 413 as JSON
+
+Scenario: AC-08 edge — competing saves
+  Given two panels hold the same file etag, including through symlink aliases
+  When they save different contents concurrently
+  Then exactly one conditional save succeeds and the other reports a conflict
+  And the successful response etag describes the saved content
+
+Scenario: AC-08 edge — closing while typing during a save
+  Given the user chooses Save when closing a dirty tab
+  When they type more text before the save finishes
+  Then the tab stays open and the later text stays unsaved
+
+Scenario: AC-08 edge — a conflict dialog survives a host switch
+  Given a save conflict belongs to a file on one host
+  When the panel switches hosts before the user chooses Reload
+  Then only the original document is discarded; the shown host's edits stay intact
+
+Scenario: AC-08 edge — maximum-length filenames
+  Given a writable text file has a valid 255-byte basename
+  When the user saves it
+  Then its content and metadata are saved and no temporary file remains
+
+Scenario: Editing a CRLF file preserves its separators
+  Given an editable file uses CRLF line endings
+  When the user edits and saves it
+  Then the saved content and byte-size metadata retain CRLF separators
+
+Scenario: Save races a rename or Trash operation
+  Given a Save request and a file mutation overlap in the backend
+  Then the mutation and save serialize without recreating a renamed or trashed path
+
+Scenario: A document is renamed while Save is pending
+  Given a Save of the old path is pending when the document is renamed
+  When that Save conflicts and the user chooses Overwrite
+  Then the retry targets the document's current path
+  And a stale old-path reply cannot mark the renamed document clean with the wrong etag
 ```
 
 ### AC-09 — Create file or folder [SHOULD / P1]
@@ -411,6 +475,16 @@ Scenario: AC-10 error — target exists
   Given "ideas.md" already exists
   When the user renames "notes.md" to "ideas.md"
   Then the field shows ""ideas.md" already exists" and both files are unchanged
+
+Scenario: AC-10 edge — another writer creates the target during rename
+  Given the destination did not exist when rename began
+  When another writer creates it before the rename takes effect
+  Then rename reports an existing destination and preserves both files
+
+Scenario: AC-10 edge — saving after rename
+  Given an edited tab follows a file or ancestor folder rename
+  When the user presses ⌘S in the editor
+  Then the renamed path is saved and the old path is not recreated
 ```
 
 ### AC-11 — Move to Trash [SHOULD / P1]
@@ -430,6 +504,12 @@ Scenario: AC-11 error — file is gone already
 Scenario: AC-11 edge — dirty tab inside
   Given "build/out.txt" has unsaved edits in a tab
   Then the dialog adds "1 unsaved file will be lost" before confirming
+
+Scenario: AC-11 failure — a Trash request fails before per-file results
+  Given selected files include unsaved tabs
+  When Trash fails with a network or request-level error
+  Then the error is shown and every tab and unsaved edit remains
+  And only files explicitly reported as trashed may have their tabs closed
 ```
 
 ### AC-12 — Standard utility actions [SHOULD / P1]
@@ -472,6 +552,12 @@ Scenario Outline: AC-12 security — quoting follows the pane's shell
     | tcsh, csh, nu, xonsh, unknown | it's    |               | Name cannot be typed safely into tcsh |
     | any                | -rf           | ./-rf                 |         |
     | any                | a‮b (U+202E)  |                       | Name contains control or invisible characters — not sent to the terminal |
+
+Scenario: AC-12 security — queued text is checked at delivery
+  Given terminal text was requested for a pane and shell
+  When that pane or shell changes before the bridge types it, or a cd target becomes busy
+  Then no text is typed and the asking panel receives the reason
+  And enabled remote idle shells still accept explicit terminal actions
 ```
 
 ### AC-13 — Live refresh from disk [SHOULD / P1]
@@ -495,6 +581,19 @@ Scenario: AC-13 edge — open dirty tab
 Scenario: AC-13 edge — burst of changes
   When "npm install" writes 40,000 files into expanded "node_modules"
   Then the tree updates at most twice per second and the panel stays responsive
+
+Scenario: A lagged remote event stream reconciles state
+  Given an agent event subscriber falls behind its broadcast buffer
+  When its stream reconnects
+  Then a host-scoped rescan refreshes the visible folders and checks open-file etags
+  And dirty buffers remain intact, including a file whose rename notification was missed
+  And Unicode paths remain exact across every HTTP frame boundary
+
+Scenario: An older listing response arrives last
+  Given a folder refresh replaced an earlier request lifecycle
+  When the earlier page response arrives after the fresh response
+  Then it cannot replace the fresh rows
+  And a current error response or reset generation after restart remains visible
 ```
 
 ### AC-14 — Theme and font from the iTerm2 profile [SHOULD / P1]
@@ -536,6 +635,11 @@ Scenario: AC-15 edge — shortcuts do not leak to the terminal
   Given the ⌘ shortcuts chosen after the probe (OQ-07)
   When the user presses any of them in the panel
   Then iTerm2 does not open a window, tab, split, or close a session
+
+Scenario: Keyboard navigation targets an unloaded page
+  Given only the first page of a large folder has loaded
+  When the user presses End or PageDown and then Delete
+  Then selection follows the loaded target row and cannot delete the previous row
 ```
 
 ### AC-16 — Filter by name [SHOULD / P1]
@@ -597,6 +701,12 @@ Scenario: AC-19 edge — selection is remembered
   Given 3 items are selected in pane "p1"
   When focus moves to "p2" and back
   Then the same 3 items are selected (AC-05)
+
+Scenario: Selecting a range across unloaded pages
+  Given a range spans several listing pages
+  When the user selects it
+  Then pages load in bounded batches and the complete range becomes selected
+  And a pane or root switch cancels the selection without leaving a partial destructive target
 ```
 
 ### AC-21 — Git status colors [NICE TO HAVE / later]
@@ -640,6 +750,10 @@ Scenario: AC-23 failure — corrupt state file
   Given "workspaces.json" contains "{not json"
   When fbd starts
   Then it renames the file to "workspaces.json.bak", starts empty, and logs "event=workspace.reset reason=parse_error"
+
+Scenario: AC-23 edge — shutdown overlaps a workspace flush
+  Given a debounced write overlaps shutdown with a newer workspace revision
+  Then persisted state is complete valid JSON containing the newest snapshot
 ```
 
 ### AC-24 — Links in rendered Markdown [SHOULD / P1]
@@ -656,6 +770,11 @@ Scenario: AC-24 happy path — web link
 Scenario: AC-24 error — broken local link
   When the user clicks "[old](gone.md)" and "gone.md" does not exist
   Then a toast shows "gone.md: No such file or directory"
+
+Scenario: An image filename contains reserved URL characters
+  Given a local image name contains a literal hash, question mark or percent character
+  When Markdown references its percent-encoded path
+  Then the image request addresses the exact filename
 ```
 
 ### AC-25 — Panel in every new window [SHOULD / P1]
@@ -727,6 +846,12 @@ Scenario: AC-26 happy path — full path with copy
   When the user clicks the copy button in the bar
   Then the clipboard holds "/Users/alex/proj/app.py" and a toast says "Copied /Users/alex/proj/app.py"
   And iTerm2's own address bar still shows the page URL (iTerm2 offers no way to hide it); it never holds the token
+
+Scenario: AC-26 edge — pending viewer files retain their host
+  Given local and remote viewer requests use the same pathname
+  When each viewer drains pending files
+  Then it receives only requests for its own host
+  And another host's pending requests are preserved
 ```
 
 ### AC-27 — Layout defaults and per-window layout [SHOULD / P1]
@@ -780,6 +905,11 @@ Scenario: AC-29 edge — scripts and frames are inert
 Scenario: AC-29 failure — broken link
   When the user clicks "<a href='gone.html'>"
   Then a toast shows "gone.html: No such file or directory"
+
+Scenario: Malformed encoded HTML resource URL
+  Given an HTML document contains a resource URL with an invalid percent escape
+  When it renders
+  Then the valid document remains visible and the broken resource is indicated
 ```
 
 ### AC-30 — Bridge lifecycle and recovery [MUST / P0]
@@ -835,6 +965,11 @@ Scenario: AC-30 edge — fbd left without its bridge
   Given fbd was started by a bridge (FB_BRIDGE_SECRET set)
   When that bridge is killed with SIGKILL
   Then fbd saves the workspaces and exits within 3 s with "event=stop reason=\"bridge exited\"", freeing the port
+
+Scenario: A gateway descendant inherits tunnel output pipes
+  Given the ssh process exits while a local proxy descendant holds its output pipes
+  When the bridge stops the tunnel
+  Then startup readers cancel and bounded cleanup returns without waiting for pipe EOF
 ```
 
 ### AC-31 — Expand and collapse all [SHOULD / P1]
@@ -1019,6 +1154,11 @@ Scenario: AC-34 failure — a write during the gap
 Scenario: AC-34 failure — the gap lasts longer
   Given fbd stays unreachable for 3 s or more
   Then "Backend not running" shows as today (AC-28), and unsaved edits stay in the panel
+
+Scenario: Only a packaged runtime script changes
+  Given the backend, bridge and UI source have not changed
+  When an installer, command script or release signer changes
+  Then the source build id changes and the revised runtime is installed
 ```
 
 ### AC-35 — Rollback and compatible state [SHOULD / P1]
@@ -1141,32 +1281,62 @@ Scenario: AC-37 security
   Then the agent listens only on a Unix socket with a random name in a 0700 directory on the host (removed on exit), accepts only a per-connection token given on ssh's stdin (never on a command line), exits when stdin closes or on SIGHUP, and writes only under its roots ($HOME, /tmp on the host)
   And on the Mac the forwarded socket lives in the app folder (0700); only fbd connects to it; the panel never talks to the host directly
   And fbd treats the agent's answers as untrusted: bodies are capped, files stream through, the panel's Origin is not forwarded
+
+Scenario: AC-37 edge — identical tmux identities on different hosts
+  Given two enabled SSH destinations report the same hostname, socket path and pane id
+  When the user switches between their panes
+  Then each has a distinct workspace key and every file request names the shown host
+
+Scenario: AC-37 edge — delayed reads and document links across host changes
+  Given a file read or document-link prefetch starts on one host
+  When the panel switches hosts before it finishes, including to the same pathname
+  Then the old response never changes the new host's editor or tabs
+
+Scenario: AC-37 failure — an agent stalls
+  Given an agent accepts a request but stops answering or producing response bytes
+  Then finite requests fail within the configured deadline and release their connections
+  And healthy event streams remain connected
+
+Scenario: Two hosts have the same tab paths
+  Given the old and new remote workspaces have identical tab paths and active indexes
+  When the user switches hosts
+  Then the new host starts its own file read and renders its own document
+
+Scenario: A pane gains its helper without changing its terminal key
+  Given a remote pane previously had no enabled helper
+  When its host scope becomes available
+  Then the panel adopts that scope and loads its workspace even if the terminal key is unchanged
+
+Scenario: A helper trickles a finite response indefinitely
+  Given a helper sends body bytes within each idle interval
+  Then the finite response still ends at its total body deadline
+  And long-lived event streams retain an idle deadline
 ```
 
 ### AC-38 — Enable a host from the panel [SHOULD / P1]
 
 ```gherkin
 Scenario: AC-38 happy path — first time on a host
-  Given the user ran "tms cc ai4 work" (iTerm2's tmux gateway runs "ssh -tt ai4 tmux -CC …") and ai4 has never been enabled or declined
+  Given the user ran "tms cc devbox.example work" (iTerm2's tmux gateway runs "ssh -tt devbox.example tmux -CC …") and devbox.example has never been enabled or declined
   When the user focuses a pane of that session
-  Then the panel says "ai4 is a remote host. Browse its files? This copies a 6 MB helper to ~/.iterm-filebrowser/bin on ai4." with [Enable] and [Not now]
+  Then the panel says "devbox.example is a remote host. Browse its files? This copies a 6 MB helper to ~/.iterm-filebrowser/bin on devbox.example." with [Enable] and [Not now]
   When the user clicks Enable
-  Then the bridge connects with the gateway's ssh destination and connection options, read exactly from its process ("ai4"; "-p 2222 -l alex 10.0.0.5" stays as given; only allowlisted -o options), reads the platform, copies the agent the package carries for it to "~/.iterm-filebrowser/bin/fbd-agent-<agent id>", links "~/.iterm-filebrowser/bin/fbd-agent" to it (never "bin/fbd": a Mac host keeps its own install there), checks it through a trial tunnel, and records ai4 as enabled
-  And the panel shows ai4's files (AC-37) within seconds; the agent logs to "~/.iterm-filebrowser/logs/agent.log" on ai4
+  Then the bridge connects with the gateway's ssh destination and connection options, read exactly from its process ("devbox.example"; "-p 2222 -l alex 10.0.0.5" stays as given; only allowlisted -o options), reads the platform, copies the agent the package carries for it to "~/.iterm-filebrowser/bin/fbd-agent-<agent id>", links "~/.iterm-filebrowser/bin/fbd-agent" to it (never "bin/fbd": a Mac host keeps its own install there), checks it through a trial tunnel, and records devbox.example as enabled
+  And the panel shows devbox.example's files (AC-37) within seconds; the agent logs to "~/.iterm-filebrowser/logs/agent.log" on devbox.example
 
 Scenario: AC-38 happy path — later
-  Given ai4 is enabled
-  When a pane of ai4 is focused, now or after an upgrade of the Mac package
+  Given devbox.example is enabled
+  When a pane of devbox.example is focused, now or after an upgrade of the Mac package
   Then no question is asked; the agent is updated from the running build when its agent id differs (AC-37)
 
 Scenario: AC-38 edge — Not now
   When the user clicks Not now
-  Then the pane shows REMOTE and freezes as before, and the panel does not ask again for ai4 until the bridge restarts
-  And the panel's menu ("Browse files of ai4…") or "iterm-filebrowser hosts enable ai4" (AC-40) enables it any time
+  Then the pane shows REMOTE and freezes as before, and the panel does not ask again for devbox.example until the bridge restarts
+  And the panel's menu ("Browse files of devbox.example…") or "iterm-filebrowser hosts enable devbox.example" (AC-40) enables it any time
 
 Scenario: AC-38 edge — remove from a host
-  When the user chooses "Remove helper from ai4" in the panel's menu, or runs "iterm-filebrowser hosts remove ai4"
-  Then the connection closes, "bin/fbd-agent*" and "logs/agent.log*" are removed from ai4's "~/.iterm-filebrowser" (the folder too, once empty; a Mac host keeps its own install) and ai4 is no longer enabled
+  When the user chooses "Remove helper from devbox.example" in the panel's menu, or runs "iterm-filebrowser hosts remove devbox.example"
+  Then the connection closes, "bin/fbd-agent*" and "logs/agent.log*" are removed from devbox.example's "~/.iterm-filebrowser" (the folder too, once empty; a Mac host keeps its own install) and devbox.example is no longer enabled
 
 Scenario: AC-38 failure — the host cannot take it
   When ssh fails (a password is needed, the host key is unknown, socket forwarding is off) or the host's system has no agent
@@ -1179,6 +1349,22 @@ Scenario: AC-38 edge — hosts are their ssh destinations
 
 Scenario: AC-38 edge — logs on the host
   Then the agent appends to "~/.iterm-filebrowser/logs/agent.log" (one older file kept, each at most 1 MB) and writes nothing else outside "~/.iterm-filebrowser", the user's roots and its socket folder in /tmp
+
+Scenario: AC-38 edge — concurrent host changes
+  When hosts are enabled, removed or updated concurrently by the bridge or command
+  Then each record update preserves other hosts and a removed host stays removed
+  And independent Macs' helper copies use separate temporary files and verify their own binary
+
+Scenario: AC-38 failure — SSH times out
+  When a platform probe or helper copy exceeds its timeout
+  Then the panel shows the failure and returns to a retryable state
+  And automatic helper updates retain their longer retry delay
+
+Scenario: Removing a helper while the backend restarts
+  Given a host helper is enabled and the local backend becomes unavailable
+  When the user removes the helper
+  Then backend unavailability does not prevent remote removal
+  And stale tunnel teardown cannot remove a replacement connection's socket
 ```
 
 ### AC-40 — One-line install, one command for the rest [SHOULD / P1]
@@ -1227,6 +1413,12 @@ Scenario: AC-40 security — signed releases
 
 Scenario: AC-40 security — unpacking
   Then an archive member other than a regular file or a folder (links, devices), a path outside the package, or setuid/setgid bits are refused or stripped on every Python the command runs on (3.9 included)
+
+Scenario: The one-line installer receives an older signed release
+  Given a newer numbered release is already installed
+  When the signed latest-release manifest names an older release
+  Then the installer refuses it before running package code
+  And a newer correctly signed release remains installable
 ```
 
 ### AC-39 — One build for every platform, released from the owner's runner [SHOULD / P1]
@@ -1279,33 +1471,33 @@ Scenario: AC-41 failure — too many streams
 
 ```gherkin
 Scenario: AC-42 happy path — after an upgrade
-  Given "ai4" is enabled (AC-38) and a tmux -CC window on "ai4" is open
-  And the Mac's File Browser was upgraded, so the helper on "ai4" is of another build
+  Given "devbox.example" is enabled (AC-38) and a tmux -CC window on "devbox.example" is open
+  And the Mac's File Browser was upgraded, so the helper on "devbox.example" is of another build
   When the bridge starts (the upgrade restarts it)
-  Then within 30 s, without the user focusing that window, the bridge connects to "ai4", copies the helper of the Mac's build over the window's ssh and connects to it
-  And a panel showing an "ai4" pane says "updating the helper on ai4…" meanwhile, then shows the toast "Helper on ai4 updated to <build>" and keeps "ai4 (helper updated to <build>)" in its header for 60 s
+  Then within 30 s, without the user focusing that window, the bridge connects to "devbox.example", copies the helper of the Mac's build over the window's ssh and connects to it
+  And a panel showing an "devbox.example" pane says "updating the helper on devbox.example…" meanwhile, then shows the toast "Helper on devbox.example updated to <build>" and keeps "devbox.example (helper updated to <build>)" in its header for 60 s
 
 Scenario: AC-42 happy path — a window opened later
-  Given "ai4" is enabled and its helper is of another build, and no window on "ai4" is open
-  When the user opens a tmux -CC window on "ai4"
+  Given "devbox.example" is enabled and its helper is of another build, and no window on "devbox.example" is open
+  When the user opens a tmux -CC window on "devbox.example"
   Then the helper is updated as above within 30 s, focused or not
 
 Scenario: AC-42 edge — the same build
-  Given the helper on "ai4" is of the Mac's build
+  Given the helper on "devbox.example" is of the Mac's build
   Then nothing is copied and no message shows
 
 Scenario: AC-42 edge — no open window
-  Given "ai4" is enabled but no window on it is open
-  Then the bridge starts no connection to "ai4" (one already open stays until it ends, as in AC-37)
+  Given "devbox.example" is enabled but no window on it is open
+  Then the bridge starts no connection to "devbox.example" (one already open stays until it ends, as in AC-37)
 
 Scenario: AC-42 edge — two Macs of different builds use one host
-  Given the helpers of both builds are on "ai4"
+  Given the helpers of both builds are on "devbox.example"
   Then each Mac runs its own build's helper; neither copies its helper again on every connect
 
 Scenario: AC-42 failure — the update fails
-  Given copying the helper to "ai4" fails (ssh refused, disk full)
-  Then the panel shows "Could not update the helper on ai4: <reason>" in its header, the host stays down, and the bridge tries again after 10 minutes or at its next start, not every 30 s
-  And a build without a helper for the host's platform says "helper outdated · iterm-filebrowser hosts enable ai4"
+  Given copying the helper to "devbox.example" fails (ssh refused, disk full)
+  Then the panel shows "Could not update the helper on devbox.example: <reason>" in its header, the host stays down, and the bridge tries again after 10 minutes or at its next start, not every 30 s
+  And a build without a helper for the host's platform says "helper outdated · iterm-filebrowser hosts enable devbox.example"
 ```
 
 ## 6. Flow and sequence diagrams
@@ -1330,7 +1522,7 @@ sequenceDiagram
   U->>D: GET /api/ls?path=/tmp&offset=0&limit=500
 ```
 
-The state key is the iTerm2 session ID for a plain shell, `tmux:<socket>:%N` for plain tmux and `tmuxcc:<session>:%N` for tmux -CC, so tmux panes that share one iTerm2 session keep separate state. The bridge is the only process that talks to iTerm2. `fbd` pushes changes to the panel over Server-Sent Events, so the panel never polls. The workspace for each pane lives in `fbd`, which is why it survives a panel reload (AC-05).
+The state key is the iTerm2 session ID for a plain shell, `tmux:<host>:<socket>:%N` for local tmux and `tmux-remote:<ssh destination>:<socket>:%N` for remote tmux -CC, so tmux panes that share one iTerm2 session keep separate state. The bridge is the only process that talks to iTerm2. `fbd` pushes changes to the panel over Server-Sent Events, so the panel never polls. The workspace for each pane lives in `fbd`, which is why it survives a panel reload (AC-05).
 
 ### Bridge lifecycle (AC-06, AC-30)
 
@@ -1516,7 +1708,7 @@ All `/api/*` calls need header `X-FB-Token: <token>` (or `?t=<token>` on GET, us
 | `GET /` | UI (embedded) | all |
 | `GET /api/state` | the focused pane's state (also the first SSE event) | AC-01, AC-14 |
 | `GET/PUT /api/prefs` | panel preferences: `{hidden, split}` | AC-18 |
-| `GET /api/events` | SSE: `state`, `workspace {key, rev, by}`, `fs-change {dirs, files: [{path, etag}], moved: [{from, to}]}`, `viewer-open {path}`, `bridge-error {message, by}` | AC-01, AC-05, AC-13, AC-26 |
+| `GET /api/events` | SSE: `state`, `workspace {key, rev, by}`, `fs-change {dirs, files: [{path, etag}], moved: [{from, to}]}`, `viewer-open {path, host}`, `rescan {host}`, `bridge-error {message, by}` | AC-01, AC-05, AC-13, AC-26 |
 | `GET /api/ws` | WebSocket for panels (AC-41): text frames `{"event", "data"}` with the events of `/api/events`, the current state first; token in the query, `Origin` must be `http://127.0.0.1:47821`; ping every 15 s | AC-41 |
 | `GET /api/ls?path&offset&limit&filter&hidden&locate` | page of a folder, with `writable` for the folder and `located` index of a name | AC-02, AC-16, AC-18 |
 | `GET /api/file?path` | text content + meta; `If-None-Match: "<etag>"` → 304 when unchanged | AC-03, AC-04, AC-13 |
@@ -1709,13 +1901,13 @@ Order: 0, 1 and 2 first (independent), then 3 → 4 for install and 5 → 6 for 
 | Step | Work | Depends on | Exit criteria |
 |---|---|---|---|
 | 1 | Host layout `~/.iterm-filebrowser/{bin,logs}`: copy to `bin/fbd-<agent id>`, link `bin/fbd`, keep two; agent `--log <file>` (append, 1 MB, one older file) | — | `test_agents.py`; container end to end |
-| 2 | The ssh destination from iTerm2's tmux gateway: its `ssh` process's arguments, keeping connection options (`-p -l -i -J -F -o -4 -6`, `-o` minus forwarding and command keys), dropping the rest | — | unit tests of the argument parsing; live on ai4 |
+| 2 | The ssh destination from iTerm2's tmux gateway: its `ssh` process's arguments, keeping connection options (`-p -l -i -J -F -o -4 -6`, `-o` minus forwarding and command keys), dropping the rest | — | unit tests of the argument parsing; live on devbox.example |
 | 3 | Hosts record keyed by the ssh destination (`agents.json`: ssh arguments, name, user, platform, agent id); the bridge connects only recorded hosts | 2 | `test_agents.py` |
 | 4 | Consent: state `remote: {key, name, state}`; panel offer with Enable / Not now (until the bridge restarts); menu "Browse Files of …" / "Remove Helper from …"; fbd `POST /api/remote/{enable,dismiss,remove}` → bridge commands; errors as `bridge-error` | 3 | `e2e_panel` with the fake bridge: ask, enable, setting up, not now, menu enable, remove with confirmation |
 | 5 | Package: `make package` → `dist/package/iterm-filebrowser-macos.tar.gz` (thin fbd for macOS arm64/x86_64 and Linux x86_64/arm64, bridge, installer, command); `make install` installs the package staged from the checkout | 1 | installer tests from a package folder; `make install` live |
 | 6 | Command `iterm-filebrowser`: status, install, upgrade, rollback, uninstall, hosts list/enable/remove | 3, 5 | unit tests with a fake release (file://) on Python 3.14 and 3.9 |
 | 7 | `install.sh` one-liner and release assets (package, SHA256SUMS); `make release` uploads them | 5, 6 | the line against a local file server with a test package; checksum mismatch refused |
-| 8 | Docs, SECURITY.md, Definition of Done | 1–7 | `make test`, `e2e_panel`, container end to end, live on ai4 |
+| 8 | Docs, SECURITY.md, Definition of Done | 1–7 | `make test`, `e2e_panel`, container end to end, live on devbox.example |
 | 9 | One root `~/.iterm-filebrowser/{bin,builds,logs,state}` on the Mac and hosts; the host helper is `bin/fbd-agent`; move the earlier layout, keeping links for a kept older build | 1, 5 | `test_install.py` (fresh layout, migration, rollback into an old build, links dropped), `test_agents.py`, container end to end; live upgrade keeps the token |
 
 ### Stage 10 plan (security audit of 2026-10-01)
@@ -1765,7 +1957,7 @@ Results of 2026-09-30 on a MacBook (Apple Silicon) (iTerm2 3.6.11, tmux 3.6a). `
 - [x] AC-26 (0.8.0) — Verified by: live 2026-10-01, iTerm2 3.7.3: after an iTerm2 restart the stored profile read `Custom Command = No` and the viewer session had a tty (bash); rewriting the same file reloaded it as `Browser` in 0.5 s and the viewer opened with no tty. `make test` → bridge 22 pass (`test_viewer`: left alone, reloaded, written when missing, fails loud after one rewrite, error reaches the asking panel), cargo 13 pass (`bridge_errors_are_capped_and_addressed`); `e2e_panel` 86/86 (×2): command carries `by`, another panel's error not shown, the asking panel's shown, path bar shows and follows the active tab, page title is the path, copy puts it on the clipboard; `security_check.sh` against a private fbd 10/10 incl. `/internal/error` without secret → 401. Live after `make install && make restart` (one bridge, one fbd, takeover in 1 s): `scripts/e2e_windows.py` flips the stored profile to a terminal, then ⌘-click opens a browser viewer (`tty=None`, `Browser`; bridge.log "viewer profile reloaded as a browser profile"), reused for a second file, focus kept on the terminal pane; `e2e_terminal.py` PASS; `e2e_cwd.py 5` PASS (bash p95 203 ms, tmux 443 ms, tmux -CC 503 ms). AC-25 failed once in the first run right after the restart and passed in the next 3 runs (timing, open).
 - [ ] AC-36 — Verified by: `cargo test panels` (claim levels, collision and contested windows, a late-closing stream keeps the claim, asks answered once); `e2e_panel` 95/95 (×2) with 9 AC-36 checks (acting binds, a window without a panel and another window's panel do not move it, a new panel claims and shows its window, an in-page reload keeps the window, two load guesses fall); live after `make install`: claims logged in fbd.log (`event="panel.claim"`), a window without a Toolbelt reported `panel: false`, the first window's last state kept. Open: the owner's own check of the reported scenario; `scripts/e2e_windows.py` AC-36 needs iTerm2 on screen (a hidden window's Toolbelt never loads, AS-09).
 - [ ] AC-37 — Verified by: `e2e_panel` 122/122 (×3) with 16 AC-37 checks against a real agent on this Mac registered as host "e2ehost" serving the same folder: listings carry `X-FB-Host`, a local unsaved tab stays out of the remote pane and comes back with its edit, the remote file opens with the host's content, the agent's watcher reports a change, no Finder actions (menu and fbd 400), an unknown host 404, the agent exits with its connection leaving no folder, a disconnected host fails loud and never lists local files; `scripts/e2e_remote.py` PASS on Debian 12 sshd containers, arm64 and amd64 (bridge connects in 0.3–0.5 s, list, create, save, stale save 409, outside roots 403, change tagged with the host, Linux Trash, agent gone afterwards); `bridge/tests/test_agents.py` 11 pass (probe, ssh errors, install keeps two and refuses a bad id, tunnel errors, host-name collision, back-off, outdated agent replaced or explained). Open: a live tmux -CC pane on the owner's VM; a macOS host. Stage 10: `e2e_panel` a Trash dialog confirmed after a switch to this Mac trashes nothing ("nothing changed"); `test_resolve.py` a host reporting this Mac's name behind ssh is remote; `e2e_remote.py` PASS over the socket.
-- [ ] AC-38 — Verified by: `e2e_panel` 130/130 (×2): the offer names the host, Enable sends `host-enable` with the panel's client, "Setting up…" disables both buttons, Not now sends `host-dismiss` and the offer goes, the menu offers "Browse Files of …" and, when up, "Remove Helper from …" behind a confirmation; `scripts/e2e_remote.py` PASS (Debian sshd container): Enable through `hosts.enable` puts `fbd-agent-<agent id>` and the `fbd-agent` link in `~/.iterm-filebrowser/bin` (0700), the agent logs to `~/.iterm-filebrowser/logs/agent.log`, Remove leaves no `~/.iterm-filebrowser`; `test_sshargs.py` 8 (tms, ProxyCommand kept whole, -F/-J/-p/-l, session options dropped, autossh, mosh, odd arguments); `test_agents.py` 14 (a Mac host's own `bin/fbd` and logs survive Enable and Remove, keys by destination, two "ubuntu" hosts apart, Stage 8 records read, offer states, failed Enable retried with a toast, back-off, remove, remove while connecting, outdated helper replaced); live: the owner's running `tms` gateway resolved to `['ai4']`. Open: the owner clicks Enable for ai4.
+- [ ] AC-38 — Verified by: `e2e_panel` 130/130 (×2): the offer names the host, Enable sends `host-enable` with the panel's client, "Setting up…" disables both buttons, Not now sends `host-dismiss` and the offer goes, the menu offers "Browse Files of …" and, when up, "Remove Helper from …" behind a confirmation; `scripts/e2e_remote.py` PASS (Debian sshd container): Enable through `hosts.enable` puts `fbd-agent-<agent id>` and the `fbd-agent` link in `~/.iterm-filebrowser/bin` (0700), the agent logs to `~/.iterm-filebrowser/logs/agent.log`, Remove leaves no `~/.iterm-filebrowser`; `test_sshargs.py` 8 (tms, ProxyCommand kept whole, -F/-J/-p/-l, session options dropped, autossh, mosh, odd arguments); `test_agents.py` 14 (a Mac host's own `bin/fbd` and logs survive Enable and Remove, keys by destination, two "ubuntu" hosts apart, Stage 8 records read, offer states, failed Enable retried with a toast, back-off, remove, remove while connecting, outdated helper replaced); live: the owner's running `tms` gateway resolved to `['devbox.example']`. Open: the owner clicks Enable for devbox.example.
 - [ ] AC-40 — Verified by: `make package` → 9.7 MB tarball with four thin binaries, the macOS fbd's `--version` equals `BUILD`; `test_cli.py` 4 (good release installs, wrong checksum installs nothing, a member outside the package refused, a missing release says so) on Python 3.14 and 3.9; `test_install.py` (installs from a package folder, the Mac's fbd linked to its macOS helper, `~/.iterm-filebrowser/bin/iterm-filebrowser` from the installed build; one root: the earlier layout moved with the token kept, old `current` and `previous` copied, rollback into the old build keeps the new command, old-folder links dropped after two more installs, merge into an existing state folder, a token in both places refused with nothing installed, uninstall before install keeps the token, a bad package moves nothing, a log written while moving merged, an unrelated `~/.local/bin/fbd` kept). Live, the owner's Mac: `make install` upgraded 0109d71 → 8086707 from the earlier layout; the token (unchanged since Sep 30) and workspaces moved to `~/.iterm-filebrowser/state`, logs to `logs/`, both builds in `builds/` (previous 0109d71), the old folders left as links (0109d71 uses them), `~/.local/lib/iterm-filebrowser` and our `~/.local/bin` links gone, `iterm-filebrowser status` shows the new build running with the bridge connected; `security_check.sh` PASS. Stage 10: `test_cli.py` 13 on Python 3.14 and 3.9 (unsigned and wrongly signed releases refused, an install without a key refuses, an older release not taken as the latest, a release must be the one asked for, symlink, hardlink and device members refused, setuid stripped; the real `install.sh` checks the signature against a local release; `install.sh` and `release-signers` name the same key). Open: the maintainer's key (`make signing-key`).
 - [ ] AC-39 — Verified by: `make toolchain && make agents` on the Mac → four binaries in 50 s (Mach-O arm64/x86_64, static ELF aarch64/x86-64); the Linux ones run on Debian 11/12 and Ubuntu 24.04 containers; fbd's 18 tests pass in a Debian container; `test_workflows.py` 6 pass (owner runner only, no pull-request trigger, pinned and allowed actions, no GitHub storage, write only after the tag check). Open: registering the runner on the owner's VM (`scripts/runner/setup.sh`) and its first CI and release runs. Stage 10: `test_workflows.py` 7 (no write permission, no GitHub token, no fork-reachable trigger, `cargo --locked`); the release workflow only tests and builds.
 - [ ] AC-33 — Verified by: `bridge/tests/test_install.py` 19 pass on a temporary home with iTerm2 faked (fresh install, upgrade, same build not relaunched, prune to two, unhealthy build rolled back, refused launch keeps the switch, iTerm2 not running waits and prunes nothing, wrong binary refused before any change, unversioned layout migrated, half-copied build never linked, one install at a time, uninstall keeps token and workspaces, build id covers the bridge); `fbd --version` prints the id. Live: see the owner's install below.
@@ -1775,4 +1967,23 @@ Results of 2026-09-30 on a MacBook (Apple Silicon) (iTerm2 3.6.11, tmux 3.6a). `
 - [x] AC-32 — Verified by: `npm test` `icons` 3 pass (every spec example, names before extensions, every icon a Tabler SVG, tinted strings reused); `e2e_panel`: code, text and folder icons in their theme colors, tabs carry icons; screenshot checked.
 - [x] AC-24 — Verified by: `e2e_panel` local `.md` link opens a tab, `../README.md#sandbox` back, panel URL unchanged.
 - [x] AC-41 — Verified by: `cargo test socket` 3 pass (Origin required and exact, a socket behind the bus closed, frames carry the SSE payload); `npm test` `stream` 5 pass; `e2e_panel` 148/148 with 7 AC-41 checks (upgrade 101 with the panel Origin, 403 for another or no Origin, 401 without the token, 12 panels in one browser load in 267 ms over 12 sockets with no SSE stream and all follow the next pane); with the SSE panel the 12-panel check fails (`sse` 7, timeouts). Chromium does not count WebSockets either, so the WebKit claim rests on the live run: 2026-10-03, iTerm2 with the installed build, 100 new windows opened in 60 s → `ws_clients` 112 (100 + 12 kept web views), every panel rendered its tree (screenshot), `/api/ls` 2 ms, fbd 136 open files, panels about 50 MB each; closing them returned `ws_clients` to 12. `scripts/e2e_cwd.py 3`, `scripts/e2e_terminal.py` (its check now joins soft-wrapped rows: the typed `cd` is longer than the window), `scripts/security_check.sh` pass.
-- [x] AC-42 — Verified by: `bridge/tests/test_agents.py` 20 pass, 7 for AC-42 (an outdated helper is replaced, says "updating the helper on devbox…" meanwhile without a second connection, then "updated to <build>" for 60 s; a failed copy says "Could not update the helper on devbox: …" and waits 10 minutes; a host removed during the copy stays removed; the same build copies nothing; two Macs' helpers on one host each run their own, with the real tunnel command through a fake ssh; open tmux -CC windows of enabled hosts are found unfocused); `e2e_panel` 150/150 with 2 AC-42 checks (toast "Helper on devbox updated to v9.9.0", header note). Live 2026-10-03 on the owner's Mac and host ai4 (Linux x86_64), its window not focused: with the helper of the previous build linked and this build's removed, a bridge restart logged `agent on ai4: 4e37ea05e357 → 3fe3f830d8f7` after 1 s and `connected` after 4 s (twice).
+- [x] AC-42 — Verified by: `bridge/tests/test_agents.py` 20 pass, 7 for AC-42 (an outdated helper is replaced, says "updating the helper on devbox…" meanwhile without a second connection, then "updated to <build>" for 60 s; a failed copy says "Could not update the helper on devbox: …" and waits 10 minutes; a host removed during the copy stays removed; the same build copies nothing; two Macs' helpers on one host each run their own, with the real tunnel command through a fake ssh; open tmux -CC windows of enabled hosts are found unfocused); `e2e_panel` 150/150 with 2 AC-42 checks (toast "Helper on devbox updated to v9.9.0", header note). Live 2026-10-03 on the owner's Mac and host devbox.example (Linux x86_64), its window not focused: with the helper of the previous build linked and this build's removed, a bridge restart logged `agent on devbox.example: 4e37ea05e357 → 3fe3f830d8f7` after 1 s and `connected` after 4 s (twice).
+
+
+### Max review — 2026-10-04
+
+Review of the complete repository at `da0a8b2`, in an isolated worktree; the original checkout's uncommitted changes are excluded.
+
+| Item | Evidence |
+| --- | --- |
+| Method | `$code-review-cc --fix max`: A–G finders, five quality passes, independent verification, three fresh gap sweeps; final pragmatic review approved the source after its reproduced workspace ordering and rename/save findings were fixed. |
+| Ranked report | `docs/reviews/max-review-20261004.json`: 20 highest-ranked confirmed findings, 19 fixed, one architecture finding deferred. |
+| Backend | `make test`: 47 Rust tests pass; competing saves, save/rename ordering, exclusive rename, maximum basenames, expired tickets, flush ordering, scan invalidation, cache accounting, lagged SSE, split Unicode and stalled/trickling helpers. |
+| Bridge and scripts | `make test`: 134 Python tests pass; command context, SSH destination keys, exact cwd, concurrent host records, removal/registration ownership, upload target allowlist, unique staging, timeout handling, adopted viewers, inherited pipes, isolated integration guards, installer replay and runtime build identity. |
+| Panel | Typecheck and 30 UI unit tests pass; production `FB_BIN=../fbd/target/release/fbd node test/e2e_panel.mjs`: 150 checks pass; `node test/e2e_review.mjs`: 25 checks pass, including controlled host/pane/workspace/save/rename races and CRLF retention. |
+| Security and build | `scripts/security_check.sh` against a private release fbd on port 47833: 15 checks pass; locked debug/release builds pass without new warnings; whitespace checks and all authored files' 500-line cap pass. |
+| Large folder | `scripts/bench_ls.sh` against a private release fbd, 500,000 entries, five runs: uncached first-page p95 345 ms, cached-page p95 8 ms, RSS 31 MB; PASS. |
+| Compatibility | `/api/view/pending` retains its public string-array response while internal queues preserve host; revisions/generations may reset on restart; dirty buffers survive stream reconciliation without claiming missed rename replay. |
+| Scope excluded | No live install, restart or release; live iTerm2 `e2e_cwd.py`/`e2e_terminal.py`/`e2e_windows.py`, real SSH and Linux runtime integration were not rerun. |
+| Noticed, not fixed | Descriptor-relative confinement against an untrusted account swapping shared ancestors requires a separate filesystem change; roots/ancestors must remain trusted. The watcher still follows the globally focused pane, so inactive bound windows may miss external changes until refresh. |
+| Review decisions | Reject a recanonicalization workaround for ancestor races, numeric generation ordering across restarts, and a breaking pending-viewer API shape; retain the shared mutation mutex, request lifecycles and internal host filtering. Saves coordinate this daemon's mutations; arbitrary external processes do not participate in that mutex. |

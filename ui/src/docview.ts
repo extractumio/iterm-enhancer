@@ -3,13 +3,15 @@
 // the panel: anchors scroll, web links go to the default browser, files open as tabs
 // (`guide.md#install` opens guide.md and scrolls to "install").
 
-import { api, apiOrToast, basename, dirname, hasScheme, rawUrl, resolvePath, toast, type FileView } from "./api";
+import { api, apiOrToast, basename, dirname, decodePath, hasScheme, rawUrl, resolvePath, toast, type FileView } from "./api";
 import { isMarkdown, renderMarkdown } from "./markdown";
 
 export const isHtml = (path: string) => /\.x?html?$/i.test(path);
 export const isRenderable = (path: string) => isMarkdown(path) || isHtml(path);
 
 export interface LinkHost {
+  host: string | null;
+  current(): boolean;
   open(path: string, anchor?: string): void;
   prefetched(path: string, file: FileView): void; // the link check already read the file
 }
@@ -22,15 +24,17 @@ export function scrollToAnchor(scope: Document | HTMLElement, anchor: string, sm
 
 /** Follow `href` found in the document at `from`; `scope` is where in-page anchors live. */
 export async function followLink(href: string, from: string, scope: Document | HTMLElement, host: LinkHost) {
-  if (href.startsWith("#")) return scrollToAnchor(scope, decodeURIComponent(href.slice(1)));
+  if (href.startsWith("#")) return scrollToAnchor(scope, decodePath(href.slice(1)));
   if (/^(https?:|mailto:)/i.test(href)) return void apiOrToast("POST", "/api/os/open", { body: { url: href } });
   if (hasScheme(href) && !href.startsWith("file:")) return toast(`Not opened: ${href.split(":")[0]} links`);
   const [file, anchor] = href.replace(/^file:\/\//, "").split("#");
   let target: string;
   try { target = resolvePath(dirname(from), decodeURIComponent(file)); } catch { return toast(`Bad link: ${href}`); }
   try {
-    host.prefetched(target, await api<FileView>("GET", "/api/file", { query: { path: target } }));
-    host.open(target, anchor ? decodeURIComponent(anchor) : undefined);
+    const file = await api<FileView>("GET", "/api/file", { query: { path: target }, host: host.host });
+    if (!host.current()) return;
+    host.prefetched(target, file);
+    host.open(target, anchor ? decodePath(anchor) : undefined);
   } catch (e: any) {
     toast(`${basename(target)}: ${e.message}`);
   }
@@ -75,7 +79,7 @@ function prepareHtml(text: string, path: string): string {
     for (const attr of [...el.attributes]) if (/^on/i.test(attr.name)) el.removeAttribute(attr.name);
   }
   const local = (url: string | null) => !!url && !hasScheme(url) && !/^(#|\/\/)/.test(url);
-  const raw = (url: string) => rawUrl(resolvePath(dirname(path), decodeURIComponent(url.split(/[?#]/)[0])));
+  const raw = (url: string) => rawUrl(resolvePath(dirname(path), decodePath(url.split(/[?#]/)[0])));
   for (const el of doc.querySelectorAll<HTMLElement>("img[src], source[src], video[src], audio[src], input[src]")) {
     const src = el.getAttribute("src");
     if (local(src)) el.setAttribute("src", raw(src!));

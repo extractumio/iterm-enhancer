@@ -123,6 +123,8 @@ async def main(conn):
         for w in opened:
             await w.async_close(force=True)
     print("PASS" if ok else "FAIL")
+    if not ok:
+        raise SystemExit(1)
 
 
 if not iterm_in_front():

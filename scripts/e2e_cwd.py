@@ -137,6 +137,8 @@ async def main(conn):
             d.rmdir()
         ROOT.rmdir()
     print("PASS" if all(results) else "FAIL")
+    if not all(results):
+        raise SystemExit(1)
 
 
 iterm2.run_until_complete(main)

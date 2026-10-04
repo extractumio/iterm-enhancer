@@ -9,6 +9,7 @@ import { rowHtml, type RowView } from "./tree-render";
 import { PAGE, indexOf, rowAt, rowsOf, type DirNode, type RowDesc, type RowsHost } from "./tree-rows";
 import { expandAll, summary } from "./tree-expand";
 import { InlineEdit, type EditMode } from "./tree-edit";
+import { selectRange } from "./tree-select";
 
 export type { EditMode } from "./tree-edit";
 
@@ -37,6 +38,7 @@ export class Tree {
   private renderQueued = false;
   private epoch = 0;                 // bumps on re-root; stale async results are dropped
   private expandRun = 0;             // bumps on expand all and any collapse; cancels a running one
+  private selectionRun = 0;          // cancels a paged range on another interaction
   private spacer = document.createElement("div");
   private layer = document.createElement("div");
   private edit: InlineEdit;
@@ -110,6 +112,7 @@ export class Tree {
   /** Folders changed on disk or through a panel: re-read the ones we show. The next
    *  response replaces their pages (gen -1) and re-locates expanded children. */
   async refreshDirs(dirs: string[]) {
+    this.selectionRun++;
     await Promise.all(dirs.map((d) => this.nodes.get(d)).filter((n) => n?.loaded).map((n) => {
       n!.gen = -1;
       return this.load(n!, 0, true);
@@ -118,6 +121,7 @@ export class Tree {
 
   /** After a rename, carry expanded folders, selection and cached nodes to the new path. */
   renamed(from: string, to: string) {
+    this.selectionRun++;
     this.expanded = new Set([...this.expanded].map((p) => rebase(p, from, to)));
     this.selected = new Set([...this.selected].map((p) => rebase(p, from, to)));
     const parent = this.nodes.get(dirname(from));
@@ -156,6 +160,7 @@ export class Tree {
   private expandAllFrom(p: string) { void this.expandAll(p).then((m) => { if (m) this.cb.notify(m); }); }
 
   collapseAll() {
+    this.selectionRun++;
     this.expandRun++;
     this.expanded.clear();
     // every cached folder forgets its open children, or re-opening one shows them again
@@ -213,26 +218,27 @@ export class Tree {
 
   private async load(n: DirNode, page: number, force = false): Promise<void> {
     if (n.pending.has(page) && !force) return;
+    if (force) { n.read = (n.read ?? 0) + 1; n.pending.clear(); }
     n.pending.add(page);
-    const epoch = this.epoch;
+    const epoch = this.epoch, read = n.read;
     try {
       let r: Page;
       for (;;) {
         r = await api<Page>("GET", "/api/ls", { query: this.query({ path: n.path, offset: page * PAGE }) });
         if (r.status !== "loading") break;           // backend still reading a huge folder
         await new Promise((res) => setTimeout(res, 300));
-        if (epoch !== this.epoch) return;
+        if (epoch !== this.epoch || read !== n.read) return;
       }
-      if (epoch !== this.epoch) return;
+      if (epoch !== this.epoch || read !== n.read) return;
       const reread = n.loaded && r.gen !== n.gen;
       if (r.gen !== n.gen) n.pages.clear();          // folder was re-read: old pages are stale
       Object.assign(n, { loaded: true, error: r.status === "error" ? r.error : undefined, total: r.total, gen: r.gen, writable: r.writable });
       if (r.status !== "error") n.pages.set(page, r.entries);
       if (reread && n.children.size) void this.relocate(n); // entries may have shifted
     } catch (e: any) {
-      n.error = e.message; n.loaded = true;
+      if (epoch === this.epoch && read === n.read) { n.error = e.message; n.loaded = true; }
     } finally {
-      n.pending.delete(page);
+      if (read === n.read) n.pending.delete(page);
       this.touch();
     }
   }
@@ -262,6 +268,7 @@ export class Tree {
   }
 
   private async expand(path: string, persist = true) {
+    this.selectionRun++;
     if (!this.root || !path.startsWith(this.root.path)) return;
     const parent = this.nodes.get(dirname(path));
     if (!parent || (!this.expanded.has(parent.path) && parent !== this.root)) return;
@@ -278,6 +285,7 @@ export class Tree {
   }
 
   private collapse(path: string, persist = true, cancelExpand = true) {
+    this.selectionRun++;
     if (cancelExpand) this.expandRun++;
     for (const p of [...this.expanded]) {
       if (!isUnder(p, path)) continue;
@@ -295,8 +303,10 @@ export class Tree {
   }
 
   async reveal(path: string) {
+    const epoch = this.epoch;
     const parent = this.nodes.get(dirname(path));
     const idx = parent ? await this.locate(parent, basename(path)) : null;
+    if (epoch !== this.epoch) return;
     const at = parent && idx != null ? indexOf(parent, idx, this.rows) : -1;
     if (at < 0) return;
     this.cursor = this.anchor = at;
@@ -354,10 +364,10 @@ export class Tree {
   private rowEl(e: Event) { return (e.target as HTMLElement).closest<HTMLElement>(".row[data-p]"); }
 
   private select(p: string, i: number, mode: "one" | "toggle" | "range" = "one") {
+    this.selectionRun++;
     if (mode === "range" && this.anchor >= 0) {
-      this.selected.clear();
-      const [a, b] = this.anchor < i ? [this.anchor, i] : [i, this.anchor];
-      for (let k = a; k <= b; k++) { const x = this.descAt(k); if (x) this.selected.add(x.p); }
+      void this.rangeTo(i);
+      return;
     } else if (mode === "toggle") {
       if (!this.selected.delete(p)) this.selected.add(p);
       this.anchor = i;
@@ -368,6 +378,31 @@ export class Tree {
     this.cursor = i;
     this.cb.changed();
     this.queue();
+  }
+
+  private async rangeTo(i: number, range = true) {
+    if (!this.root) return;
+    const root = this.root, epoch = this.epoch, run = ++this.selectionRun;
+    const alive = () => epoch === this.epoch && run === this.selectionRun;
+    const rows = Object.create(this.rows) as RowsHost;
+    rows.load = () => {}; // selection controls page concurrency; rendering still loads its viewport
+    const [a, b] = range ? (this.anchor < i ? [this.anchor, i] : [i, this.anchor]) : [i, i];
+    if (!range) this.anchor = i;
+    this.cursor = i;
+    this.selected.clear();
+    const selected = new Set<string>();
+    const done = await selectRange(a, b, async (index) => {
+      let d = rowAt(root, index, 0, rows);
+      if (d.kind !== "entry") return null;
+      const page = Math.floor(d.idx / PAGE);
+      while (d.dir.pending.has(page) && alive()) await new Promise((r) => setTimeout(r, 16));
+      if (!alive()) return null;
+      if (!d.row) await this.load(d.dir, page);
+      if (!alive()) return null;
+      d = rowAt(root, index, 0, rows);
+      return d.kind === "entry" && d.row ? join(d.dir.path, d.row.n) : null;
+    }, alive, (path) => selected.add(path));
+    if (done) { this.selected = selected; this.cb.changed(); this.queue(); }
   }
 
   private onClick(e: MouseEvent) {
@@ -412,8 +447,7 @@ export class Tree {
     const total = rowsOf(this.root, this.rows);
     const move = (to: number) => {
       to = Math.max(0, Math.min(total - 1, to));
-      const x = this.descAt(to);
-      if (x) this.select(x.p, to, e.shiftKey ? "range" : "one");
+      void this.rangeTo(to, e.shiftKey && this.anchor >= 0);
       this.cursor = to;
       this.scrollIntoView(to);
       this.queue();

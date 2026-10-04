@@ -39,7 +39,7 @@ fn yes() -> bool {
 pub async fn ls(State(app): State<Shared>, Query(q): Query<LsQuery>) -> ApiResult {
     let path = abs(&q.path)?;
     let mut page = app.cache.page(&path, q.offset, q.limit, &q.filter, q.hidden, q.locate.as_deref()).await;
-    page.writable = app.roots.allows(&path); // the panel never guesses where it may write
+    page.writable = blocking(move || app.roots.allows(&path)).await?;
     Ok(Json(page).into_response())
 }
 

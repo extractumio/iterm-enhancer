@@ -105,7 +105,7 @@ pub struct App {
     watcher: Option<Arc<Watcher>>,
     tickets: Tickets,
     /// files sent to the viewer window before its page connected (drained by the page)
-    viewer_pending: Mutex<Vec<String>>,
+    viewer_pending: Mutex<Vec<api_state::ViewBody>>,
     /// which window each panel lives in (AC-36)
     panels: panels::Panels,
     /// remote hosts' agents (AC-37)
@@ -135,9 +135,10 @@ impl Tickets {
 
     fn redeem(&self, code: &str) -> bool {
         let mut t = self.0.lock();
-        let before = t.len();
-        t.retain(|(c, at)| c != code && at.elapsed() < Self::TTL);
-        t.len() < before && !code.is_empty()
+        t.retain(|(_, at)| at.elapsed() < Self::TTL);
+        let Some(at) = t.iter().position(|(c, _)| !code.is_empty() && local::same(c, code)) else { return false };
+        t.swap_remove(at);
+        true
     }
 }
 
@@ -368,5 +369,20 @@ mod tests {
         assert!(!t.redeem(&code));
         assert!(!t.redeem(""));
         assert!(!t.redeem("nope"));
+    }
+
+    #[test]
+    fn expired_tickets_never_authenticate() {
+        let t = Tickets::default();
+        let expired = Instant::now() - Tickets::TTL;
+        t.0.lock().push(("expired".into(), expired));
+        let fresh = t.issue();
+        t.0.lock().push(("expired".into(), expired));
+        assert!(!t.redeem("unknown"), "expiry cleanup is not redemption");
+        t.0.lock().push(("expired".into(), expired));
+        assert!(!t.redeem("expired"));
+        assert!(!t.redeem(""));
+        assert!(t.redeem(&fresh));
+        assert!(!t.redeem(&fresh));
     }
 }

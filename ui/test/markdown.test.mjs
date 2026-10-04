@@ -52,6 +52,11 @@ test("remote images are not loaded", () => {
   assert.match(h, /class="remote-img"/);
 });
 
+test("encoded hash and question mark belong to the local image filename", () => {
+  const h = mdToHtml("![arch](docs/a%23b%3Fc.png)", P);
+  assert.match(h, /docs%2Fa%23b%3Fc\.png&amp;t=tok123/);
+});
+
 test("headings get anchors", () => {
   assert.match(mdToHtml("## Install & Run", P), /<h2 id="install--run">/);
 });

@@ -42,6 +42,8 @@ pub enum Event {
     },
     /// open `path` as a tab in the viewer window that is already open
     ViewerOpen { path: String, host: Option<String> },
+    /// The upstream stream reconnected: reconcile files without replacing dirty buffers.
+    Rescan { host: Option<String> },
     /// a bridge command failed; only the panel `by` (its `X-FB-Client`) shows it
     BridgeError { message: String, by: Option<String> },
     /// these panels lost their window binding to a stronger or competing claim (AC-36)
@@ -55,6 +57,7 @@ impl Event {
             Event::Workspace { .. } => "workspace",
             Event::FsChange { .. } => "fs-change",
             Event::ViewerOpen { .. } => "viewer-open",
+            Event::Rescan { .. } => "rescan",
             Event::BridgeError { .. } => "bridge-error",
             Event::Unbind { .. } => "unbind",
         }

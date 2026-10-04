@@ -44,7 +44,8 @@ OLD_BIN = HOME / ".local/bin"
 OLD_DIRS = {HOME / "Library/Application Support/iterm-filebrowser": APP_DIR, HOME / "Library/Logs/iterm-filebrowser": LOG_DIR}
 OLD_MARK = ".old-layout"  # in a build copied from the earlier layout: it uses the old folders
 SOURCES = ["bridge/fb_bridge.py", "bridge/fbbridge", "fbd/src", "fbd/Cargo.toml", "fbd/Cargo.lock",
-           "ui/src", "ui/public", "ui/build.mjs", "ui/package-lock.json"]
+           "ui/src", "ui/public", "ui/build.mjs", "ui/package.json", "ui/package-lock.json",
+           "scripts/install.py", "scripts/install_launch.py", "scripts/cli.py", "scripts/iterm-filebrowser", "release-signers"]
 
 
 class Failed(Exception):

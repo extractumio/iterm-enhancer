@@ -33,7 +33,7 @@ async def main(conn):
                 break
         else:
             print("FAIL focus: fbd never reported the test window; nothing sent")
-            return
+            raise SystemExit(1)
         key = call("GET", "/api/state")[1]["key"]
         # a name with control characters must never reach the terminal
         status, body = call("POST", "/api/terminal/insert", {"paths": ["a\x03echo PWNED\r"], "key": key})
@@ -100,6 +100,8 @@ async def main(conn):
         await win.async_close(force=True)
         TARGET.rmdir()
     print("PASS" if ok else "FAIL")
+    if not ok:
+        raise SystemExit(1)
 
 
 iterm2.run_until_complete(main)

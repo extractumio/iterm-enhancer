@@ -57,6 +57,7 @@ struct File {
 
 pub struct Store {
     data: Mutex<File>,
+    writing: Mutex<()>,
     path: PathBuf,
     dirty: Notify,
     bus: Bus,
@@ -83,7 +84,7 @@ impl Store {
         data.version = 1;
         let cutoff = now().saturating_sub(ttl_days * 86400);
         data.panes.retain(|_, p| p.updated >= cutoff);
-        let store = Arc::new(Store { data: Mutex::new(data), path, dirty: Notify::new(), bus });
+        let store = Arc::new(Store { data: Mutex::new(data), writing: Mutex::new(()), path, dirty: Notify::new(), bus });
         let s = store.clone();
         tokio::spawn(async move {
             loop {
@@ -97,6 +98,8 @@ impl Store {
     }
 
     pub fn flush(&self) {
+        // Shutdown and the debounce worker must serialize snapshot capture and publication.
+        let _writing = self.writing.lock();
         let bytes = serde_json::to_vec(&*self.data.lock()).unwrap_or_default(); // lock held only to serialize
         let tmp = self.path.with_extension("json.tmp");
         if fs::write(&tmp, bytes).and_then(|_| fs::rename(&tmp, &self.path)).is_err() {
@@ -170,6 +173,27 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_waiting_flush_captures_the_latest_snapshot_after_the_writer_lock() {
+        let path = std::env::temp_dir().join(format!("fbd-ws-flush-{}.json", std::process::id()));
+        let s = Arc::new(Store { data: Mutex::new(File { version: 1, ..Default::default() }),
+            writing: Mutex::new(()), path: path.clone(), dirty: Notify::new(), bus: Bus::new() });
+        let write = s.writing.lock();
+        let (started, waiting) = std::sync::mpsc::channel();
+        let thread = {
+            let s = s.clone();
+            std::thread::spawn(move || { started.send(()).unwrap(); s.flush(); })
+        };
+        waiting.recv().unwrap();
+        s.data.lock().prefs = serde_json::json!({"newest": "large snapshot".repeat(1000)});
+        drop(write);
+        thread.join().unwrap();
+        let saved: File = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.prefs, s.prefs());
+        assert!(!path.with_extension("json.tmp").exists());
+        fs::remove_file(path).unwrap();
+    }
 
     /// AC-35: a build reads state written by a newer one (unknown fields) or an older one
     /// (fields missing), so a rollback or upgrade never loses the workspaces.

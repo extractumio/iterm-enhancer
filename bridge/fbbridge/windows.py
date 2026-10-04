@@ -98,6 +98,8 @@ class Windows:
             if (s and await s.async_get_variable("profileName") == VIEWER_PROFILE
                     and await kind_of(s) == BROWSER):
                 self.viewer_id, self.viewer_session = w.window_id, s.session_id
+                url = (await s.async_get_profile()).all_properties.get("Initial URL", "")
+                self.viewer_host = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("host", [None])[0]
                 self.known.add(w.window_id)
                 return
 

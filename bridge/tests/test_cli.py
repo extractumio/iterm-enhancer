@@ -57,7 +57,7 @@ class UpgradeTest(unittest.TestCase):
         rel = self.root / "releases/latest/download"
         rel.mkdir(parents=True)
         self.rel = rel
-        p = mock.patch.dict(os.environ, {"FB_RELEASE_URL": f"file://{self.root}/releases", "FB_APP_DIR": str(self.root / "app")})
+        p = mock.patch.dict(os.environ, {"FB_RELEASE_URL": f"file://{self.root}/releases", "FB_APP_DIR": str(self.root / "app"), "HOME": str(self.root / "home")})
         p.start()
         self.addCleanup(p.stop)
         import cli
@@ -169,6 +169,21 @@ class UpgradeTest(unittest.TestCase):
         key = lambda text: re.findall(r"ssh-\S+ \S+", text)
         sh = re.search(r"(?m)^SIGNERS='(.*)'$", (REPO / "scripts/install.sh").read_text()).group(1)
         self.assertEqual(key(sh), key((REPO / "release-signers").read_text()))
+
+    def test_install_sh_rejects_a_replayed_signed_release(self):
+        build = self.root / "home/.iterm-filebrowser/builds/current/BUILD"
+        build.parent.mkdir(parents=True)
+        build.write_text("v9.1.0\n")
+        signers = self.cli.SIGNERS.read_text().strip()
+        self.publish(self.package(), release="v9.0.0")
+        r = self.install_sh(signers)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("older than the installed v9.1.0", r.stderr)
+        self.assertFalse(self.marker.exists())
+        self.publish(self.package(), release="v9.2.0")
+        r = self.install_sh(signers)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.marker.read_text().strip(), "install")
 
     def test_an_older_release_is_not_installed_as_the_latest(self):
         build = self.root / "BUILD"

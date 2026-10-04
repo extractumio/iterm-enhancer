@@ -3,21 +3,14 @@
 // the file is writable), rendered Markdown with a Source toggle, images, and a card for
 // binary files. Unsaved edits live here, per file, so switching panes never drops them.
 
-import { EditorState, Compartment, type Extension, type Text } from "@codemirror/state";
-import {
-  EditorView, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, keymap,
-  highlightSpecialChars, rectangularSelection, crosshairCursor,
-} from "@codemirror/view";
-import { syntaxHighlighting, foldGutter, bracketMatching, indentOnInput, foldKeymap, indentUnit } from "@codemirror/language";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { classHighlighter } from "@lezer/highlight";
+import { EditorState, Compartment, type Text } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { editorExtensions } from "./viewer-editor";
 
 import { api, apiOrToast, ApiError, basename, esc, fmtSize, isUnder, rawUrl, rebase, toast, type FileView, type Stamp, type Tab } from "./api";
 import { ask } from "./dialogs";
 import { fileIcon } from "./icons";
 import { languageForFile } from "./highlight";
-import { isMarkdown } from "./markdown";
 import { isRenderable, renderDoc, type LinkHost } from "./docview";
 
 export interface ViewerCallbacks {
@@ -41,20 +34,6 @@ interface Doc {
   host: string | null;             // where the file lives: every read and save goes there (AC-37)
 }
 
-const cmTheme = EditorView.theme({
-  "&": { height: "100%", backgroundColor: "transparent", color: "var(--fg)" },
-  ".cm-scroller": { fontFamily: "var(--mono)", lineHeight: "1.55" },
-  ".cm-content": { caretColor: "var(--cursor)" },
-  ".cm-gutters": { backgroundColor: "var(--bg)", color: "var(--fg-faint)", border: "none" },
-  ".cm-activeLineGutter": { backgroundColor: "var(--bg-hover)", color: "var(--fg-dim)" },
-  ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--bg-hover) 60%, transparent)" },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": { backgroundColor: "var(--bg-sel) !important" },
-  ".cm-selectionMatch": { backgroundColor: "color-mix(in srgb, var(--accent) 22%, transparent)" },
-  ".cm-foldGutter span": { color: "var(--fg-faint)" },
-  ".cm-panels": { backgroundColor: "var(--bg-2)", color: "var(--fg)" },
-  ".cm-searchMatch": { backgroundColor: "color-mix(in srgb, var(--warn) 35%, transparent)" },
-  ".cm-cursor": { borderLeftColor: "var(--cursor)" },
-});
 
 export class Viewer {
   tabs: Tab[] = [];
@@ -73,10 +52,16 @@ export class Viewer {
   private lang = new Compartment();
   private shown: { path: string; mode: "rendered" | "source" } | null = null; // on screen now
   private anchors = new Map<string, string>();  // path → anchor to scroll to when it renders
-  private links: LinkHost = {
-    open: (path, anchor) => this.open(path, "auto", anchor),
-    prefetched: (path, file) => { if (!this.docs.get(path)?.file) this.doc(path).file = file; },
-  };
+  private render = 0;
+
+  private linksFor(d: Doc, render: number): LinkHost {
+    return {
+      host: d.host,
+      current: () => render === this.render,
+      open: (path, anchor) => this.open(path, "auto", anchor),
+      prefetched: (path, file) => { if (!this.docs.get(path)?.file) this.doc(path).file = file; },
+    };
+  }
 
   constructor(private tabsEl: HTMLElement, private tools: HTMLElement, private body: HTMLElement, private cb: ViewerCallbacks) {
     tabsEl.addEventListener("click", (e) => {
@@ -143,7 +128,7 @@ export class Viewer {
       const r = await ask(`Save changes to ${basename(t.path)}?`, "Your changes will be lost if you don't save them.",
         [{ id: "save", label: "Save", primary: true }, { id: "discard", label: "Don't Save", danger: true }, { id: "cancel", label: "Cancel" }]);
       if (r === "cancel") return false;
-      if (r === "save" && !(await this.save(t.path, false, d))) return false;  // the document asked about, on its host
+      if (r === "save" && (!(await this.save(t.path, false, d)) || d.dirty)) return false;  // the document asked about, on its host
     }
     const at = this.tabs.indexOf(t);
     if (at < 0) return true;
@@ -222,6 +207,9 @@ export class Viewer {
     this.remember();          // the editor's state belongs to the old host's document
     this.host = host ?? "";
     this.shown = null;        // the same path on the new host is another document
+    this.tabs = []; this.active = null;
+    this.anchors.clear();
+    this.tabsChanged();      // identical path lists on two hosts still need a fresh read
   }
 
   /** fbd was away: re-check every open tab (unchanged files answer 304). */
@@ -238,8 +226,8 @@ export class Viewer {
 
   /** Apply `update` to `path` and show it again, keeping the scroll position. The screen
    *  is remembered first, so the update is not overwritten by the editor's old state. */
-  private redraw(path: string, update?: () => void) {
-    const onScreen = this.activePath() === path;
+  private redraw(path: string, update?: () => void, d = this.docs.get(path)) {
+    const onScreen = this.activePath() === path && this.docs.get(path) === d;
     if (onScreen) this.remember();
     update?.();
     if (onScreen) this.reshow();
@@ -275,20 +263,23 @@ export class Viewer {
     return d.loading;
   }
 
-  /** Re-read a clean file if it changed on disk; 304 (same etag) costs no content. */
-  private async revalidate(path: string) {
-    const d = this.docs.get(path);
-    if (!d?.file || d.dirty) return;
+  /** Check disk state without replacing edits; 304 (same etag) costs no content. */
+  private async revalidate(path: string, d = this.docs.get(path)) {
+    if (!d?.file) return;
+    path = d.file.path;
     try {
       const f = await api<FileView | undefined>("GET", "/api/file", { query: { path }, host: d.host, headers: { "If-None-Match": `"${d.file.etag}"` } });
+      if (d.file?.path !== path) return;
       if (!f && !d.deleted) return; // 304: unchanged
       this.redraw(path, () => {
         d.deleted = false;
+        if (f && d.dirty && f.etag !== d.file?.etag) d.diskChanged = true;
         if (f && !d.dirty) { d.file = f; d.state = undefined; d.saved = undefined; }
-      });
+      }, d);
     } catch (e) {
+      if (d.file?.path !== path) return;
       // keep the content: the file may have been renamed (the rename event can arrive first)
-      if (e instanceof ApiError && e.status === 404 && !d.deleted) this.redraw(path, () => { d.deleted = true; });
+      if (e instanceof ApiError && e.status === 404 && e.code !== "no_agent" && !d.deleted) this.redraw(path, () => { d.deleted = true; }, d);
     }
   }
 
@@ -312,6 +303,7 @@ export class Viewer {
   }
 
   private async show() {
+    const render = ++this.render;
     const tab = this.activeTab;
     if (!tab) { this.body.innerHTML = ""; this.tools.innerHTML = ""; this.shown = null; return; }
     const mode = this.modeOf(tab);
@@ -321,7 +313,7 @@ export class Viewer {
       this.tools.innerHTML = "";
       this.shown = null;
       await this.load(tab.path);
-      if (this.activePath() !== tab.path) return; // the user moved on
+      if (render !== this.render || this.activeTab !== tab || this.docs.get(tab.path) !== d) return;
     }
     this.shown = { path: tab.path, mode };
     this.renderTools(tab, d);
@@ -348,11 +340,11 @@ export class Viewer {
       const box = this.body.querySelector<HTMLElement>(".scroll")!;
       const anchor = this.anchors.get(f.path);
       this.anchors.delete(f.path);
-      renderDoc(box, d.state ? d.state.doc.toString() : f.text ?? "", f.path, this.links, anchor);
+      renderDoc(box, d.state ? d.state.doc.toString() : f.text ?? "", f.path, this.linksFor(d, render), anchor);
       if (!anchor) box.scrollTop = d.scroll.rendered ?? 0;
       return;
     }
-    await this.showEditor(tab.path, d, banner);
+    await this.showEditor(tab.path, d, banner, render);
   }
 
   private banner(f: FileView, d: Doc) {
@@ -366,12 +358,12 @@ export class Viewer {
     return notes.length ? `<div class="banner">${notes.map(esc).join(" · ")}</div>` : "";
   }
 
-  private async showEditor(path: string, d: Doc, banner: string) {
+  private async showEditor(path: string, d: Doc, banner: string, render: number) {
     const f = d.file!;
     this.body.innerHTML = `${banner}<div class="cm-host"></div>`;
     const host = this.body.querySelector<HTMLElement>(".cm-host")!;
     if (!d.state) {
-      d.state = EditorState.create({ doc: f.text ?? "", extensions: this.extensions(path, f) });
+      d.state = EditorState.create({ doc: f.text ?? "", extensions: editorExtensions(path, f, this.lang, () => { const p = this.activePath(); if (p) void this.save(p); }) });
       d.saved = d.state.doc;
     }
     if (!this.editor) {
@@ -390,33 +382,14 @@ export class Viewer {
       });
     } else { this.editor.setState(d.state); host.append(this.editor.dom); }
     const top = d.scroll.source ?? 0;
-    requestAnimationFrame(() => { if (this.editor) this.editor.scrollDOM.scrollTop = top; });
+    requestAnimationFrame(() => { if (render === this.render && this.editor) this.editor.scrollDOM.scrollTop = top; });
     const lang = await languageForFile(basename(path)).catch(() => null);
-    if (lang && this.editor && this.shown?.path === path && this.shown.mode === "source" && this.editor.state === d.state) {
+    if (lang && render === this.render && this.docs.get(path) === d && this.editor && this.shown?.path === path && this.shown.mode === "source" && this.editor.state === d.state) {
       this.editor.dispatch({ effects: this.lang.reconfigure(lang) });
       d.state = this.editor.state;
     }
   }
 
-  private extensions(path: string, f: FileView): Extension[] {
-    const wrap = isMarkdown(path) || /\.(txt|log)$/i.test(path);
-    return [
-      lineNumbers(), foldGutter(), highlightSpecialChars(), history(), drawSelection(),
-      indentOnInput(), bracketMatching(), rectangularSelection(), crosshairCursor(),
-      highlightActiveLine(), highlightActiveLineGutter(), highlightSelectionMatches(),
-      syntaxHighlighting(classHighlighter),
-      keymap.of([
-        { key: "Mod-s", preventDefault: true, run: () => { void this.save(path); return true; } },
-        ...defaultKeymap, ...searchKeymap, ...historyKeymap, ...foldKeymap, indentWithTab,
-      ]),
-      this.lang.of([]),
-      wrap ? EditorView.lineWrapping : [],
-      EditorState.readOnly.of(!f.writable),
-      EditorState.tabSize.of(4),
-      indentUnit.of(/\.(go|mk)$|^Makefile$/.test(basename(path)) ? "\t" : "    "),
-      cmTheme,
-    ];
-  }
 
   /** Save the file (If-Match etag); on conflict ask Overwrite / Reload / Cancel. */
   save(path: string, force = false, d = this.docs.get(path)): Promise<boolean> {
@@ -427,18 +400,24 @@ export class Viewer {
 
   private async doSave(path: string, d: Doc, force: boolean): Promise<boolean> {
     if (!d.file || !d.state || !d.file.writable) return false;
+    path = d.file.path;                // a rename may have happened during a conflict prompt
     const doc = d.state.doc;           // what we send; typing may continue meanwhile
-    const text = doc.toString();
+    const text = d.state.sliceDoc();
     try {
       const r = await api<{ etag: string }>("PUT", "/api/file", {
         query: { path }, body: { text }, host: d.host, headers: { "If-Match": `"${force ? "*" : d.file.etag}"` },
       });
+      if (d.file.path !== path) {
+        await this.revalidate(d.file.path, d);
+        toast("Not saved: file was renamed — save again");
+        return false;
+      }
       d.file = { ...d.file, etag: r.etag, size: new TextEncoder().encode(text).length, text };
       d.saved = doc;
       d.dirty = !d.state.doc.eq(doc);  // edits typed during the request stay unsaved
       d.diskChanged = false;
       this.renderTabs();
-      this.redraw(path);
+      this.redraw(path, undefined, d);
       toast(`Saved ${basename(path)}`);
       return true;
     } catch (e) {
@@ -449,7 +428,7 @@ export class Viewer {
           { id: "cancel", label: "Cancel", primary: true },
         ]);
         if (choice === "overwrite") return this.doSave(path, d, true);
-        if (choice === "reload") { this.discard(path); return false; }
+        if (choice === "reload") { this.discard(path, d); return false; }
         return false;
       }
       toast(e instanceof ApiError && e.status === 0 ? "Not saved: backend restarting — save again" : e instanceof Error ? e.message : String(e));
@@ -457,10 +436,11 @@ export class Viewer {
     }
   }
 
-  private discard(path: string) {
-    const d = this.docs.get(path);
+  private discard(path: string, d = this.docs.get(path)) {
     if (!d) return;
+    path = d.file?.path ?? path;
     d.dirty = false; d.diskChanged = false; d.loading = undefined; d.file = undefined; d.state = undefined;
+    if (this.docs.get(path) !== d) return;
     this.renderTabs();
     if (this.activePath() === path) this.reshow();
   }

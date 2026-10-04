@@ -14,6 +14,8 @@ LOCAL_AGENT_ID = (BUILD_DIR / "AGENT_ID").read_text().strip() if (BUILD_DIR / "A
 
 def binary_for(platform):
     """The agent the running build carries for `platform`, or AgentError."""
+    if platform not in agentctl.PLATFORMS.values():
+        raise agentctl.AgentError(f"this build has no helper for {platform}")
     path = BUILD_DIR / "agents" / platform / "fbd"
     if not path.is_file():
         raise agentctl.AgentError(f"this build has no helper for {platform}")
@@ -48,7 +50,7 @@ def trial(target):
         t.stop()
 
 
-def enable(target, binary_for=binary_for, agent_id=None):
+def enable(target, binary_for=binary_for, agent_id=None, active=lambda: True):
     """Make the host `target` reaches ready and record it; returns its record entry."""
     agent_id = agent_id or LOCAL_AGENT_ID
     if not agent_id:
@@ -58,10 +60,12 @@ def enable(target, binary_for=binary_for, agent_id=None):
     got = trial(target)[0]
     if got != agent_id:
         raise agentctl.AgentError(f"{key_of(target)}: the helper answers as {got}, expected {agent_id}")
-    record = agentctl.load()
-    record[key_of(target)] = {"ssh": list(target), "name": name, "user": user, "platform": platform, "agent_id": agent_id}
-    agentctl.save(record)
-    return record[key_of(target)]
+    entry = {"ssh": list(target), "name": name, "user": user, "platform": platform, "agent_id": agent_id}
+    def publish(record):
+        if active():
+            record[key_of(target)] = entry
+    agentctl.update(publish)
+    return entry
 
 
 def remove(target):

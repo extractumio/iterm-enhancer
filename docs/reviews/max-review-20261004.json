@@ -1,0 +1,183 @@
+[
+  {
+    "file": "fbd/src/main.rs",
+    "line": 136,
+    "summary": "Expired tickets accepted unrelated viewer codes",
+    "failure_scenario": "An expired ticket remained in the table; redeeming an unrelated or empty code could return the panel token.",
+    "category": "security",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "fbd/src/ops.rs",
+    "line": 84,
+    "summary": "Path checks do not confine writes against adversarial ancestor swaps",
+    "failure_scenario": "An untrusted account replaces a shared ancestor after resolved-root validation, redirecting a later pathname operation outside configured roots.",
+    "category": "security",
+    "verdict": "CONFIRMED",
+    "outcome": "skipped",
+    "reason": "Descriptor-relative confinement across save/create/rename/Trash needs a separate architecture change; shared ancestors must remain trusted. Independent pragmatic review rejected a recanonicalization workaround."
+  },
+  {
+    "file": "bridge/fbbridge/hosts.py",
+    "line": 15,
+    "summary": "A remote platform value could select an unintended upload source",
+    "failure_scenario": "An outdated helper reports an absolute or traversal platform path, causing the bridge to choose a file outside packaged helper targets.",
+    "category": "security",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "bridge/fbbridge/app.py",
+    "line": 52,
+    "summary": "Queued terminal text lacked a fresh pane and shell check",
+    "failure_scenario": "A queued command reaches the same iTerm2 session after its tmux pane or foreground shell changes, typing into the wrong pane or busy job.",
+    "category": "security",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "bridge/fbbridge/resolve.py",
+    "line": 48,
+    "summary": "Remote tmux workspace keys collided across SSH destinations",
+    "failure_scenario": "Two hosts report the same short hostname, socket and pane id; switching between them reuses one workspace and can retain the wrong file scope.",
+    "category": "security",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "fbd/src/api_state.rs",
+    "line": 282,
+    "summary": "Pending viewer paths lost their machine identity",
+    "failure_scenario": "A remote viewer request queued before its page connected could be drained as a local path or consumed by another host viewer.",
+    "category": "security",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "scripts/install.sh",
+    "line": 38,
+    "summary": "The bootstrap installer accepted an older signed release as latest",
+    "failure_scenario": "A signed older manifest and matching archive were replayed to a user with a newer numbered release already installed.",
+    "category": "security",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "bridge/fbbridge/remote.py",
+    "line": 181,
+    "summary": "Removed or replaced connections could register again during teardown",
+    "failure_scenario": "Remove races a successful connection or backend re-registration; a stale owner republishes the removed host or unlinks a replacement socket.",
+    "category": "security",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "fbd/src/ops.rs",
+    "line": 100,
+    "summary": "Conditional saves were not serialized with competing mutations",
+    "failure_scenario": "Two saves with one etag both succeeded, or rename/Trash ran during save publication and the save recreated an obsolete path.",
+    "category": "data-loss",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "fbd/src/ops.rs",
+    "line": 220,
+    "summary": "Rename could overwrite a destination created after preflight",
+    "failure_scenario": "Another writer creates the destination between the existence check and ordinary rename; its contents are silently replaced.",
+    "category": "data-loss",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "fbd/src/workspace.rs",
+    "line": 100,
+    "summary": "Concurrent workspace flushes shared a temporary file and stale snapshots",
+    "failure_scenario": "Overlapping flushes interleave one temporary pathname or allow an older snapshot to publish after a newer workspace.",
+    "category": "data-loss",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "ui/src/file-actions.ts",
+    "line": 43,
+    "summary": "Request-level Trash failure discarded unsaved buffers",
+    "failure_scenario": "A failed request produced a synthetic empty-path error; the panel treated selected paths as successes and removed dirty documents.",
+    "category": "data-loss",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "ui/src/viewer.ts",
+    "line": 401,
+    "summary": "Save completion and conflict retries did not follow a renamed document",
+    "failure_scenario": "Rename while saving, then Overwrite or Reload: the old path could be recreated, or the renamed editor could be marked clean with obsolete metadata.",
+    "category": "data-loss",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "ui/src/viewer.ts",
+    "line": 124,
+    "summary": "Closing a tab after Save could discard edits typed during the request",
+    "failure_scenario": "The user types additional edits while a close-triggered Save waits; successful saving of the earlier snapshot still closes the dirty tab.",
+    "category": "data-loss",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "ui/src/viewer.ts",
+    "line": 205,
+    "summary": "Late document reads and decisions could cross host boundaries",
+    "failure_scenario": "A delayed file read, link prefetch or conflict choice completes after a host switch and replaces or discards a same-path document on the new host.",
+    "category": "data-loss",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "ui/src/file-actions.ts",
+    "line": 17,
+    "summary": "Late rename/create replies changed the newly focused workspace",
+    "failure_scenario": "A rename request from host A completes after switching to B and rebases B’s dirty document, selection or persisted workspace.",
+    "category": "data-loss",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "bridge/fbbridge/agentctl.py",
+    "line": 80,
+    "summary": "Agent record transactions could overwrite other host updates",
+    "failure_scenario": "Concurrent enable/remove/update threads read the same record, then publish separate mutations, losing enabled hosts or restoring removed entries.",
+    "category": "data-loss",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "bridge/fbbridge/agentctl.py",
+    "line": 136,
+    "summary": "Remote helper copies used shared staging paths",
+    "failure_scenario": "Two Macs copy different helpers to one host simultaneously; shared temporary binary/link paths mix their installations.",
+    "category": "data-loss",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "fbd/src/listing.rs",
+    "line": 170,
+    "summary": "Lossy filename decoding created actionable aliases",
+    "failure_scenario": "An invalid UTF-8 filename decodes to the same display path as a legitimate replacement-character filename; an action can address the wrong entry.",
+    "category": "data-loss",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  },
+  {
+    "file": "ui/src/main.ts",
+    "line": 101,
+    "summary": "Obsolete workspace restoration could replace the current root and tabs",
+    "failure_scenario": "A canceled pane restoration or an older same-pane GET completes last and replaces the newer workspace.",
+    "category": "correctness",
+    "verdict": "CONFIRMED",
+    "outcome": "fixed"
+  }
+]

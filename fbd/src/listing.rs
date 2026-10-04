@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering as AO};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AO};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -59,7 +59,7 @@ pub struct Listing {
 type ReadResult = Result<Arc<Listing>, String>;
 
 enum Slot {
-    Loading(watch::Receiver<Option<ReadResult>>),
+    Loading(watch::Receiver<Option<ReadResult>>, Arc<AtomicBool>),
     Done(ReadResult, Instant),
 }
 
@@ -159,12 +159,17 @@ fn read_dir_sorted(path: &Path, generation: u64) -> Result<Listing, String> {
         } else {
             Kind::File
         };
-        let name: Box<str> = de.file_name().to_string_lossy().into();
+        let name = entry_name(de.file_name())?;
         bytes += name.len() + std::mem::size_of::<Entry>();
         entries.push(Entry { name, kind });
     }
     entries.sort_unstable_by(|a, b| b.kind.is_dir().cmp(&a.kind.is_dir()).then_with(|| natural_cmp(&a.name, &b.name)));
     Ok(Listing { entries, dir_mtime: mtime_ns(&meta), generation, read_at: Instant::now(), bytes, filtered: Mutex::new(None) })
+}
+
+fn entry_name(name: std::ffi::OsString) -> Result<Box<str>, String> {
+    name.into_string().map(String::into_boxed_str)
+        .map_err(|_| "Folder contains a name that is not UTF-8; cannot address it safely".into())
 }
 
 impl Cache {
@@ -176,13 +181,23 @@ impl Cache {
     /// old rows meanwhile would race the fs-change event the panel reacts to.)
     pub fn invalidate(self: &Arc<Self>, path: &Path) {
         let mut slots = self.slots.lock();
-        if matches!(slots.get(path), Some((Slot::Done(..), _))) {
-            slots.remove(path);
+        match slots.get(path) {
+            Some((Slot::Loading(_, dirty), _)) => dirty.store(true, AO::Relaxed),
+            Some((Slot::Done(..), _)) => { slots.remove(path); }
+            None => {}
         }
     }
 
     fn bytes(slots: &HashMap<PathBuf, (Slot, Instant)>) -> usize {
-        slots.values().map(|(s, _)| if let Slot::Done(Ok(l), _) = s { l.bytes } else { 0 }).sum()
+        slots.iter().map(|(p, (s, _))| Self::slot_bytes(p, s)).sum()
+    }
+
+    fn slot_bytes(path: &Path, slot: &Slot) -> usize {
+        path.as_os_str().len() + std::mem::size_of::<(PathBuf, Slot, Instant)>() + match slot {
+            Slot::Done(Ok(l), _) => l.bytes + std::mem::size_of::<Listing>(),
+            Slot::Done(Err(e), _) => e.len(),
+            Slot::Loading(..) => 0,
+        }
     }
 
     pub fn stats(&self) -> (usize, usize) {
@@ -192,9 +207,14 @@ impl Cache {
 
     fn start_read(self: &Arc<Self>, path: PathBuf) -> watch::Receiver<Option<ReadResult>> {
         let (tx, rx) = watch::channel(None);
-        self.slots.lock().insert(path.clone(), (Slot::Loading(rx.clone()), Instant::now()));
+        let dirty = Arc::new(AtomicBool::new(false));
+        {
+            let mut slots = self.slots.lock();
+            if let Some((Slot::Loading(rx, _), _)) = slots.get(&path) { return rx.clone() }
+            slots.insert(path.clone(), (Slot::Loading(rx.clone(), dirty.clone()), Instant::now()));
+        }
         let me = self.clone();
-        tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || loop {
             let t0 = Instant::now();
             let generation = me.generation.fetch_add(1, AO::Relaxed);
             // a panic must not leave the slot "loading" forever
@@ -205,11 +225,20 @@ impl Cache {
                 Ok(l) => tracing::info!(event = "ls.done", path = %path.display(), entries = l.entries.len(), ms = t0.elapsed().as_millis() as u64),
                 Err(e) => tracing::info!(event = "ls.error", path = %path.display(), error = %e),
             }
-            me.slots.lock().insert(path, (Slot::Done(res.clone(), Instant::now()), Instant::now()));
-            let _ = tx.send(Some(res));
+            if !me.finish_read(&path, &dirty, &tx, res) { continue }
             me.evict();
+            break;
         });
         rx
+    }
+
+    /// Invalidation and publication share the slot lock: every waiter gets the reread.
+    fn finish_read(&self, path: &Path, dirty: &AtomicBool, tx: &watch::Sender<Option<ReadResult>>, res: ReadResult) -> bool {
+        let mut slots = self.slots.lock();
+        if dirty.swap(false, AO::Relaxed) { return false }
+        slots.insert(path.to_path_buf(), (Slot::Done(res.clone(), Instant::now()), Instant::now()));
+        let _ = tx.send(Some(res));
+        true
     }
 
     fn evict(&self) {
@@ -220,7 +249,7 @@ impl Cache {
         }
         let mut by_age: Vec<(PathBuf, Instant, usize)> = slots
             .iter()
-            .filter_map(|(p, (s, t))| if let Slot::Done(Ok(l), _) = s { Some((p.clone(), *t, l.bytes)) } else { None })
+            .filter_map(|(p, (s, t))| if let Slot::Done(..) = s { Some((p.clone(), *t, Self::slot_bytes(p, s))) } else { None })
             .collect();
         by_age.sort_by_key(|x| x.1);
         for (p, _, n) in by_age {
@@ -240,7 +269,7 @@ impl Cache {
                     *used = Instant::now();
                     match slot {
                         Slot::Done(r, at) => Some(Ok((r.clone(), *at))),
-                        Slot::Loading(rx) => Some(Err(rx.clone())),
+                        Slot::Loading(rx, _) => Some(Err(rx.clone())),
                     }
                 }
                 None => None,
@@ -254,7 +283,7 @@ impl Cache {
                     Err(_) => at.elapsed() > ERROR_TTL,
                     Ok(l) => {
                         l.read_at.elapsed() > Duration::from_millis(200)
-                            && !fs::metadata(path).map(|m| mtime_ns(&m) == l.dir_mtime).unwrap_or(false)
+                            && !tokio::fs::metadata(path).await.map(|m| mtime_ns(&m) == l.dir_mtime).unwrap_or(false)
                     }
                 };
                 if !stale {
@@ -318,7 +347,7 @@ impl Cache {
         });
         let idx: Vec<usize> = match &view {
             Some(v) => v.iter().skip(offset).take(limit).map(|&i| i as usize).collect(),
-            None => (offset..total.min(offset + limit)).collect(),
+            None => (offset..total.min(offset.saturating_add(limit))).collect(),
         };
         let entries = idx
             .into_iter()
@@ -335,6 +364,42 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn invalidation_during_a_scan_keeps_waiters_until_fresh_publication() {
+        let c = Cache::new(64 << 20);
+        let path = PathBuf::from("/synthetic-folder");
+        let (tx, rx) = watch::channel(None);
+        let dirty = Arc::new(AtomicBool::new(false));
+        c.slots.lock().insert(path.clone(), (Slot::Loading(rx.clone(), dirty.clone()), Instant::now()));
+        let mut second = c.start_read(path.clone());
+        c.invalidate(&path);
+        assert!(!c.finish_read(&path, &dirty, &tx, Err("obsolete scan".into())));
+        assert!(rx.borrow().is_none());
+        assert!(matches!(c.slots.lock().get(&path), Some((Slot::Loading(..), _))));
+        assert_eq!(c.generation.load(AO::Relaxed), 1, "no duplicate worker started");
+        assert!(c.finish_read(&path, &dirty, &tx, Err("fresh scan".into())));
+        assert_eq!(second.wait_for(|v| v.is_some()).await.unwrap().as_ref().unwrap().as_ref().err().unwrap(), "fresh scan");
+        assert_eq!(rx.borrow().as_ref().unwrap().as_ref().err().unwrap(), "fresh scan");
+    }
+
+    #[test]
+    fn lossy_names_are_refused_instead_of_aliasing_another_file() {
+        use std::os::unix::ffi::OsStringExt;
+        assert!(entry_name(std::ffi::OsString::from_vec(b"a\xff.txt".to_vec())).is_err());
+        assert_eq!(&*entry_name("a\u{fffd}.txt".into()).unwrap(), "a\u{fffd}.txt");
+    }
+
+    #[test]
+    fn errors_and_empty_folders_are_evicted_with_their_slot_overhead() {
+        let c = Cache::new(1);
+        c.slots.lock().insert(PathBuf::from("/missing"), (Slot::Done(Err("missing".into()), Instant::now()), Instant::now()));
+        let empty = Listing { entries: vec![], dir_mtime: 0, generation: 1, read_at: Instant::now(), bytes: 0, filtered: Mutex::new(None) };
+        c.slots.lock().insert(PathBuf::from("/empty"), (Slot::Done(Ok(Arc::new(empty)), Instant::now()), Instant::now()));
+        assert!(c.stats().0 > 1);
+        c.evict();
+        assert_eq!(c.stats(), (0, 0));
+    }
 
     #[test]
     fn natural_order() {
@@ -359,6 +424,9 @@ mod tests {
         assert_eq!(p.entries[2].n, "f0.txt");
         assert_eq!(p.entries[2].s, Some(1));
         assert_eq!(p.located, Some(2 + 10)); // sub, .hidden, f0..f9, then f10
+        let beyond = c.page(&dir, usize::MAX, 500, "", true, None).await;
+        assert_eq!(beyond.status, "ready");
+        assert!(beyond.entries.is_empty());
         let p = c.page(&dir, 0, 500, "f119", false, None).await;
         assert_eq!(p.total, 11); // f119, f1190..f1199
         let p = c.page(&dir.join("missing"), 0, 10, "", true, None).await;

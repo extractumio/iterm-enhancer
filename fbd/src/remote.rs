@@ -25,6 +25,8 @@ use crate::http::err;
 use crate::Shared;
 
 const BODY_MAX: usize = 64 << 20;
+const RESPONSE_WAIT: Duration = Duration::from_secs(30);
+const BODY_WAIT: Duration = Duration::from_secs(120);
 /// Endpoints a remote host serves; everything else stays on the Mac.
 const FORWARDED: [&str; 7] = ["/api/ls", "/api/file", "/api/raw", "/api/fs/mkdir", "/api/fs/touch", "/api/fs/rename", "/api/fs/trash"];
 
@@ -86,11 +88,40 @@ pub async fn route(State(app): State<Shared>, req: Request, next: Next) -> Respo
     })
 }
 
-async fn send(agent: &Agent, req: hyper::Request<Body>) -> Result<hyper::Response<hyper::body::Incoming>, String> {
-    let stream = tokio::net::UnixStream::connect(&agent.socket).await.map_err(|e| e.to_string())?;
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream)).await.map_err(|e| e.to_string())?;
-    tokio::spawn(conn);
-    sender.send_request(req).await.map_err(|e| e.to_string())
+struct Connection(tokio::task::JoinHandle<Result<(), hyper::Error>>);
+
+impl Drop for Connection {
+    fn drop(&mut self) { self.0.abort(); }
+}
+
+async fn send(agent: &Agent, req: hyper::Request<Body>) -> Result<(hyper::Response<hyper::body::Incoming>, Connection), String> {
+    send_with_deadline(agent, req, RESPONSE_WAIT).await
+}
+
+async fn send_with_deadline(agent: &Agent, req: hyper::Request<Body>, wait: Duration) -> Result<(hyper::Response<hyper::body::Incoming>, Connection), String> {
+    tokio::time::timeout(wait, async {
+        let stream = tokio::net::UnixStream::connect(&agent.socket).await.map_err(|e| e.to_string())?;
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream)).await.map_err(|e| e.to_string())?;
+        let connection = Connection(tokio::spawn(conn));
+        let response = sender.send_request(req).await.map_err(|e| e.to_string())?;
+        Ok((response, connection))
+    }).await.map_err(|_| "agent response timed out".to_string())?
+}
+
+/// Keep the connection owned by the response and close it on cancellation or a stalled body.
+fn finite_body(incoming: hyper::body::Incoming, connection: Connection, wait: Duration) -> Body {
+    let deadline = tokio::time::Instant::now() + wait;
+    let stream = futures_util::stream::try_unfold((incoming, connection), move |(mut body, connection)| async move {
+        loop {
+            let frame_deadline = deadline.min(tokio::time::Instant::now() + RESPONSE_WAIT);
+            let frame = tokio::time::timeout_at(frame_deadline, body.frame()).await
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "agent body timed out"))?;
+            let Some(frame) = frame else { return Ok::<_, std::io::Error>(None) };
+            let frame = frame.map_err(std::io::Error::other)?;
+            if let Ok(bytes) = frame.into_data() { return Ok(Some((bytes, (body, connection)))) }
+        }
+    });
+    Body::from_stream(stream)
 }
 
 /// The same request to the agent: its token and Host, no Origin, no local token in the
@@ -111,10 +142,10 @@ async fn forward(host: &str, agent: &Agent, req: Request) -> Result<Response, St
         .header("x-fb-token", &agent.token)
         .body(Body::from(body))
         .map_err(|e| e.to_string())?;
-    let res = send(agent, out).await?;
+    let (res, connection) = send(agent, out).await?;
     tracing::debug!(event = "remote.forward", host, status = res.status().as_u16());
     let (parts, incoming) = res.into_parts();
-    let mut response = Response::new(Body::new(Limited::new(incoming, BODY_MAX).map_err(axum::Error::new)));
+    let mut response = Response::new(Body::new(Limited::new(finite_body(incoming, connection, BODY_WAIT), BODY_MAX).map_err(axum::Error::new)));
     *response.status_mut() = parts.status;
     for name in [header::CONTENT_TYPE, header::ETAG, header::CONTENT_SECURITY_POLICY] {
         if let Some(v) = parts.headers.get(&name) {
@@ -141,7 +172,7 @@ mod tests {
         assert_eq!(host_of(&req("/api/ls?path=/a", None)), Ok(None));
         assert_eq!(host_of(&req("/api/ls", Some(b"-p 2222 alex@vm"))), Ok(Some("-p 2222 alex@vm".into())));
         assert_eq!(host_of(&req("/api/raw?path=/a&host=-p%202222%20alex%40vm", None)), Ok(Some("-p 2222 alex@vm".into())));
-        assert_eq!(host_of(&req("/api/raw?host=ai4&t=x", None)), Ok(Some("ai4".into())));
+        assert_eq!(host_of(&req("/api/raw?host=devbox.example&t=x", None)), Ok(Some("devbox.example".into())));
         assert_eq!(host_of(&req("/api/ls", Some(b"caf\xe9"))), Err(()), "unreadable: refused, not local");
     }
 }
@@ -186,17 +217,19 @@ async fn relay_events(app: Shared, host: String, generation: u64) {
             .header("x-fb-token", &agent.token)
             .body(Body::empty())
             .expect("static request");
-        if let Ok(res) = send(&agent, req).await {
+        let connected = send(&agent, req).await.ok().filter(|(res, _)| res.status() == StatusCode::OK);
+        if let Some((res, _connection)) = connected {
+            app.bus.send(Event::Rescan { host: Some(host.clone()) });
             let mut body = res.into_body();
-            let (mut buf, mut event) = (String::new(), String::new());
-            while let Some(Ok(frame)) = body.frame().await {
+            let (mut buf, mut event) = (Vec::new(), String::new());
+            // SSE stays open; its heartbeat must still produce bytes while the host is alive.
+            while let Ok(Some(Ok(frame))) = tokio::time::timeout(RESPONSE_WAIT, body.frame()).await {
                 let Some(data) = frame.data_ref() else { continue };
-                buf.push_str(&String::from_utf8_lossy(data));
+                buf.extend_from_slice(data);
                 if buf.len() > 1 << 20 {
                     break; // an agent that never ends a line is not trusted further: reconnect
                 }
-                while let Some(i) = buf.find('\n') {
-                    let line: String = buf.drain(..=i).collect();
+                while let Some(line) = take_line(&mut buf) {
                     let line = line.trim_end();
                     if let Some(e) = line.strip_prefix("event:") {
                         event = e.trim().to_string();
@@ -213,6 +246,11 @@ async fn relay_events(app: Shared, host: String, generation: u64) {
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
+}
+
+fn take_line(buf: &mut Vec<u8>) -> Option<String> {
+    let i = buf.iter().position(|b| *b == b'\n')?;
+    Some(String::from_utf8_lossy(&buf.drain(..=i).collect::<Vec<_>>()).into_owned())
 }
 
 fn fs_change(host: &str, data: &str) -> Option<Event> {
@@ -243,3 +281,7 @@ pub fn watch(remotes: &Remotes, host: &str, root: String, expanded: Vec<String>,
 pub fn health(app: &Shared) -> Value {
     json!(app.remotes.hosts())
 }
+
+#[cfg(test)]
+#[path = "remote_tests.rs"]
+mod regression;

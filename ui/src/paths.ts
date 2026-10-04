@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // POSIX path and URL helpers. No DOM and no token: modules tested under node import these.
 
-export const isUnder = (p: string, dir: string) => p === dir || p.startsWith(dir + "/");
+export const isUnder = (p: string, dir: string) => p === dir || p.startsWith(dir === "/" ? "/" : dir + "/");
 /** `p` after `from` was renamed to `to` (unchanged if not inside `from`). */
 export const rebase = (p: string, from: string, to: string) => (isUnder(p, from) ? to + p.slice(from.length) : p);
 
@@ -22,3 +22,8 @@ export function resolvePath(dir: string, rel: string): string {
 
 /** A URL with a scheme (`https:`, `javascript:`, `file:` …), as opposed to a relative path. */
 export const hasScheme = (u: string) => /^[a-z][a-z0-9+.-]*:/i.test(u);
+
+/** Decode a file URL while accepting a literal percent sign in ordinary filenames. */
+export function decodePath(url: string): string {
+  try { return decodeURIComponent(url); } catch { return url; }
+}

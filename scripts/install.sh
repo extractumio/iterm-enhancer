@@ -35,6 +35,24 @@ main() {
     want=$(awk '$2 == "iterm-filebrowser-macos.tar.gz" { print $1 }' "$tmp/SHA256SUMS")
     got=$(shasum -a 256 "$tmp/package.tar.gz" | awk '{ print $1 }')
     [ -n "$want" ] && [ "$want" = "$got" ] || fail "checksum mismatch: nothing installed"
+    release=$(awk '$1 == "#" && $2 == "release" { print $3 }' "$tmp/SHA256SUMS")
+    [ -n "$release" ] || fail "the signed list names no release: nothing installed"
+    installed="$HOME/.iterm-filebrowser/builds/current/BUILD"
+    if [ -f "$installed" ]; then
+        current=$(cat "$installed")
+        if awk -v incoming="$release" -v current="$current" 'BEGIN {
+            if (incoming !~ /^v[0-9]+(\.[0-9]+)*$/ || current !~ /^v[0-9]+(\.[0-9]+)*$/) exit 1
+            sub(/^v/, "", incoming); sub(/^v/, "", current)
+            n = split(incoming, a, "."); m = split(current, b, ".")
+            for (i = 1; i <= n || i <= m; i++) {
+                if (a[i]+0 < b[i]+0) exit 0
+                if (a[i]+0 > b[i]+0) exit 1
+            }
+            exit 1
+        }'; then
+            fail "the release $release is older than the installed $current: nothing installed"
+        fi
+    fi
     mkdir "$tmp/pkg"
     tar -xzf "$tmp/package.tar.gz" -C "$tmp/pkg"
     "$tmp/pkg/iterm-filebrowser/iterm-filebrowser" install

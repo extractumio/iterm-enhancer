@@ -72,8 +72,9 @@ def verify(sums, sig):
     if "ssh-" not in key:
         sys.exit("this install carries no release key, so it cannot check a release: "
                  "install with the one-line installer (README)")
-    r = subprocess.run(["ssh-keygen", "-Y", "verify", "-f", str(SIGNERS), "-I", NAMESPACE, "-n", NAMESPACE, "-s", str(sig)],
-                       stdin=open(sums, "rb"), capture_output=True)
+    with open(sums, "rb") as source:
+        r = subprocess.run(["ssh-keygen", "-Y", "verify", "-f", str(SIGNERS), "-I", NAMESPACE, "-n", NAMESPACE, "-s", str(sig)],
+                           stdin=source, capture_output=True)
     return r.returncode == 0
 
 
@@ -165,7 +166,7 @@ def main(argv=None):
     h = sub.add_parser("hosts")
     hs = h.add_subparsers(dest="hcmd")
     e = hs.add_parser("enable")
-    e.add_argument("target", nargs=argparse.REMAINDER, help="as you would give them to ssh, e.g. ai4 or -p 2222 alex@10.0.0.5")
+    e.add_argument("target", nargs=argparse.REMAINDER, help="as you would give them to ssh, e.g. devbox.example or -p 2222 alex@devbox.example")
     r = hs.add_parser("remove")
     r.add_argument("host")
     a = p.parse_args(argv)

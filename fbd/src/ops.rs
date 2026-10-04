@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 
 use crate::files::{etag, Roots};
 
+// File mutations share ordering: Save must not recreate a file just renamed or trashed.
+static MUTATING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
 #[derive(Debug, PartialEq)]
 pub enum OpError {
     /// 400
@@ -95,6 +98,8 @@ fn exists_in(name: &str, parent: &Path) -> OpError {
 /// Writes the symlink target, via a temp file in the same folder, copying mode, ACLs
 /// and extended attributes from the original, then renames over it.
 pub fn save(roots: &Roots, path: &Path, text: &str, if_match: &str) -> Result<String, OpError> {
+    // Coordinates this daemon's saves, including aliases of one symlink target.
+    let _mutating = MUTATING.lock();
     let deleted = || OpError::Conflict { message: format!("{} was deleted on disk", name_of(path)), etag: None };
     let (real, meta) = match fs::canonicalize(path) {
         Ok(r) => {
@@ -122,7 +127,7 @@ pub fn save(roots: &Roots, path: &Path, text: &str, if_match: &str) -> Result<St
     // unique per call: two saves in flight must not share a temp file
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = dir.join(format!(".{}.fb-{}-{seq}.tmp", name_of(&real), std::process::id()));
+    let tmp = dir.join(format!(".fb-{}-{seq}.tmp", std::process::id()));
     let result = (|| {
         let mut f = fs::OpenOptions::new().write(true).create_new(true).open(&tmp).map_err(|e| io(e, &tmp))?;
         f.write_all(text.as_bytes()).map_err(|e| io(e, path))?;
@@ -192,6 +197,7 @@ pub fn touch(roots: &Roots, parent: &Path, name: &str) -> Result<PathBuf, OpErro
 
 /// Rename `path` to `name` in the same folder. A case-only rename is allowed.
 pub fn rename(roots: &Roots, path: &Path, name: &str) -> Result<PathBuf, OpError> {
+    let _mutating = MUTATING.lock();
     check_component(name)?;
     let parent = path.parent().ok_or_else(|| OpError::BadName("Cannot rename /".into()))?;
     let target = parent.join(name);
@@ -206,8 +212,24 @@ pub fn rename(roots: &Roots, path: &Path, name: &str) -> Result<PathBuf, OpError
             return Err(OpError::Exists(format!("\"{}\" already exists", name)));
         }
     }
-    fs::rename(path, &target).map_err(|e| io(e, path))?;
+    rename_exclusive(path, &target).map_err(|e| io(e, &target))?;
     Ok(target)
+}
+
+/// Refuse destination collisions atomically, including writers outside this daemon.
+fn rename_exclusive(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let path = |p: &Path| CString::new(p.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput));
+    let (from, to) = (path(from)?, path(to)?);
+    #[cfg(target_os = "macos")]
+    let rc = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
+    #[cfg(target_os = "linux")]
+    let rc = unsafe {
+        libc::syscall(libc::SYS_renameat2, libc::AT_FDCWD, from.as_ptr(), libc::AT_FDCWD, to.as_ptr(), libc::RENAME_NOREPLACE)
+    };
+    if rc == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
 }
 
 /// Move items to the macOS Trash (NSFileManager, no Finder prompt). Returns per-item errors.
@@ -225,7 +247,12 @@ fn trash_one(p: &Path) -> Result<(), trash::Error> {
     trash::delete(p)
 }
 
+#[cfg(test)]
+#[path = "ops_tests.rs"]
+mod regression;
+
 pub fn trash(roots: &Roots, paths: &[PathBuf]) -> Vec<(PathBuf, OpError)> {
+    let _mutating = MUTATING.lock();
     let mut errors = Vec::new();
     for p in paths {
         if let Err(e) = check_entry_writable(roots, p) {

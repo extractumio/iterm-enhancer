@@ -7,6 +7,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { sseData } from "./sse.mjs";
 
 export const PORT = 47832, SECRET = "e2e-bridge-secret-0123456789";
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -64,14 +65,11 @@ let commands = new AbortController();
 const listenCommands = () => {
   const req = http.get({ socketPath: SOCKET, path: "/internal/commands", headers: { "X-FB-Bridge": SECRET }, signal: commands.signal }, (res) => {
     res.setEncoding("utf8");
-    res.on("data", (chunk) => {
-      for (const line of chunk.split("\n")) {
-        if (!line.startsWith("data:")) continue;
-        const c = JSON.parse(line.slice(5));
-        cmds.push(c);
-        if (c.action === "which-window") void internal("/internal/bound", { req: c.req, window: focus[2], panel: focus[3] });
-      }
-    });
+    res.on("data", sseData((data) => {
+      const c = JSON.parse(data);
+      cmds.push(c);
+      if (c.action === "which-window") void internal("/internal/bound", { req: c.req, window: focus[2], panel: focus[3] });
+    }));
     res.on("error", () => {});
   });
   req.on("error", () => {});
