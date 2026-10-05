@@ -208,6 +208,24 @@ class ReleaseTest(unittest.TestCase):
         with mock.patch.object(Path, "read_text", side_effect=AssertionError("must not read target")):
             self.assertIn("inside the repository", self.refused(release.release_notes, "v1.0.0"))
 
+    def test_release_ui_uses_the_package_version_instead_of_inherited_checkout_id(self):
+        binary = self.out / release.package.NAME / "agents/linux-x86_64/fbd"
+        binary.parent.mkdir(parents=True)
+        binary.touch()
+        with mock.patch.dict(os.environ, {"FB_BUILD": "checkout-id"}), \
+                mock.patch.object(release, "check_source"), mock.patch.object(release, "check_unpublished", return_value=False), \
+                mock.patch.object(release, "run") as run, mock.patch.object(release.package, "main") as build, \
+                mock.patch.object(release, "sign") as sign, mock.patch.object(release, "publish", return_value="url") as publish:
+            order = mock.Mock()
+            for name, fn in (("run", run), ("build", build), ("sign", sign), ("publish", publish)):
+                order.attach_mock(fn, name)
+            release.main(["v1.0.0"])
+            ui_call = next(call for call in run.call_args_list if call.args == ("npm", "run", "-s", "build"))
+            self.assertEqual(ui_call.kwargs["env"]["FB_BUILD"], "v1.0.0")
+            self.assertEqual(os.environ["FB_BUILD"], "checkout-id", "the override is local to the UI build")
+            build.assert_called_once_with(["--build", "v1.0.0"])
+            self.assertEqual([call[0] for call in order.mock_calls], ["run", "run", "build", "sign", "publish"])
+
 
 if __name__ == "__main__":
     unittest.main()

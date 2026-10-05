@@ -27,8 +27,8 @@ import package
 import signing_key
 
 
-def run(*cmd, cwd=None):
-    r = subprocess.run(cmd, cwd=cwd or package.REPO, capture_output=True, text=True)
+def run(*cmd, cwd=None, env=None):
+    r = subprocess.run(cmd, cwd=cwd or package.REPO, env=env, capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"{' '.join(cmd[:3])}: {(r.stderr or r.stdout).strip()}")
     return r.stdout.strip()
@@ -145,7 +145,7 @@ def main(argv):
     notes = release_notes(tag)
     draft = check_unpublished(tag)
     run("npm", "ci", "--ignore-scripts", "--no-fund", "--no-audit", cwd=package.REPO / "ui")
-    run("npm", "run", "-s", "build", cwd=package.REPO / "ui")
+    run("npm", "run", "-s", "build", cwd=package.REPO / "ui", env=dict(os.environ, FB_BUILD=tag))
     package.main(["--build", tag])
     if not (package.OUT / package.NAME / "agents/linux-x86_64/fbd").is_file():
         sys.exit("the package has no Linux helpers (run make toolchain): not released")

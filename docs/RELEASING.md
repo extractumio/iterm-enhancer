@@ -27,6 +27,8 @@ its release is not published yet; it installs the UI's dependencies with `npm ci
 key loaded for two minutes with the Keychain's passphrase, then removed), checks the
 signature, and only then tags `HEAD`, pushes the tag and publishes the GitHub release once
 all its files are attached. A failure before signing leaves nothing public.
+The UI and local backend both compile with the release tag, overriding make's
+checkout identity so a fresh installation reports one version throughout.
 
 Commit release notes in `docs/releases/vX.Y.Z.md` before pushing the changes to
 `origin/main`. The release command reads them before building and preserves their
