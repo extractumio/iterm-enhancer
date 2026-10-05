@@ -16,6 +16,7 @@ import { manyPanels } from "./e2e_sockets.mjs";
 import { sessionTools } from "./e2e_session_tools.mjs";
 import { recoveryTools } from "./e2e_recovery.mjs";
 import { recoveryUpgrade } from "./e2e_recovery_upgrade.mjs";
+import { windowTools } from "./e2e_windows.mjs";
 import { base, bringBack, check, cleanup, cmds, FBD, internal, PORT, push, restartFbd, results, resume, SB, silence, stopFbd, TOKEN, within } from "./e2e_harness.mjs";
 
 // playwright-core is a devDependency; PLAYWRIGHT_CORE may point at another copy
@@ -270,29 +271,7 @@ try {
   check("AC-27 open panel keeps its own split", (await split()) === mine, mine);
   await np.close();
 
-  // AC-36 a panel follows only its own window
-  const bound = (pg) => pg.evaluate(() => sessionStorage.getItem("fb.window"));
-  await page.click("#crumbs");                                  // the user acts in the panel → bound for sure
-  await within("AC-36 acting in the panel binds it to the key window", (ms) => page.waitForFunction(() => sessionStorage.getItem("fb.window") === "w1", null, { timeout: ms }));
-  await push("e2eW2", `${SB}/docs`, "w2", false);               // another window, no Toolbelt there
-  await page.waitForTimeout(700);
-  check("AC-36 a window without a panel does not move it", !!(await page.$(row("src"))) && !(await page.$(row("docs/guide.md"))));
-  await push("e2eW2", `${SB}/docs`, "w2", true);                // another window with its own panel
-  await page.waitForTimeout(700);
-  check("AC-36 another window's panel state does not move it", !!(await page.$(row("src"))));
-  const w2 = await browser.newPage({ viewport: { width: 520, height: 900 } });
-  await w2.goto(`${base}/?t=${TOKEN}`);                         // the panel of w2 loads while w2 is key
-  await within("AC-36 a new panel claims the key window and shows it", (ms) => w2.waitForSelector(row("docs/guide.md"), { timeout: ms }));
-  check("AC-36 … and keeps the claim", (await bound(w2)) === "w2", await bound(w2));
-  await page.reload();                                           // an in-page reload while w2 is key
-  await within("AC-36 after a reload the panel shows its own window", (ms) => page.waitForSelector(row("src"), { timeout: ms }));
-  check("AC-36 … from sessionStorage", (await bound(page)) === "w1", await bound(page));
-  const w2b = await browser.newPage({ viewport: { width: 520, height: 900 } });
-  await w2b.goto(`${base}/?t=${TOKEN}`);                        // a second load guess for w2 (like a restore)
-  await within("AC-36 two load guesses for one window both fall", (ms) => w2.waitForFunction(() => !sessionStorage.getItem("fb.window"), null, { timeout: ms }));
-  check("AC-36 … the newer one too", (await bound(w2b)) === null, await bound(w2b));
-  await w2.close(); await w2b.close();
-  await push("e2eA", SB);
+  await windowTools(page, browser, row);                         // AC-36
 
   // AC-34 a short restart: an amber dot, no error, and what changed meanwhile shows up
   let noticed = "";
@@ -318,7 +297,8 @@ try {
   await within("AC-34 after the save the panel reloads", (ms) => page.waitForFunction(() => window.__before === undefined, null, { timeout: ms }), 8000);
   await within("AC-34 … with its tabs and tree", (ms) => page.waitForSelector(`${row("src")}`, { timeout: ms }));
   check("AC-34 … the edited tab is back", !!(await page.$('.tab .tname:text("greet.py")')));
-  check("AC-34 … and its window binding", (await bound(page)) === "w1", await bound(page));
+  const win = await page.evaluate(() => sessionStorage.getItem("fb.window"));
+  check("AC-34 … and its window binding", win === "w1", win);
   check("AC-34 the saved text is on disk", fs.readFileSync(`${SB}/greet.py`, "utf8").includes("# gap"));
   await page.evaluate(() => { window.__after = 1; });
   await page.waitForTimeout(2500);

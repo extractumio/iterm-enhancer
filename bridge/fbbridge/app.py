@@ -18,7 +18,7 @@ from .lifecycle import LockError, bounded, connection_closed, take_lock, watch
 from .inventory import Inventory
 from .navigation import open_quickly
 from .procinfo import iterm_process
-from .registry import heal
+from .registry import heal, registered_here, remember
 from .resolve import open_hosts, resolve, static_vars, theme_of
 from .remote import Remotes
 from .recovery_capture import Capture, epoch
@@ -207,12 +207,17 @@ class Follower:
 _registered = {"url": None}
 
 
-async def register(conn):
-    """Register the Files tool with fbd's current token, if that changed (AC-07)."""
+async def register(conn, epoch=None):
+    """Register the Files tool with fbd's current token, if that changed (AC-07); not again
+    in the same iTerm2 process with the same URL (AC-36)."""
     url = f"{BASE}/?t={(APP_DIR / 'token').read_text().strip()}"
     if url == _registered["url"]:
         return
-    await iterm2.tool.async_register_web_view_tool(conn, "Files", TOOL_ID, False, url)
+    if registered_here(url, epoch):
+        log("tool already registered in this iTerm2 process")
+    else:
+        await iterm2.tool.async_register_web_view_tool(conn, "Files", TOOL_ID, False, url)
+        remember(url, epoch)
     await heal(conn, url)
     _registered["url"] = url
     log("tool registered")
@@ -246,7 +251,7 @@ async def main(conn):
     backend.start(new_token=not (ours or took_over))
     if not await loop.run_in_executor(None, backend.wait_ready):
         stop("fbd did not start; see fbd.log", 1)
-    await register(conn)
+    await register(conn, run_epoch)
     install_viewer_profile()
 
     app = await iterm2.async_get_app(conn)
@@ -277,7 +282,7 @@ async def main(conn):
                 await asyncio.sleep(min(2 * (backend.failures - 1), 10))
                 backend.start()
                 await loop.run_in_executor(None, backend.wait_ready)
-                await register(conn)  # fbd made a new token if it could not get its port
+                await register(conn, run_epoch)  # fbd made a new token if it could not get its port
                 await loop.run_in_executor(None, remotes.reregister)
                 follower.last = None  # re-push state to the fresh process
             if not await bounded(follower.poll(), POLL_TIMEOUT):  # costs one poll, not the loop

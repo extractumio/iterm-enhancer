@@ -27,6 +27,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 let term: TermState = { version: -1, bridge: false };
 const binding = new Binding();        // the iTerm2 window this panel lives in (AC-36)
 let unseen = false;                   // fbd has no state of that window yet
+let unlinked = false;                 // unbound, and another window's state was left alone (AC-36)
 let updateNote = "";                  // an upgrade waits for unsaved work (AC-34)
 let key: string | null = null;        // state key of the pane shown (session or tmux pane)
 let ws: Pane | null = null;           // its workspace as last read or written
@@ -135,6 +136,7 @@ function renderHeader(s: TermState) {
   $("crumbs").replaceChildren(bdi);
   $("crumbs").title = cwd;
   $("note").textContent = updateNote + (unseen ? "Switch to this window to update · " : "") +
+    (unlinked ? "Click here to follow this window · " : "") +
     (s.stale ? "⏸ cwd unavailable — showing last known · " : "") + (s.note ?? "");
 }
 
@@ -161,20 +163,29 @@ async function showOwnWindow() {
 
 /** The user acted in the panel, so its window is key: bind to it (AC-36). */
 function confirmWindow() {
-  if (!VIEW) void binding.confirm().then((asked) => { if (asked) return showOwnWindow(); }).catch(() => {});
+  if (VIEW) return;
+  void binding.confirm().then((asked) => {
+    if (!asked) return;
+    if (binding.window && unlinked) { unlinked = false; renderHeader(term); }
+    return showOwnWindow();
+  }).catch(() => {});
 }
 
 async function onState(s: TermState) {
   renderSetupNotice(s.setup_notice);
   upgrade.build(s.build);
   if (!VIEW && !binding.accepts(s)) { // another window's pane (AC-36): only the bridge status counts here
-    if (s.bridge === term.bridge) return;
+    const foreign = binding.foreign(s);
+    if (s.bridge === term.bridge && foreign === unlinked) return;
+    unlinked = foreign;
     term = { ...term, bridge: s.bridge };
     renderHeader(term);
     return bridgeNotice(term);
   }
   term = s;
   unseen = false;
+  unlinked = false;
+  binding.shown(s);
   const restyled = applyTheme(s.theme);
   if (VIEW) return; // the viewer window only takes the theme
   if (restyled) tree.themeChanged(); // row height follows the font size
@@ -289,7 +300,11 @@ const relative = (p: string) => {
 };
 
 /** fbd quotes paths and refuses if focus moved to another pane than the one shown. */
-const terminal = (action: "insert" | "cd", body: object) => apiOrToast("POST", `/api/terminal/${action}`, { body: { ...body, key } });
+const terminal = (action: "insert" | "cd", body: object) => {
+  // an unbound panel may show another window's pane: never type there for a click made here
+  if (!binding.window) return toast("Click here to follow this window first — nothing typed");
+  return apiOrToast("POST", `/api/terminal/${action}`, { body: { ...body, key } });
+};
 
 async function contextMenu(path: string | null, isDir: boolean, ev: MouseEvent) {
   const sel = path ? [...tree.selected] : [];
