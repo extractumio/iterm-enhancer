@@ -20,12 +20,14 @@ from pathlib import Path
 
 import iterm2
 
-from e2e_common import PORT, TOKEN
+from e2e_common import PORT, TOKEN, new_window
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 N = int(args[0]) if args else 10
 SKIP_CC = "--no-cc" in sys.argv  # local tmux -CC can be blocked by an iTerm2 "Cannot Attach" alert
 ROOT = Path(tempfile.mkdtemp(prefix="fb-e2e-")).resolve()
+TMUX = ROOT.name
+TMUX_CC = ROOT.name + "-cc"
 DIRS = [ROOT / f"d{i}" for i in range(N)]
 for d in DIRS:
     d.mkdir()
@@ -69,7 +71,7 @@ async def run_mode(name, session):
         with lock:
             seen.pop(str(d), None)
         t = time.monotonic()
-        await session.async_send_text(f"cd {d}\r")
+        await session.async_send_text(f"cd {d}\r", suppress_broadcast=True)
         at = await wait_cwd(d)
         lat.append((at - t) * 1000 if at else None)
         await asyncio.sleep(0.3)
@@ -89,27 +91,26 @@ async def run_mode(name, session):
 async def main(conn):
     threading.Thread(target=sse, daemon=True).start()
     app = await iterm2.async_get_app(conn)
-    before = {w.window_id for w in app.terminal_windows}
-    await iterm2.Window.async_create(conn)
+    created = await new_window(conn)
     await asyncio.sleep(1.5)
-    win = [w for w in app.terminal_windows if w.window_id not in before][0]
+    win = app.get_window_by_id(created.window_id)
     await win.async_activate()
     s = win.current_tab.current_session
     results = []
     try:
         results.append(await run_mode("bash", s))
-        await s.async_send_text(f"tmux -L fbe2e -f /dev/null new-session -s e2e -c {ROOT}\r")
+        await s.async_send_text(f"tmux -L {TMUX} -f /dev/null new-session -s e2e -c {ROOT}\r", suppress_broadcast=True)
         for _ in range(50):  # wait until the bridge sees the tmux client
             await asyncio.sleep(0.1)
             if last_mode[0] == "tmux":
                 break
         await asyncio.sleep(0.5)
         results.append(await run_mode("tmux", s))
-        await s.async_send_text("tmux -L fbe2e kill-server\r")
+        await s.async_send_text(f"tmux -L {TMUX} kill-server\r", suppress_broadcast=True)
         await asyncio.sleep(1)
         if SKIP_CC:
             raise StopIteration
-        await s.async_send_text(f"tmux -L fbe2e2 -f /dev/null -CC new-session -s e2ecc -c {ROOT}\r")
+        await s.async_send_text(f"tmux -L {TMUX_CC} -f /dev/null -CC new-session -s e2ecc -c {ROOT}\r", suppress_broadcast=True)
         pane = None
         for _ in range(40):
             await asyncio.sleep(0.25)
@@ -130,7 +131,7 @@ async def main(conn):
     except StopIteration:
         print("tmux -CC  skipped (--no-cc)")
     finally:
-        os.system("tmux -L fbe2e kill-server 2>/dev/null; tmux -L fbe2e2 kill-server 2>/dev/null")
+        os.system(f"tmux -L {TMUX} kill-server 2>/dev/null; tmux -L {TMUX_CC} kill-server 2>/dev/null")
         await asyncio.sleep(1)
         await win.async_close(force=True)
         for d in DIRS:

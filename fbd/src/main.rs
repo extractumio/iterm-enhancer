@@ -9,14 +9,28 @@ mod agent;
 mod api_fs;
 mod api_state;
 mod auth;
+mod checkpoint;
 mod events;
 mod files;
 mod http;
 mod listing;
+mod liveness;
 mod local;
 mod ops;
 mod panels;
 mod remote;
+mod recovery;
+mod recovery_store;
+mod recovery_lifecycle;
+#[cfg(test)]
+mod recovery_lifecycle_tests;
+mod recovery_startup;
+#[cfg(test)]
+mod recovery_startup_tests;
+#[cfg(test)]
+mod recovery_quit_tests;
+#[cfg(test)]
+mod recovery_tests;
 mod socket;
 mod termtext;
 mod watcher;
@@ -72,6 +86,7 @@ struct Term {
     last_push: Option<Instant>,
     /// what panels were last told about the bridge (AC-30)
     announced_alive: bool,
+    setup: Value,
 }
 
 impl Term {
@@ -108,6 +123,8 @@ pub struct App {
     viewer_pending: Mutex<Vec<api_state::ViewBody>>,
     /// which window each panel lives in (AC-36)
     panels: panels::Panels,
+    live: Mutex<liveness::Live>,
+    recovery: Arc<Mutex<recovery_store::Store>>,
     /// remote hosts' agents (AC-37)
     remotes: remote::Remotes,
     /// the build the bridge last said it is (AC-33)
@@ -192,12 +209,16 @@ fn routes(app: Shared) -> Router {
         .route("/api/terminal/{action}", post(terminal))
         .route("/api/workspace", get(get_workspace).put(put_workspace))
         .route("/api/prefs", get(get_prefs).put(put_prefs))
+        .route("/api/recovery", get(recovery::get).put(recovery::configure))
+        .route("/api/recovery/save", post(recovery::save))
+        .route("/api/recovery/restore", post(recovery::restore))
         .route("/api/health", get(health))
         .route("/api/watch", put(watch))
         .route("/api/view/open", post(view_open))
         .route("/api/remote/{action}", post(remote_action))
         .route("/api/view/pending", get(view_pending))
         .route("/api/ui/toolbelt-width", post(toolbelt_width))
+        .route("/api/ui/open-quickly", post(open_quickly))
         .route("/api/panel/claim", post(panels::panel_claim))
         .route("/api/panel/bind", post(panels::panel_bind))
         .route("/ticket", get(ticket))
@@ -217,6 +238,19 @@ fn bridge_routes(app: Shared) -> Router {
         .route("/internal/viewer-open", post(internal_viewer_open))
         .route("/internal/error", post(internal_error))
         .route("/internal/state", post(internal_state))
+        .route("/internal/liveness", post(liveness::inventory))
+        .route("/internal/setup", post(liveness::setup))
+        .route("/internal/recovery", get(recovery::get))
+        .route("/internal/recovery/snapshot/{id}", get(recovery::snapshot))
+        .route("/internal/recovery/capture", post(recovery::capture).layer(axum::extract::DefaultBodyLimit::max(4 << 20)))
+        .route("/internal/recovery/job", post(recovery::progress))
+        .route("/internal/recovery/error", post(recovery::error))
+        .route("/internal/recovery/epoch", post(recovery::epoch))
+        .route("/internal/recovery/lifecycle", post(recovery::lifecycle))
+        .route("/internal/recovery/exit", post(recovery::normal_exit))
+        .route("/internal/recovery/startup", post(recovery::startup))
+        .route("/internal/recovery/startup/begin", post(recovery::startup_begin))
+        .route("/internal/recovery/startup/finish", post(recovery::startup_finish))
         .route("/internal/commands", get(internal_commands))
         .layer(middleware::from_fn_with_state(app.clone(), local::guard))
         .with_state(app)
@@ -273,8 +307,10 @@ async fn main() {
         store: Store::load(dir.join("workspaces.json"), env("FB_WORKSPACE_TTL_DAYS", 14), bus.clone()),
         roots: Roots::parse(&std::env::var("FB_WRITABLE_ROOTS").unwrap_or_else(|_| "$HOME:/tmp".into())),
         bus,
-        term: Mutex::new(Term { state: json!({}), windows: HashMap::new(), version: 0, last_push: None, announced_alive: false }),
+        term: Mutex::new(Term { state: json!({}), windows: HashMap::new(), version: 0, last_push: None, announced_alive: false, setup: Value::Null }),
         panels: Default::default(),
+        live: Default::default(),
+        recovery: Arc::new(Mutex::new(recovery_store::Store::load(dir.join("recovery")))),
         remotes: Default::default(),
         bridge_build: Mutex::new(Value::Null),
         streams: Default::default(),
@@ -348,9 +384,25 @@ async fn main() {
 mod tests {
     use super::*;
 
+    pub(crate) fn app(path: PathBuf) -> Shared {
+        Arc::new(App {
+            cfg: Config { port: 47832, agent: false, host: "127.0.0.1:47832".into(),
+                token: "test-token".into(), bridge_secret: None, text_max: 1024 },
+            bus: Bus::new(), cache: Cache::new(1024), store: Store::load(path.clone(), 14, Bus::new()),
+            roots: Roots::parse("/tmp"),
+            term: Mutex::new(Term { state: json!({}), windows: HashMap::new(), version: 0,
+                last_push: None, announced_alive: false, setup: Value::Null }),
+            panels: Default::default(), live: Default::default(), remotes: Default::default(),
+            recovery: Arc::new(Mutex::new(recovery_store::Store::load(path.with_extension("recovery")))),
+            bridge_build: Mutex::new(Value::Null), streams: Default::default(), started: Instant::now(),
+            denied: Default::default(), commands: tokio::sync::broadcast::channel(32).0,
+            watcher: None, tickets: Default::default(), viewer_pending: Default::default(),
+        })
+    }
+
     #[test]
     fn bridge_silence_is_announced_once() {
-        let mut t = Term { state: json!({}), windows: HashMap::new(), version: 3, last_push: None, announced_alive: false };
+        let mut t = Term { state: json!({}), windows: HashMap::new(), version: 3, last_push: None, announced_alive: false, setup: Value::Null };
         assert!(!t.went_silent(), "never connected: nothing to announce");
         t.last_push = Some(Instant::now());
         t.announced_alive = true;

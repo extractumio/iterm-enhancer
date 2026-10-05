@@ -83,6 +83,21 @@ impl Panels {
         n
     }
 
+    pub fn purge_windows(&self, windows: &HashSet<String>) -> Vec<String> {
+        let mut contested = self.contested.lock();
+        contested.retain(|w| !windows.contains(w));
+        let mut claims = self.claims.lock();
+        let lost = claims.iter().filter(|(_, (w, _))| windows.contains(w)).map(|(c, _)| c.clone()).collect();
+        claims.retain(|_, (w, _)| !windows.contains(w));
+        lost
+    }
+
+    pub fn windows(&self) -> HashSet<String> {
+        let mut windows = self.contested.lock().clone();
+        windows.extend(self.claims.lock().values().map(|(w, _)| w.clone()));
+        windows
+    }
+
     /// A claim needs an open event stream, or nothing would ever take it back.
     fn connected(&self, client: &str) -> bool {
         self.streams.lock().contains_key(client)
@@ -149,7 +164,10 @@ fn client(app: &Shared, headers: &HeaderMap) -> Result<String, axum::response::R
 }
 
 fn settle(app: &Shared, client: &str, window: Option<&str>, level: Level) -> ApiResult {
-    let window = window.filter(|w| !w.is_empty());
+    let known = window.is_some_and(|w| app.term.lock().windows.contains_key(w));
+    // A fresh bridge answer proves a new window exists even before the next sweep.
+    let window = window.filter(|w| !w.is_empty() &&
+        (level != Level::Restored || known || app.live.lock().allows_window(w)));
     let (holds, lost) = match window {
         Some(w) => app.panels.claim(client, w, level),
         None => (false, vec![]),
@@ -270,5 +288,27 @@ mod tests {
         p.answer(id, Some("w1".into()));
         p.answer(id, Some("w2".into()));
         assert_eq!(rx.await.unwrap(), Some("w1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_fresh_bridge_answer_supersedes_inventory_before_new_window_is_seen() {
+        let path = std::env::temp_dir().join(format!("fbd-claim-{}.json", std::process::id()));
+        let app = crate::tests::app(path);
+        let b = serde_json::from_value(json!({"windows":["w1"],"sessions":["p1"],"keys":["p1"],"protect_tmux":false})).unwrap();
+        crate::liveness::inventory(State(app.clone()), Json(b)).await;
+        assert!(!app.live.lock().allows_window("w2"));
+        assert!(settle(&app, "p", Some("w2"), Level::Confirmed).is_ok());
+        assert_eq!(app.panels.per_window().get("w2"), Some(&1));
+    }
+
+    #[test]
+    fn contested_windows_remain_candidates_until_purged() {
+        let p = Panels::default();
+        p.claim("a", "w1", Level::Tentative);
+        p.claim("b", "w1", Level::Tentative);
+        assert!(p.per_window().is_empty());
+        assert_eq!(p.windows(), HashSet::from(["w1".into()]));
+        p.purge_windows(&p.windows());
+        assert!(p.windows().is_empty());
     }
 }

@@ -13,6 +13,9 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { manyPanels } from "./e2e_sockets.mjs";
+import { sessionTools } from "./e2e_session_tools.mjs";
+import { recoveryTools } from "./e2e_recovery.mjs";
+import { recoveryUpgrade } from "./e2e_recovery_upgrade.mjs";
 import { base, bringBack, check, cleanup, cmds, FBD, internal, PORT, push, restartFbd, results, resume, SB, silence, stopFbd, TOKEN, within } from "./e2e_harness.mjs";
 
 // playwright-core is a devDependency; PLAYWRIGHT_CORE may point at another copy
@@ -24,7 +27,7 @@ const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
 page.on("dialog", (d) => { errors.push("dialog: " + d.message()); void d.dismiss(); });
 let client = "";                                     // the panel's X-FB-Client (errors are addressed to it)
-page.on("request", (r) => { client ||= r.headers()["x-fb-client"] ?? ""; });
+page.on("request", (r) => { client = r.headers()["x-fb-client"] ?? client; });
 const toastText = () => page.textContent("#toast");
 const outside = [], blocked = [];
 const external = (u) => !u.startsWith(`http://127.0.0.1:${PORT}`) && !/^(data|about):/.test(u);
@@ -40,6 +43,8 @@ const focusInput = async () => {
 
 try {
   await within("AC-01 tree shows the pane's folder", (ms) => page.waitForSelector(row("app.py"), { timeout: ms }));
+  await sessionTools(page, () => client);
+  await recoveryTools(page, browser);
 
   // AC-09 create file (opens in a tab), duplicate name, nested folder
   await page.click("#new-file"); await focusInput();
@@ -318,6 +323,7 @@ try {
   await page.evaluate(() => { window.__after = 1; });
   await page.waitForTimeout(2500);
   check("AC-34 one reload per build (a page that still differs does not loop)", (await page.evaluate(() => window.__after)) === 1);
+  await recoveryUpgrade(page);
 
   // AC-07 another program on the port while fbd is away: it never sees the token, whether
   // it answers nothing useful or forges the proof; the panel comes back to fbd with its edits

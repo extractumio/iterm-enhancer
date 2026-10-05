@@ -40,6 +40,9 @@ fn with_status(t: &Term, state: &Value) -> Value {
     s["version"] = json!(t.version);
     s["bridge"] = json!(t.bridge_alive());
     s["build"] = json!(crate::build_id());
+    if !t.setup.is_null() {
+        s["setup_notice"] = t.setup.clone();
+    }
     s
 }
 
@@ -49,16 +52,14 @@ pub struct StateQuery {
 }
 
 /// The key window's state, or the last state of `window` (a panel that lives there,
-/// AC-36); a window fbd has not seen yet answers the key window's state.
+/// AC-36); an unseen or closed window never borrows another window's pane.
 pub async fn get_state(State(app): State<Shared>, Query(q): Query<StateQuery>) -> Json<Value> {
     let t = app.term.lock();
-    Json(match q.window.as_deref().and_then(|w| t.windows.get(w)) {
-        Some((s, _)) => with_status(&t, s),
+    Json(match q.window.as_deref() {
+        Some(w) => with_status(&t, &t.windows.get(w).map(|(s, _)| s.clone()).unwrap_or_else(|| json!({"window": w}))),
         None => state_of(&t),
     })
 }
-
-const WINDOWS_MAX: usize = 64;
 
 pub async fn internal_state(State(app): State<Shared>, Json(mut body): Json<Value>) -> StatusCode {
     body.as_object_mut().map(|o| o.remove("version"));
@@ -81,11 +82,6 @@ pub async fn internal_state(State(app): State<Shared>, Json(mut body): Json<Valu
         t.announced_alive = true;
         if changed {
             if let Some(w) = body["window"].as_str() {
-                if t.windows.len() >= WINDOWS_MAX && !t.windows.contains_key(w) {
-                    // closed windows pile up otherwise: drop the one not updated for longest
-                    let oldest = t.windows.iter().min_by_key(|(_, (_, at))| *at).map(|(k, _)| k.clone());
-                    oldest.map(|k| t.windows.remove(&k));
-                }
                 t.windows.insert(w.to_string(), (body.clone(), Instant::now()));
             }
             t.state = body;
@@ -156,6 +152,14 @@ fn command(app: &App, mut cmd: Value, headers: &HeaderMap) {
 
 pub(crate) fn no_bridge() -> Response {
     err(StatusCode::SERVICE_UNAVAILABLE, "no_bridge", "iTerm2 bridge not connected")
+}
+
+pub async fn open_quickly(State(app): State<Shared>, headers: HeaderMap) -> ApiResult {
+    if !app.term.lock().bridge_alive() {
+        return Err(no_bridge());
+    }
+    command(&app, json!({"action": "open-quickly"}), &headers);
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 pub async fn put_workspace(State(app): State<Shared>, Query(q): Query<KeyQuery>, headers: HeaderMap, Json(pane): Json<Pane>) -> Response {
@@ -379,6 +383,22 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(take_pending(&mut pending, Some("devbox")), vec!["/same"]);
         assert!(pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_windows_do_not_borrow_focus_and_navigation_is_addressed() {
+        let path = std::env::temp_dir().join(format!("fbd-state-query-{}.json", std::process::id()));
+        let app = crate::tests::app(path);
+        let mut commands = app.commands.subscribe();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-fb-client", "panel".parse().unwrap());
+        assert_eq!(open_quickly(State(app.clone()), headers.clone()).await.unwrap_err().status(), StatusCode::SERVICE_UNAVAILABLE);
+        internal_state(State(app.clone()), Json(json!({"window":"w2","session":"p2","key":"p2"}))).await;
+        let Json(s) = get_state(State(app.clone()), Query(StateQuery { window: Some("w1".into()) })).await;
+        assert_eq!(s["window"], "w1");
+        assert!(s["key"].is_null());
+        assert_eq!(open_quickly(State(app), headers).await.unwrap().status(), StatusCode::NO_CONTENT);
+        assert_eq!(commands.recv().await.unwrap(), json!({"action":"open-quickly","by":"panel"}));
     }
 
     #[test]

@@ -6,6 +6,7 @@ import contextlib
 import io
 import os
 import runpy
+import subprocess
 import sys
 import tempfile
 import types
@@ -24,6 +25,31 @@ def main_of(name, namespace):
 
 
 class IntegrationDirectoryTest(unittest.TestCase):
+    def test_internal_child_modes_refuse_missing_live_and_symlinked_state_before_import(self):
+        guard = runpy.run_path(str(SCRIPTS / "e2e_isolated.py"))["require_private_state"]
+        with tempfile.TemporaryDirectory() as root:
+            home = Path(root) / "home"; home.mkdir()
+            live = home / ".iterm-filebrowser/state"; live.mkdir(parents=True)
+            alias = Path(root) / "alias"; alias.symlink_to(live, target_is_directory=True)
+            with mock.patch.object(Path, "home", return_value=home), mock.patch.dict(os.environ, {"FB_ROOT":str(home / ".iterm-filebrowser")}):
+                for state in ("", str(live), str(alias)):
+                    with mock.patch.dict(os.environ, {"FB_APP_DIR":state}), self.assertRaisesRegex(SystemExit, "isolated FB_APP_DIR"):
+                        guard()
+                with mock.patch.dict(os.environ, {"FB_APP_DIR":str(Path(root) / "private")}):
+                    guard()
+
+    def test_security_script_refuses_missing_live_and_symlinked_state(self):
+        with tempfile.TemporaryDirectory() as root:
+            home = Path(root) / "home"; home.mkdir()
+            live = home / ".iterm-filebrowser/state"; live.mkdir(parents=True)
+            alias = Path(root) / "alias"; alias.symlink_to(live, target_is_directory=True)
+            for state in ("", str(live), str(alias)):
+                env = dict(os.environ, HOME=str(home), FB_APP_DIR=state)
+                result = subprocess.run(["bash", str(SCRIPTS / "security_check.sh")], env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("refuse", result.stderr.lower())
+                self.assertNotIn("token", result.stderr, "guard must precede even a token open attempt")
+
     def test_missing_or_live_override_is_refused_before_token_read(self):
         for override in ("", "/test-install/state"):
             common = types.ModuleType("fbbridge.common")
@@ -55,10 +81,11 @@ class IntegrationStatusTest(unittest.IsolatedAsyncioTestCase):
         session = types.SimpleNamespace(session_id="own-session", async_send_text=mock.AsyncMock())
         window = types.SimpleNamespace(window_id="own-window", current_tab=types.SimpleNamespace(current_session=session),
                                        async_activate=mock.AsyncMock(), async_close=mock.AsyncMock())
-        application = types.SimpleNamespace(terminal_windows=[])
+        application = types.SimpleNamespace(terminal_windows=[], get_window_by_id=lambda _: window)
 
         async def create(conn):
             application.terminal_windows.append(window)
+            return window
         iterm = types.SimpleNamespace(async_get_app=mock.AsyncMock(return_value=application),
                                      Window=types.SimpleNamespace(async_create=create))
         return session, window, iterm
@@ -73,6 +100,8 @@ class IntegrationStatusTest(unittest.IsolatedAsyncioTestCase):
                 "threading": types.SimpleNamespace(Thread=mock.Mock()), "sse": lambda: None,
                 "run_mode": mock.AsyncMock(return_value=False), "last_mode": ["tmux"],
                 "ROOT": root, "DIRS": [], "SKIP_CC": True, "os": types.SimpleNamespace(system=mock.Mock()),
+                "new_window": iterm.Window.async_create,
+                "TMUX": "owned-tmux", "TMUX_CC": "owned-cc",
             }
             main = main_of("e2e_cwd.py", namespace)
             with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as error:
@@ -89,6 +118,7 @@ class IntegrationStatusTest(unittest.IsolatedAsyncioTestCase):
             namespace = {
                 "iterm2": iterm, "asyncio": types.SimpleNamespace(sleep=mock.AsyncMock()),
                 "TARGET": target, "call": lambda *args: (200, {}),
+                "new_window": iterm.Window.async_create,
             }
             main = main_of("e2e_terminal.py", namespace)
             with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as error:

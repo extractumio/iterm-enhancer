@@ -2,7 +2,7 @@
 //! Per-pane workspace: tree state + open tabs, keyed by the bridge's state key
 //! (iTerm2 session id, or tmux pane). Persisted to JSON, debounced, atomic rename.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -61,6 +61,7 @@ pub struct Store {
     path: PathBuf,
     dirty: Notify,
     bus: Bus,
+    ttl: u64,
 }
 
 fn now() -> u64 {
@@ -82,9 +83,10 @@ impl Store {
             Err(_) => File::default(),
         };
         data.version = 1;
-        let cutoff = now().saturating_sub(ttl_days * 86400);
-        data.panes.retain(|_, p| p.updated >= cutoff);
-        let store = Arc::new(Store { data: Mutex::new(data), writing: Mutex::new(()), path, dirty: Notify::new(), bus });
+        // Wait for authoritative liveness before pruning: a live inactive pane may
+        // predate the TTL when fbd restarts.
+        let store = Arc::new(Store { data: Mutex::new(data), writing: Mutex::new(()), path, dirty: Notify::new(), bus,
+            ttl: ttl_days.saturating_mul(86400) });
         let s = store.clone();
         tokio::spawn(async move {
             loop {
@@ -168,6 +170,32 @@ impl Store {
     pub fn len(&self) -> usize {
         self.data.lock().panes.len()
     }
+
+    /// Coarse liveness persistence does not change content revisions or emit updates.
+    pub fn maintain(&self, keys: &HashSet<String>, protect_tmux: bool) {
+        self.maintain_at(keys, protect_tmux, now());
+    }
+
+    fn maintain_at(&self, keys: &HashSet<String>, protect_tmux: bool, at: u64) {
+        let mut data = self.data.lock();
+        let before = data.panes.len();
+        let mut touched = false;
+        let cutoff = at.saturating_sub(self.ttl);
+        data.panes.retain(|key, pane| {
+            if keys.contains(key) {
+                if at.saturating_sub(pane.updated) >= 3600 {
+                    pane.updated = at;
+                    touched = true;
+                }
+                true
+            } else {
+                pane.updated >= cutoff || (protect_tmux && key.starts_with("tmux:"))
+            }
+        });
+        if touched || before != data.panes.len() {
+            self.dirty.notify_one();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -178,7 +206,7 @@ mod tests {
     fn a_waiting_flush_captures_the_latest_snapshot_after_the_writer_lock() {
         let path = std::env::temp_dir().join(format!("fbd-ws-flush-{}.json", std::process::id()));
         let s = Arc::new(Store { data: Mutex::new(File { version: 1, ..Default::default() }),
-            writing: Mutex::new(()), path: path.clone(), dirty: Notify::new(), bus: Bus::new() });
+            writing: Mutex::new(()), path: path.clone(), dirty: Notify::new(), bus: Bus::new(), ttl: 14 * 86400 });
         let write = s.writing.lock();
         let (started, waiting) = std::sync::mpsc::channel();
         let thread = {
@@ -193,6 +221,31 @@ mod tests {
         assert_eq!(saved.prefs, s.prefs());
         assert!(!path.with_extension("json.tmp").exists());
         fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn ongoing_ttl_preserves_live_idle_panes_and_uncertain_tmux_without_revisions() {
+        let path = std::env::temp_dir().join(format!("fbd-ws-ttl-{}.json", std::process::id()));
+        fs::write(&path, r#"{"version":1,"panes":{
+            "live":{"root":"/a","updated":1,"rev":7},
+            "closed":{"root":"/b","updated":1},
+            "tmux:devbox:/tmp/t:%1":{"root":"/c","updated":1}}}"#).unwrap();
+        let s = Store::load(path.clone(), 14, Bus::new());
+        assert_eq!(s.len(), 3, "startup waits for live inventory");
+        let at = 15 * 86400;
+        let keys = HashSet::from(["live".into()]);
+        s.maintain_at(&keys, true, at);
+        assert_eq!(s.len(), 2, "closed state purged without restarting");
+        let live = s.get("live", None);
+        assert_eq!((live.updated, live.rev), (at, 7));
+        s.maintain_at(&keys, true, at + 5);
+        assert_eq!(s.get("live", None).updated, at, "no five-second disk writes");
+        s.maintain_at(&keys, false, at + 10);
+        assert_eq!(s.len(), 1, "resolved absence permits tmux TTL cleanup");
+        s.flush();
+        let loaded = Store::load(path.clone(), 14, Bus::new());
+        assert_eq!(loaded.len(), 1);
+        let _ = fs::remove_file(path);
     }
 
     /// AC-35: a build reads state written by a newer one (unknown fields) or an older one

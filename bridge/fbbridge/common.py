@@ -14,7 +14,7 @@ SOCKET = APP_DIR / "fbd.sock"  # the bridge talks to fbd only here (AC-07)
 # an installed build is <root>/builds/<build>/{fbd, bridge/fbbridge, BUILD} (AC-33); a checkout has no BUILD
 BUILD_DIR = Path(__file__).resolve().parents[2]
 BUILD = (BUILD_DIR / "BUILD").read_text().strip() if (BUILD_DIR / "BUILD").is_file() else "dev"
-LOG_DIR = ROOT / "logs"
+LOG_DIR = APP_DIR / "logs" if os.environ.get("FB_APP_DIR") else ROOT / "logs"
 TOOL_ID = "com.local.iterm-filebrowser"
 POLL = 0.5
 POLL_TIMEOUT = 10.0  # one poll of the focused pane (AC-30)

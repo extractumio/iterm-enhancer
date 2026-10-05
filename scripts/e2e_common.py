@@ -17,6 +17,29 @@ TOKEN = (APP_DIR / "token").read_text().strip()
 REPO = Path(__file__).resolve().parent.parent
 
 
+def own_window(window):
+    """Tell the private follower exactly which window this test created."""
+    if os.environ.get("FB_E2E_ISOLATED") == "1":
+        (APP_DIR / "test-windows.json").write_text(json.dumps([window.window_id]))
+
+
+async def new_window(conn):
+    import iterm2
+    if os.environ.get("FB_E2E_ISOLATED") == "1":
+        profile = iterm2.LocalWriteOnlyProfile()
+        profile._simple_set("Custom Command", "Yes")
+        profile._simple_set("Command", "/bin/bash --noprofile --norc")
+        profile._simple_set("Initial Text", "")
+        profile._simple_set("Load Shell Integration Automatically", False)
+        window = await iterm2.Window.async_create(conn, profile_customizations=profile)
+    else:
+        window = await iterm2.Window.async_create(conn)
+    if not window:
+        raise RuntimeError("The test window did not open")
+    own_window(window)
+    return window
+
+
 def call(method, path, body=None):
     """(status, JSON body) of a request to fbd with the panel's token."""
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method,

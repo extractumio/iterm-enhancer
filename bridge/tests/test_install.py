@@ -56,6 +56,7 @@ class InstallTest(unittest.TestCase):
         self.launches = []
         self.healthy_builds = set()  # builds that come up when launched
         m = [mock.patch.object(self.live, "iterm_running", lambda: True),
+             mock.patch.object(self.inst.setup_state, "wait_result", lambda directory, request_id: {"id": request_id, "status": "done", "changes": [], "errors": []}),
              mock.patch.object(self.live, "launch", self.fake_launch),
              mock.patch.object(self.live, "health", lambda legacy=False: dict(self.running) or None),
              mock.patch.object(self.live, "wait_healthy", lambda build, seconds=10.0, legacy=False: self.running.get("build") == build),

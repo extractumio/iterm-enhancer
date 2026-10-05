@@ -19,6 +19,8 @@ import { Stream } from "./stream";
 import { Upgrade } from "./upgrade";
 import { commitPath, trashPaths } from "./file-actions";
 import { refreshScope } from "./panel-refresh";
+import { renderSetupNotice, watchToolbeltWidth } from "./iterm-tools";
+import { refreshRecovery, renderRecovery } from "./recovery";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -163,6 +165,7 @@ function confirmWindow() {
 }
 
 async function onState(s: TermState) {
+  renderSetupNotice(s.setup_notice);
   upgrade.build(s.build);
   if (!VIEW && !binding.accepts(s)) { // another window's pane (AC-36): only the bridge status counts here
     if (s.bridge === term.bridge) return;
@@ -207,6 +210,7 @@ let lastUnproven = false;
 const stream = new Stream({
   on: {
     state: (s) => void onState(s),
+    recovery: renderRecovery,
     // our own writes echo back with by === CLIENT
     workspace: ({ key: k, rev, by }) => { if (k === key && by !== CLIENT && (!ws || rev > ws.rev)) void loadWorkspace(k); },
     "fs-change": onFsChange,
@@ -224,6 +228,7 @@ const stream = new Stream({
       const host = scope;
       return void api<string[]>("GET", "/api/view/pending", { host }).then((ps) => { if (host === scope) ps.forEach((p) => viewer.open(p)); }, () => {});
     }
+    void refreshRecovery();
     void binding.claim().then(() => showOwnWindow()).catch(() => {});
     renderHeader(term);
     if (key) void loadWorkspace(key);
@@ -375,7 +380,7 @@ const viewer = new Viewer($("tabs"), $("tools"), $("vbody"), {
 let pathBar: PathBar | null = null; // viewer window only
 
 const upgrade = new Upgrade({
-  busy: () => viewer.hasDirty || !!document.querySelector(".modal, .inline-edit.on"),
+    busy: () => viewer.hasDirty || !!document.querySelector(".modal, .inline-edit.on, dialog[open]"),
   beforeReload: () => saveNow(),
   waiting: (text) => {
     if (updateNote) return;
@@ -413,6 +418,7 @@ $("maximize").onclick = () => $("app").classList.toggle("max");
 // Keyboard. ⌘-shortcuts that iTerm2 owns (⌘N, ⌘W, ⌘T) are avoided; ⌥-variants are used
 // instead. ⌘S is also bound inside the editor.
 document.addEventListener("keydown", (e) => {
+  if (document.querySelector("dialog[open]")) return;
   const t = e.target as HTMLElement;
   const inField = t.matches("input, textarea") || !!t.closest(".cm-editor");
   if (e.key === "/" && !inField) { e.preventDefault(); filterEl.focus(); return; }
@@ -443,19 +449,6 @@ window.addEventListener("beforeunload", (e) => {
   void saveNow();
   if (viewer.hasDirty) e.preventDefault();
 });
-
-/** The user widened or narrowed this Toolbelt: make it the width of new windows (AC-27). */
-function watchToolbeltWidth() {
-  let reported = innerWidth, timer = 0;
-  addEventListener("resize", () => {
-    clearTimeout(timer);
-    timer = window.setTimeout(() => {
-      if (Math.abs(innerWidth - reported) < 4) return;
-      reported = innerWidth;
-      void api("POST", "/api/ui/toolbelt-width", { body: {} }).catch(() => {});
-    }, 800);
-  });
-}
 
 async function startViewer(path: string) {
   document.documentElement.classList.add("viewer-mode");

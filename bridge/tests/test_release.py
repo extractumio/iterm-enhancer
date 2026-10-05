@@ -114,15 +114,99 @@ class ReleaseTest(unittest.TestCase):
     def test_publishing_tags_then_fills_a_draft_then_publishes(self):
         for f in (release.package.TARBALL, "install.sh", "SHA256SUMS", "SHA256SUMS.sig"):
             (self.out / f).write_text(f)
-        url = release.publish("v1.0.0", draft=False)
+        url = release.publish("v1.0.0", draft=False, notes="")
         self.assertEqual(git(self.tmp / "origin.git", "rev-parse", "v1.0.0^{commit}"), git(self.work, "rev-parse", "HEAD"))
         verbs = [" ".join(c.split()[:2]) for c in self.calls()]
         self.assertEqual(verbs, ["release create", "release upload", "release edit", "release view"])
         self.assertIn("--draft", self.calls()[0])
         self.assertTrue(url.endswith("/v1.0.0"))
         self.log.write_text("")
-        release.publish("v1.0.0", draft=True)  # an earlier run stopped after tagging
+        release.publish("v1.0.0", draft=True, notes="")  # an earlier run stopped after tagging
         self.assertNotIn("release create", " ".join(self.calls()))
+
+    def test_notes_preserve_markdown_and_refresh_a_resumed_draft(self):
+        notes = "# Changes\n\n- Restore ⌘Q state.\n- Literal `$(ignored)` and quotes: 'x'.\n"
+        real_gh, bodies, paths = release.gh, [], []
+
+        def capture(*args, **kwargs):
+            if "--notes-file" in args:
+                path = Path(args[args.index("--notes-file") + 1])
+                bodies.append(path.read_text(encoding="utf-8"))
+                paths.append(path)
+            return real_gh(*args, **kwargs)
+
+        with mock.patch.object(release, "gh", side_effect=capture):
+            release.publish("v1.0.0", draft=False, notes=notes)
+            release.publish("v1.0.0", draft=True, notes=notes)
+        self.assertEqual(len(bodies), 3, "create, final edit and resumed final edit receive notes")
+        self.assertTrue(all(body == bodies[0] for body in bodies))
+        self.assertTrue(bodies[0].startswith(notes + "\n"))
+        self.assertIn("Install or upgrade:", bodies[0])
+        self.assertIn(release.signing_key.fingerprint(), bodies[0])
+        self.assertEqual(paths[0], paths[1], "one file is shared by create and final edit")
+        self.assertTrue(all(not path.exists() for path in paths), "temporary files are removed")
+
+    def test_missing_notes_use_legacy_text_but_read_failures_abort_before_build(self):
+        self.assertEqual(release.release_notes("v1.0.0"), "")
+        path = self.work / "docs/releases/v1.0.0.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("# Changes\n\nText.\n", encoding="utf-8")
+        self.assertEqual(release.release_notes("v1.0.0"), "# Changes\n\nText.\n")
+        path.write_text(" \n", encoding="utf-8")
+        self.assertIn("are empty", self.refused(release.release_notes, "v1.0.0"))
+        path.write_bytes(b"\xff\xfe")
+        with mock.patch.object(release, "check_source"), mock.patch.object(release, "check_unpublished") as unpublished, \
+                mock.patch.object(release.package, "main") as build, mock.patch.object(release, "sign") as sign, \
+                mock.patch.object(release, "publish") as publish:
+            self.assertIn("cannot read release notes", self.refused(release.main, ["v1.0.0"]))
+            unpublished.assert_not_called()
+            build.assert_not_called()
+            sign.assert_not_called()
+            publish.assert_not_called()
+        path.unlink()
+        path.mkdir()
+        self.assertIn("cannot read release notes", self.refused(release.release_notes, "v1.0.0"))
+        path.rmdir()
+        path.symlink_to(self.work / "absent.md")
+        self.assertIn("cannot read release notes", self.refused(release.release_notes, "v1.0.0"))
+        path.unlink()
+        with mock.patch.object(Path, "read_text", side_effect=PermissionError("denied")):
+            self.assertIn("denied", self.refused(release.release_notes, "v1.0.0"))
+
+    def test_failed_upload_keeps_the_release_unpublished_and_cleans_notes(self):
+        real_gh, paths = release.gh, []
+
+        def fail_upload(*args, **kwargs):
+            if args[:2] == ("release", "upload"):
+                raise SystemExit("upload failed")
+            if "--notes-file" in args:
+                paths.append(Path(args[args.index("--notes-file") + 1]))
+            return real_gh(*args, **kwargs)
+
+        with mock.patch.object(release, "gh", side_effect=fail_upload):
+            self.assertIn("upload failed", self.refused(release.publish, "v1.0.0", False, "# Changes"))
+        self.assertFalse(any(call.startswith("release edit") for call in self.calls()))
+        self.assertTrue(paths and all(not path.exists() for path in paths))
+
+    def test_notes_never_follow_file_or_ancestor_links_outside_reviewed_source(self):
+        external = self.tmp / "external"
+        (external / "releases").mkdir(parents=True)
+        target = external / "releases/v1.0.0.md"
+        target.write_text("# Unreviewed text", encoding="utf-8")
+        docs = self.work / "docs"
+        docs.mkdir()
+        path = docs / "releases"
+        path.mkdir()
+        note = path / "v1.0.0.md"
+        note.symlink_to(target)
+        with mock.patch.object(Path, "read_text", side_effect=AssertionError("must not read target")):
+            self.assertIn("symlink", self.refused(release.release_notes, "v1.0.0"))
+        note.unlink()
+        path.rmdir()
+        docs.rmdir()
+        docs.symlink_to(external, target_is_directory=True)
+        with mock.patch.object(Path, "read_text", side_effect=AssertionError("must not read target")):
+            self.assertIn("inside the repository", self.refused(release.release_notes, "v1.0.0"))
 
 
 if __name__ == "__main__":

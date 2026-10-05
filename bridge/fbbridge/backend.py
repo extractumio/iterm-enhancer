@@ -53,6 +53,14 @@ class Backend:
             raise ConnectionError(f"fbd answered {status} to {path}: {data[:200].decode(errors='replace')}")
         return status
 
+    def query(self, method, path, body=None, timeout=10):
+        """Structured recovery calls remain on the authenticated private socket."""
+        status, data = unixhttp.request(SOCKET, method, path, json.dumps(body).encode() if body is not None else None,
+                                       {"Content-Type": "application/json", "X-FB-Bridge": self.secret}, timeout=timeout)
+        if not 200 <= status < 300:
+            raise ConnectionError(f"Recovery request failed (HTTP {status})")
+        return json.loads(data) if data else None
+
     def answers(self):
         """An fbd of this install runs: it answers on the private socket."""
         try:

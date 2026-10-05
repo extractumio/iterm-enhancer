@@ -31,6 +31,8 @@ import install_launch as live
 # the folder this installer came in: a package (BUILD, agents/, bridge/, scripts/), or the
 # checkout, where only `id` is meaningful (make install stages a package first)
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "bridge"))
+from fbbridge import setup_state  # noqa: E402
 HOME = Path.home()
 ROOT = live.ROOT
 LIB = ROOT / "builds"
@@ -264,6 +266,20 @@ def go_live(build):
     return True
 
 
+def report_settings(request_id, is_live):
+    if not is_live:
+        return
+    try:
+        result = setup_state.wait_result(APP_DIR, request_id)
+    except (ValueError, OSError):
+        return say("iTerm2 setup incomplete: unreadable setup result; run the installer again")
+    if result is None:
+        return say("iTerm2 setup is pending; the Files panel will report changes when setup completes")
+    message = setup_state.notice(result)
+    if message:
+        say(message["message"])
+
+
 def install(pkg=REPO):
     """Install (or upgrade to) the package in folder `pkg`."""
     if not (pkg / "BUILD").is_file():
@@ -276,9 +292,11 @@ def install(pkg=REPO):
     if got != build:
         raise Failed(f"{fbd} is build {got or 'unknown'}, expected {build}")
     move_old_layout()  # only once the package is known to be good
+    request_id = setup_state.request(APP_DIR)
     old = target("current")
     if old == build:
         if live.iterm_running() and live.runs(live.health(legacy(build)), build):
+            report_settings(request_id, True)
             return say(f"{build} is already installed and running")
     copy_build(build, pkg)
     if old and old != build:
@@ -301,6 +319,7 @@ def install(pkg=REPO):
         raise Failed(f"Upgrade to {build} failed ({e}); rolled back to {old} — see {live.LOG_DIR}")
     if not is_live:
         return say(f"Installed {build}; takes effect when iTerm2 starts")
+    report_settings(request_id, True)
     prune()
     say(f"Upgraded {old} → {build}" if old and old != build else f"Installed {build}; the Files panel is live (View → Toolbelt → Files)")
 

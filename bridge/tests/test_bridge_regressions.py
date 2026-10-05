@@ -67,7 +67,7 @@ class CommandsTest(unittest.IsolatedAsyncioTestCase):
     async def test_insert_can_target_unchanged_busy_job(self):
         self.command.update(intent="insert", job="vim", text="src/main.rs ")
         await self.send(job="vim", busy=True)
-        self.session.async_send_text.assert_awaited_once_with("src/main.rs ")
+        self.session.async_send_text.assert_awaited_once_with("src/main.rs ", suppress_broadcast=True)
 
 
 class RemoteSafetyTest(unittest.TestCase):

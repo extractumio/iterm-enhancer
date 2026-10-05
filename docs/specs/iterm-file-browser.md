@@ -4,15 +4,18 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.16.0 |
-| Date | 2026-10-03 |
-| Status | approved |
+| Version | 0.19.0 |
+| Date | 2026-10-04 |
+| Status | draft |
 | Author | Project maintainers |
 
 Change log:
 
 | Version | Date | Change |
 |---|---|---|
+| 0.19.0 | 2026-10-04 | AC-50 skips automatic reconstruction on the next same-boot launch after an observed, durably recorded normal iTerm2 exit; snapshots remain available manually, a new boot overrides the marker, and unknown/crash exits retain automatic recovery. |
+| 0.18.0 | 2026-10-04 | AC-46–50 distinguish durably observed normal root exits and explicit pane/window closes from loss of iTerm2 or the machine; exact-ID retirement excludes closed panes from pinned sources and retries, Undo/restart re-enables a verified live identity, and controlled profiles close on process exit. |
+| 0.17.0 | 2026-10-04 | AC-43 installation configures native restoration and supported shell profiles once; AC-44 authoritative inventory purges closed-window caches and continuously expires unused workspaces; AC-45 uses native Open Quickly. Pragmatic approved with conditions: no restart reconciliation, no purge during inventory uncertainty, live inactive panes retained, inventory never masks a silent follower. |
 | 0.1.0 | 2026-09-30 | Initial draft, based on the working Python demo in `demo/` |
 | 0.2.0 | 2026-09-30 | Pragmatic review + experiments: state keyed by session **and tmux pane**; AC-05 restart/scroll/GC split into AC-23 (P1); Markdown links split into AC-24 (P1); AC-02 progress row dropped (request waits); tab and pane caps removed; cache limit in MB; bridge secret for `/internal`; `Referrer-Policy`; etag = ns mtime + inode + size; SSE limit tested (14 streams OK); 500K read measured 0.8 s warm; OQ-07 (shortcuts) added |
 | 0.3.0 | 2026-09-30 | Stage 1 + 2 + 3 implemented. Shortcuts that iTerm2 owns avoided (⌥N, ⌥⇧N, ⌥W instead of ⌘N, ⌘⇧N, ⌘W); rename is F2, Enter opens (AC-10, AC-15); filter applies inside shown folders (AC-16); `FB_APP_DIR` added for isolated tests; DoD updated with the actual test commands and results |
@@ -136,6 +139,14 @@ Open questions:
 | AC-39 | [SHOULD / P1] | The maintainer builds the agent for macOS arm64 and x86_64 and Linux x86_64 and arm64 (Ubuntu, Debian) the same way on the Mac and on the owner's runner, and publishes them as a release built on that runner. |
 | AC-41 | [MUST / P0] | The user keeps up to 100 iTerm2 windows open at once, each with a Files panel that loads and follows its window. |
 | AC-42 | [SHOULD / P1] | The user never updates a remote host by hand: after the Mac's File Browser is upgraded, the helper on every host with an open window follows by itself, and the panel says so. |
+| AC-43 | [SHOULD / P1] | Installation enables native restoration and automatic integration for supported shell profiles; the user sees an informational message only for settings actually changed. |
+| AC-44 | [SHOULD / P1] | Closed-window metadata disappears after 60 seconds of confirmed absence; inactive live panes retain Files state, and unused workspaces expire continuously after the configured TTL. |
+| AC-45 | [SHOULD / P1] | The user opens iTerm2's searchable Open Quickly popup with ⌘⇧O or the Files button and focuses the selected live session. |
+| AC-46 | [SHOULD / P1] | Automatic checkpoints and startup restoration are enabled by default, preserve an explicit opt-out, and store native topology/directories/connections including inactive panes without output, history or arbitrary job commands. |
+| AC-47 | [SHOULD / P1] | Each new iTerm2 process restores the latest durable state before capture, recreates missing native terminals with saved directories/geometry, adopts identified live sessions, and preserves busy, changed or uncertain sessions with a report. |
+| AC-48 | [SHOULD / P1] | Restore reconnects supported SSH destinations using current authentication; known remote directories use a generated bootstrap, and unsupported connection recipes are reported without replaying commands. |
+| AC-49 | [SHOULD / P1] | Restore attaches surviving tmux sessions or recreates recorded local tmux topology with shells only on a private server; remote/control-mode limitations are reported per connection. |
+| AC-50 | [SHOULD / P1] | All panels show one recovery job, its checkpoint history, progress and per-pane deviations; retries reconcile creation markers and do not duplicate successful terminals. |
 
 ## 5. BDD scenarios
 
@@ -1411,6 +1422,23 @@ Scenario: AC-40 security — signed releases
   And only then it tags HEAD, pushes the tag and fills a draft release, published once the package, install.sh, SHA256SUMS and its signature are attached; a failure before leaves nothing public
   And install.sh and "iterm-filebrowser upgrade" verify the signature with the key they carry (upgrade: the installed package's) before the checksum, and install nothing on a missing or wrong signature
 
+Scenario: AC-40 happy path — versioned release notes
+  Given "docs/releases/vX.Y.Z.md" is committed with the changes for that version
+  When "make release TAG=vX.Y.Z" creates or resumes a draft
+  Then the published notes preserve the file's Markdown and append installation and signing information
+  And an existing draft receives the current notes before it becomes public
+
+Scenario: AC-40 failure — unreadable release notes
+  Given the version's notes file exists but is empty or cannot be read as UTF-8
+  When the maintainer runs the release command
+  Then it refuses before building, signing, tagging or publishing with the reason
+  And only a missing notes file uses the legacy installation and signing text
+
+Scenario: AC-40 security — release notes belong to reviewed source
+  Given the notes file is a symlink or its parent resolves outside the repository
+  When the release command reads the version's notes
+  Then it refuses before reading their contents, building, signing or publishing
+
 Scenario: AC-40 security — unpacking
   Then an archive member other than a regular file or a folder (links, devices), a path outside the package, or setuid/setgid bits are refused or stripped on every Python the command runs on (3.9 included)
 
@@ -1500,9 +1528,466 @@ Scenario: AC-42 failure — the update fails
   And a build without a helper for the host's platform says "helper outdated · iterm-filebrowser hosts enable devbox.example"
 ```
 
+### AC-43 — Installation settings [SHOULD / P1]
+
+```gherkin
+Scenario: AC-43 happy path — requested settings change
+  Given restoration is disabled and the default zsh profile has integration disabled
+  When File Browser is installed with iTerm2 running
+  Then startup uses the system restoration setting and session restoration is enabled
+  And supported shell profiles load integration automatically for new sessions
+  And the installer and Files panel list only the settings changed
+  And the message advises restarting iTerm2 when session restoration changed
+
+Scenario: AC-43 edge — settings already correct or later changed by the user
+  Given the installation request completed with no changes
+  When the bridge restarts after the user disables restoration
+  Then no preference is rewritten and no informational message is shown
+  And browser and custom application profiles are never modified
+
+Scenario: AC-43 edge — iTerm2 stopped
+  When File Browser is installed while iTerm2 is stopped
+  Then setup waits for the next bridge launch
+  And the Files panel reports changes only after they happen
+
+Scenario: AC-43 failure — preference write rejected
+  Given one preference write fails after another succeeds
+  When the installation request finishes
+  Then the result preserves the successful changes and reports "iTerm2 setup incomplete"
+  And ordinary bridge restarts do not retry completed requests
+```
+
+### AC-44 — Live inventory and cleanup [SHOULD / P1]
+
+```gherkin
+Scenario: AC-44 happy path — a window closes
+  Given window w1 has cached state and a panel claim
+  When complete inventories omit w1 continuously for 60 seconds
+  Then its cached state, claim and watcher references are removed
+  And GET /api/state?window=w1 never returns another window's pane
+
+Scenario: AC-44 edge — inactive, minimized, buried and tmux sessions
+  Given a live pane has not changed its directory for 15 days
+  When complete inventories include that pane
+  Then its workspace remains available without revision changes
+  And detached tmux workspace state keeps the configured 14-day default TTL
+
+Scenario: AC-44 failure — inventory gap or unresolved tmux identity
+  When inventory fails or the bridge reconnects after a gap
+  Then absence grace starts again on the next complete inventory
+  And unknown tmux identities do not cause workspace deletion
+  And inventory traffic does not keep a stalled focused follower marked connected
+
+Scenario: AC-44 edge — ongoing workspace expiry
+  Given a workspace has been unused longer than FB_WORKSPACE_TTL_DAYS
+  When a complete inventory confirms that it is not live
+  Then it is removed without restarting fbd
+```
+
+### AC-45 — Native session navigation [SHOULD / P1]
+
+```gherkin
+Scenario: AC-45 happy path — choose a pane
+  When the user presses ⌘⇧O or clicks "Find terminal session" in Files
+  Then iTerm2 opens Open Quickly
+  And typing /f limits search to open sessions
+  And selecting a result focuses its window, tab and split pane
+
+Scenario: AC-45 failure — menu unavailable
+  Given iTerm2 disables Open Quickly or the bridge is disconnected
+  When the user clicks the Files navigation button
+  Then the requesting panel shows "Open Quickly is unavailable" or "iTerm2 bridge not connected"
+  And no command is typed into a terminal
+```
+
+### AC-46 — Durable terminal checkpoints [SHOULD / P1]
+
+```gherkin
+Scenario: AC-46 happy path — enabled capture
+  Given File Browser was freshly installed with automatic save and restore enabled by default
+  When 15 windows include inactive tabs, unequal splits, SSH and tmux clients
+  Then a complete checkpoint records their topology and observed directories
+  And unchanged state produces no new checkpoint writes
+  And no terminal output, history, environment or arbitrary job command is stored
+
+Scenario: AC-46 edge — explicit opt-out
+  Given the user disabled automatic save and restore
+  When the bridge, backend or iTerm2 starts again
+  Then the explicit disabled choice is preserved
+  And no automatic capture or reconstruction runs
+
+Scenario: AC-46 failure — interrupted capture or disk write
+  When topology changes during a sweep or checkpoint persistence fails
+  Then the last complete generation remains available and an error is shown
+
+Scenario: AC-46 failure — failed commits reach the orphan quota
+  Given failed index commits left bounded immutable orphan files
+  When index persistence becomes available again
+  Then the valid index is durably recommitted before orphan collection
+  And capture resumes while the selected recovery source stays pinned
+
+Scenario: AC-46 edge — reboot starts with no windows or closing bursts
+  When a new iTerm2 epoch reports an empty workspace
+  Then previous-epoch recovery checkpoints remain protected
+  And history retains recent stable layouts before partial closing generations
+
+Scenario: AC-46 edge — normal exit is recorded before the next full snapshot
+  Given a watched root process exits normally while the same iTerm2 process is operational
+  When the bridge confirms a fresh complete inventory and commits retirement
+  Then the pane is excluded from retained recovery sources even before the next five-second capture
+  And exit codes, argv, terminal output and history are not stored
+
+Scenario: AC-46 failure — application loss or missing exit evidence
+  When iTerm2 exits, the API fails, a process watch cannot be established, or the exit reason is unknown
+  Then a termination notification alone never retires the pane
+  And the last durable source remains available for recovery after iTerm2 or machine loss
+  And no exact guarantee is made for events lost during a bridge/backend outage or before durable acknowledgement
+```
+
+### AC-47 — Native reconstruction [SHOULD / P1]
+
+```gherkin
+Scenario: AC-47 happy path — missing native windows
+  When iTerm2 launches after a reboot with automatic save and restore enabled
+  Then missing windows, ordered tabs and split trees are created at saved directories
+  And saved frames and preferred cell sizes are applied
+  And new panes launch controlled shells with empty Initial Text
+  And no previous application is relaunched by the restorer
+
+Scenario: AC-47 edge — startup source is selected before capture
+  Given a previous iTerm2 run saved a complete terminal layout
+  When a new iTerm2 process initially reports an empty or default window
+  Then the previous run's latest durable snapshot is reserved before new capture
+  And native restoration is allowed to settle before missing terminals are created
+  And new startup state cannot overwrite the reserved source
+
+Scenario: AC-47 edge — deliberate closes and ordinary app relaunch
+  Given the last durable snapshot records fewer windows or no windows after intentional closes
+  When recovery runs after a reboot, crash, or explicit Restore
+  Then automatic recovery uses that latest snapshot rather than an older larger stable layout
+  And restarting only the bridge or backend does not reopen intentionally closed panes
+
+Scenario: AC-47 edge — native system reopening
+  Given a live session has the exact saved GUID and matching topology and cwd
+  When Restore runs
+  Then that session is adopted without creating a duplicate
+  And a busy session or live shell with a changed directory is preserved and reported
+
+Scenario: AC-47 failure — missing directory, profile or unsupported display state
+  When a recorded directory no longer exists or a layout operation fails
+  Then the recovery report names the deviation and retry remains available
+  And unrelated windows are never closed
+
+Scenario: AC-47 edge — directory vanishes or loses traversal permission at launch
+  Given a saved directory was removed, renamed, replaced by a file, or is inaccessible
+  When the controlled shell starts, including removal after preflight
+  Then a usable shell opens in home or the filesystem root and prints a warning
+  And no directory is recreated and no previous application is launched
+
+Scenario: AC-47 edge — ended native session or ambiguous identity
+  Given the saved pane has no recorded intentional termination
+  When iTerm2 reopens an ended pane or two panes claim the same recovery identity
+  Then interrupted history is preserved and controlled replacements open separately
+  And duplicate identity stops recovery before terminal mutation
+
+Scenario: AC-47 edge — intentional exit, close and Undo
+  Given the user exits a root shell or closes a pane, tab or window with iTerm2 still operational
+  When that action is durably observed and iTerm2 later restarts
+  Then no replacement is created for the retired pane
+  And controlled restored shells close on process exit instead of showing a Restart prompt
+  And Undo or explicit restart with a freshly verified live root or tmux-client role removes retirement
+
+Scenario: AC-47 edge — close during reconstruction before journal acknowledgement
+  Given a controlled pane has a creation marker but its journal write has not completed
+  When the user closes it and retries recovery
+  Then its original source identity is retired using the exact creation marker
+  And a fresh retirement check before creation prevents reviving it from a cached plan
+
+Scenario: AC-47 edge — retained ended history across repeated app launches
+  Given ended history is retained beside a replacement live terminal
+  When automatic capture runs before subsequent iTerm2 launches
+  Then provably ended panes are omitted and split trees and active pointers are projected
+  And unknown liveness and tmux control clients are retained without guessed replacements
+```
+
+### AC-48 — SSH reconnect [SHOULD / P1]
+
+```gherkin
+Scenario: AC-48 happy path — known SSH recipe and remote cwd
+  Given a checkpoint records devbox.example and /srv/project
+  When Restore runs
+  Then a newly created pane runs the validated SSH connection and generated cwd bootstrap
+  And password, MFA and host-key prompts remain interactive in that pane
+  And no text is injected into an authentication prompt
+
+Scenario: AC-48 failure — unsupported wrapper or executable option
+  Given the original connection includes an arbitrary remote command or ProxyCommand override
+  When Restore runs
+  Then no saved command is executed and the connection is reported as unresolved
+  And an unknown remote cwd is reported rather than interpreted as a local directory
+
+Scenario: AC-48 failure — missing remote directory or unavailable host
+  When the host rejects authentication or cannot be reached
+  Then SSH diagnostics remain visible and the ended pane remains available for inspection
+  And a nonzero controlled connection exit is not recorded as an intentional closure
+  And capture preserves its source for Retry and a later iTerm2 process, including bridge/backend upgrades
+  And an explicit close of its diagnostics still removes that connection from recovery
+  When authentication succeeds but the recorded remote directory is inaccessible
+  Then the remote shell opens in home or the filesystem root with a visible warning
+
+Scenario: AC-48 edge — capture after recovery and a later build upgrade
+  Given SSH was launched with File Browser's fixed safety options and generated directory bootstrap
+  When a later capture observes that connection
+  Then only the destination/options recipe is stored again, without the generated command
+  And password/MFA or unknown remote cwd cannot replace a known remote-directory target with a local startup directory
+  And exact source GUID or validated marker identifies newer live attempts across checkpoint generations
+  And closing old diagnostics cannot retire a newer live attempt before its journal acknowledgement
+  And an expired old source marker does not disable inventory after normal history collection
+  And noncanonical remote commands and executable SSH overrides remain unsupported
+```
+
+### AC-49 — tmux recovery [SHOULD / P1]
+
+```gherkin
+Scenario: AC-49 happy path — surviving original server
+  Given the server and session identities match the checkpoint
+  When Restore runs
+  Then clients attach to the surviving session and its running applications continue
+  And no pane or application is recreated on that server
+
+Scenario: AC-49 edge — local server lost after reboot
+  When the original local server is absent
+  Then shells, pane directories and layouts are recreated on a private controlled server
+  And old pane IDs are remapped to new IDs
+  And user tmux plugins, hooks and process-resume configuration are not loaded
+
+Scenario: AC-49 failure — unproven remote or control-mode identity
+  When the original server cannot be verified or a control-mode tab does not appear
+  Then the connection is reported as unresolved with a retry action
+  And an unrelated server is never modified or treated as the original
+
+Scenario: AC-49 edge — partial recovery changed by the user
+  Given the job's private tmux graph is incomplete
+  When an existing pane is busy, its cwd changed or mapped layout differs
+  Then retry preserves the graph and reports the deviation before any mutation
+  And a user-deleted window in a completed graph is not recreated
+
+Scenario: AC-49 failure — server disappears before attachment
+  When a verified tmux server disappears before the terminal command runs
+  Then recovery attach refuses server startup and does not load user tmux configuration
+  And remote attachment rechecks identity after SSH authentication
+
+Scenario: AC-49 edge — grouped clients across repeated reboots
+  Given tmux reports sessions in the same authoritative session group
+  When their server is lost, restored, captured and lost again
+  Then each group has one shared physical window/pane graph on the new private server
+  And actual session identities and separate control-mode gateways remain distinct
+  And clients starting on the same pane can switch windows independently
+  And unrelated sessions are never grouped from matching pane IDs alone
+
+Scenario: AC-49 failure — only part of the original group survives
+  Given a recorded group member is gone but another original member is verified alive
+  When recovery visits those clients in either order
+  Then surviving clients attach to their original applications
+  And the missing member is reported without reconstructing on the original server
+  And private group caching never substitutes a live connection
+
+Scenario: AC-49 failure — the completed private server is lost before a new capture
+  Given recovery reuses its durable job after the entire private server disappeared
+  When the recorded grouped clients are visited in either order
+  Then all old server completion steps are durably reset before creating a new server
+  And a bridge crash during reset can retry and rebuild the shared graph and aliases
+  And an existing unverifiable server is preserved rather than treated as absent
+
+Scenario: AC-49 edge — unobservable client-local active pane
+  Given a plain tmux client uses the active-pane flag
+  When the read-only tmux API cannot expose its client-local selected pane
+  Then capture records the selected session/window and the window's active pane
+  And recovery reports this pane-selection limit explicitly
+```
+
+### AC-50 — Recovery controls and retry [SHOULD / P1]
+
+```gherkin
+Scenario: AC-50 happy path — global job
+  When one panel selects a checkpoint and clicks Restore
+  Then all panels see the same job and per-pane progress
+  And concurrent Restore requests join that job
+
+Scenario: AC-50 failure — crash after creation before recording
+  Given a created pane carries the creation-time job and leaf marker
+  When recovery retries after a bridge crash
+  Then that pane is discovered and adopted without another creation
+  And ambiguous or user-modified topology stops that operation with a report
+
+Scenario: AC-50 edge — automatic recovery interrupted by a bridge crash
+  Given the new iTerm2 run has a durable pending startup source and job
+  When the bridge or backend restarts before recovery is acknowledged complete
+  Then the same job is reconciled automatically without selecting a newer source
+  And completed startup is not repeated on later bridge or backend restarts
+
+Scenario: AC-50 failure — delayed bridge, unstable native restoration or storage failure
+  Given the previous run has a latest durable snapshot
+  When the bridge starts late, native topology does not settle, or reserve/begin/finish cannot commit
+  Then no new capture replaces the reserved source and failures are visible
+  And settling cannot trigger a false orphan classification
+
+Scenario: AC-50 edge — upgrade in the same iTerm2 process
+  Given the old index has the current process identity, with or without startup metadata
+  When the bridge or backend starts a new build
+  Then automatic reconstruction does not run again
+  And an unsupported storage version is preserved and refused without an older fallback
+
+Scenario: AC-50 happy path — normal quit then same-boot relaunch
+  Given the bridge observed its exact iTerm2 process exit normally with status zero
+  And "POST /internal/recovery/exit" durably recorded that run identity
+  When a new iTerm2 process starts in the same macOS boot
+  Then File Browser creates no terminals automatically and automatic saving stays enabled
+  And the last source remains selectable for manual Restore
+  And a previous running recovery journal is interrupted so new capture can proceed
+  And File Browser never closes windows restored independently by iTerm2
+
+Scenario: AC-50 edge — reboot after normal quit
+  Given a normal app exit was recorded under "boot-a:4242:100"
+  When iTerm2 starts under "boot-b:4243:200"
+  Then the new boot overrides the normal-exit marker and restores the latest durable source
+  And the marker is cleared when startup commits
+
+Scenario: AC-50 failure — unknown exit or undelivered marker
+  When iTerm2 dies by signal, returns nonzero, or its process status cannot be observed
+  Or the bridge/backend is absent, the exit request fails, or persistence fails
+  Then no normal-exit marker is invented and previous snapshots remain available
+  And the next process retains automatic recovery because quit intent is unknown
+  And a stale marker request fails with "Application exit belongs to a different iTerm2 process"
+
+Scenario: AC-50 edge — bridge restart, fast relaunch and canceled Quit
+  Given the original iTerm2 process remains alive
+  When Quit is canceled or a new bridge takes over
+  Then no normal-exit marker is written
+  When the original iTerm2 process has exited normally before a bridge takeover
+  Then the old bridge drains queued exit evidence before stopping its backend
+  And a repeated callback is idempotent and cannot suppress a newer process
+
+Scenario: AC-50 limit — normal exit is not a public Quit reason
+  Given a zero process status was observed
+  Then same-boot AppleScript Quit, logout and an orderly application update are treated like normal Quit
+  And native window restoration follows iTerm2/macOS settings independently
+
+Scenario: AC-50 edge — requested recovery shortcut already belongs to iTerm2
+  Given Command+Shift+T is assigned to the native Undo Close menu item
+  When File Browser starts
+  Then that binding is preserved and no recovery shortcut replaces it
+  And automatic startup recovery and the Files retry button remain available
+```
+
 ## 6. Flow and sequence diagrams
 
+### Normal application exit and the next run (AC-50)
+
+```mermaid
+flowchart TD
+  A["New iTerm2 process; automatic recovery enabled"] --> B{"Boot changed?"}
+  B -- Yes --> R["Reserve latest source; settle native layout; reconcile missing panes"]
+  B -- No --> C{"Exact previous run has a durable normal-exit marker?"}
+  C -- No --> R
+  C -- Yes --> S["Clear marker; interrupt old actor; skip automatic reconstruction"]
+  S --> N["Settle native layout; enable capture; keep source for manual Restore"]
+```
+
+Only a kernel status-zero event delivered before backend shutdown creates the marker.
+Unknown exit reasons retain recovery; native reopening remains independent.
+
+### Install setup and live cleanup (AC-43, AC-44, AC-45)
+
+```mermaid
+sequenceDiagram
+  participant I as Installer
+  participant B as Python bridge
+  participant T as iTerm2 API
+  participant D as fbd
+  participant U as Files panel
+  I->>B: atomic install-scoped settings request
+  B->>T: read/write only requested preference properties
+  B-->>I: atomic consumed result with changes and errors
+  B->>D: settings notice (only changes or errors)
+  D-->>U: state with dismissible notice
+  loop every 5 seconds
+    B->>T: complete sessions inventory
+    B->>D: live windows, session IDs and known workspace keys
+    D->>D: 60-second absence grace; continuous workspace TTL
+  end
+  U->>D: explicit Open Quickly click
+  D->>B: addressed open-quickly command
+  B->>T: select native Open Quickly menu
+```
+
+Inventory is independent of the focused follower and cannot refresh its health.
+The native shortcut remains owned by iTerm2; no additional popup or global key binding is installed.
+
 ### Following the focused pane (AC-01, AC-05, AC-14)
+
+Terminal recovery (AC-46–50) uses automatic startup and a separate whole-app sweep every 5 seconds, with optional controls:
+`PUT /api/recovery {enabled:true}`, `POST /api/recovery/save {}` and
+`POST /api/recovery/restore {snapshot:"0123456789abcdef"}`. Save and restore default on;
+explicit opt-out persists. Before capture, startup reserves the latest durable source,
+including an intentional empty state, under the boot/iTerm2 process identity. Native
+topology must settle for three seconds within a bounded 30-second attempt. Pending
+startup pins the source and blocks capture; bridge/backend restarts resume it, while
+completed startup and legacy indexes in the same process never trigger another restore.
+The job epoch prevents completion from an older process acknowledging a new startup.
+The bridge arms a separate kernel exit watch for the exact iTerm2 PID/start identity.
+Only a normal zero status commits `POST /internal/recovery/exit {epoch:"boot-a:4242:100"}`
+over the private socket. The next same-boot startup skips reconstruction, keeps its
+source for manual Restore, interrupts any old running job, and leaves capture enabled.
+A new boot overrides this marker. API-loss shutdown waits at most three seconds for
+exit evidence; marker delivery uses a one-second request timeout. Bridge takeover
+drains already queued evidence before stopping its backend. No raw exit status is saved.
+No status, nonzero/signal death, or failed delivery is unknown and retains automatic
+recovery. Normal status also covers AppleScript Quit, orderly updates and logout;
+the public API cannot prove the Quit initiator. Native restored windows are never closed.
+Unknown liveness is retained without cwd/argv resolution; proven ended panes are projected
+out of future checkpoint trees while their history remains in iTerm2.
+An independent root kqueue watcher and fresh whole-app inventory confirm ordinary shell
+completion or explicit GUI closure in the same operational iTerm2 process. A 1.5-second
+confirmation grace protects teardown; volatile closure evidence blocks creation immediately.
+Durable retired GUIDs project every retained source, including startup reservations and
+Retry; journal/validated creation aliases cover new panes before their first acknowledgement.
+Fresh live roots or native tmux-client roles revive Undo IDs. Process/API loss, missing exit
+status and signals alone cannot prove intentional closure. Capture waits for unresolved
+closures; missed events or loss before durable acknowledgement remain an explicit limitation.
+Controlled SSH/tmux nonzero exits conservatively retain diagnostics and pause capture for
+Retry; a successful controlled connection exit closes its diagnostics after retirement.
+Nonzero remote-shell exits are ambiguous and require explicit close to retire. Individual
+process failures while iTerm2 remains alive do not trigger continuous automatic revival.
+The bridge uses the authenticated Unix socket for metadata, run identity and job progress;
+recovery events and status are global even when the Files panel follows a remote pane.
+Immutable checkpoints commit before their index; history keeps at most 64 entries and
+128 MiB with 4 MiB transient headroom, protects one stable/nonempty checkpoint per each
+of the last eight runs and the current job's source. Five seconds is a polling interval;
+timeouts can extend a sweep, so recovery uses the last durable checkpoint.
+Unchanged observations do not write; a 30-second unchanged generation is stable.
+Corrupt indexes/journals fail loud and preserve files; disk I/O and lock waits use blocking workers.
+Each snapshot has one durable recovery identity. Profile names mark creation before the
+first journal acknowledgement; retries check identity and projected split topology before adding panes.
+Native live IDs are adopted, busy/changed state preserved, and user-added topology stops reconstruction.
+Interrupted ended native panes retain their history: the public restart API reuses the
+original program, so controlled replacement terminals open separately. Completed controlled
+shells close immediately. Closed control-mode panes disable reconstruction of their recorded
+physical tmux server graph; remaining references report unsupported instead of reopening a
+closed physical pane. Closing a plain tmux client does not kill its physical server graph.
+No arbitrary job command or exit status is stored or replayed.
+SSH is an allowlisted destination/options recipe, with generated quoted remote `cd` and shell bootstrap;
+authentication stays in the terminal. Unverified remote tmux reconstruction is reported, never guessed.
+Local lost tmux sessions use private sockets, empty configuration, per-pane creation markers,
+recorded layouts with remapped IDs and shells only. Partial retries preflight all existing
+panes for cwd/job/markers and preserve changed or ambiguous completed layouts. All helpers
+and attachments forbid server startup with `-N`; initial private creation alone uses empty
+configuration. Remote attachment repeats its proof after authentication. Authoritative tmux
+groups keep a shared graph and actual session identities. Plain clients select windows independently;
+unobservable client-local active-pane state uses the window's active pane with a report. Surviving
+original group members keep their applications. Full private-server loss resets all prior completion
+steps durably before reconstruction; unknown listeners/inodes are preserved. System reopening, shell startup and SSH
+configuration can execute independently of this restorer. Exact macOS Spaces/monitor placement is not guaranteed.
 
 ```mermaid
 sequenceDiagram
@@ -1645,6 +2130,14 @@ State when this spec was written: a Python prototype in `demo/` (removed in 0.3.
 | AC-34 | Panels keep the old code until the Toolbelt is toggled; any gap shows "Backend not running" at once; no re-read after reconnect; old lazy chunks may 404. | Build id, self-reload with unsaved edits kept, grace period, re-read on reconnect. | `ui/src/main.ts`, `fbd/src/http.rs` |
 | AC-35 | Nothing to roll back to; stored fields already default (`serde(default)`), untested for rollback. | `make rollback`; compatibility rule and test. | `fbd/src/workspace.rs` |
 | AC-30 | After an iTerm2 restart the old bridge and fbd run on (ppid 1, loop stuck on a dead call); the new bridge exits on the busy port ("fbd did not start"); a silent bridge still shows as followed (`stale: false`, green dot, no event when it goes silent). | Exit with iTerm2 or the connection, lock and takeover, poll timeout, `bridge: false` event and header note. | `bridge/fbbridge/app.py`, `fbd/src/api_state.rs`, `ui/src/main.ts` |
+| AC-43 | Installer does not configure restoration or integration. | One-shot setup with selective properties and change-only notice. | `scripts/install.py`, `bridge/fbbridge/app.py` |
+| AC-44 | Window IDs accumulate; workspace TTL runs only at startup. | Complete live inventory, grace, consistent cache/claim/watch purge, continuous workspace TTL. | `bridge/fbbridge/windows.py`, `fbd/src/workspace.rs` |
+| AC-45 | iTerm2 already provides Open Quickly. | Reuse native popup and shortcut; add an explicit Files button. | iTerm2 `MainMenu.View.OPEN_QUICKLY`, `ui/public/index.html` |
+| AC-46 | Only focused Files state is stored. | Whole-app metadata, durable generations and protected previous epochs. | `bridge/fbbridge/app.py`, `fbd/src/workspace.rs` |
+| AC-47 | Native APIs proved on owned windows. | Reconstruction and strict identity adoption with per-pane deviations. | `scripts/e2e_restore_platform.py` |
+| AC-48 | Helper SSH parsing allows executable options. | Separate recovery allowlist and generated remote bootstrap. | `bridge/fbbridge/sshargs.py` |
+| AC-49 | Resolver sees the focused tmux pane only. | One graph per reachable server and controlled shell-only recreation. | `bridge/fbbridge/resolve.py` |
+| AC-50 | Global checkpoint/retry controls and a durable normal-exit skip for same-boot relaunch. | Real Cmd-Q and native saved-state disposal need owner validation. | `bridge/fbbridge/recovery_quit.py`, `fbd/src/recovery_startup.rs`, `ui/src/recovery.ts` |
 
 ## 8. Recommendation and ownership
 
@@ -1663,6 +2156,29 @@ State when this spec was written: a Python prototype in `demo/` (removed in 0.3.
 | Acceptance testing on a real iTerm2 setup | Owner |
 
 ## 9. Technical details and specifications
+
+### Native setup, liveness and navigation (AC-43, AC-44, AC-45)
+
+| Item | Contract |
+|---|---|
+| Setup | Private `iterm-settings-request.json` and `iterm-settings-result.json`, unique request ID, atomic writes; one request per explicit install, no writes on ordinary restart. Completed partial failures are reported, not silently retried. |
+| Startup | Set `OpenArrangementAtStartup=false` and `OpenNoWindowsAtStartup=false`; preserve the unrelated `OpenBookmark` preference. |
+| Restoration | `RunJobsInServers=true` (unset means iTerm2's enabled default); changing it requires restarting iTerm2. This cannot survive a machine reboot or preserve arbitrary processes. |
+| Integration | `Load Shell Integration Automatically=true` for supported login shells, SSH profiles and supported custom shells; exclude browser/application profiles and Apple's `/bin/bash`. Applies to new sessions; remote integration depends on iTerm2 and remote shell support. |
+| Notice | Installer prints actual changes; Files shows a dismissible informational banner for changed settings, and an error for partial failure. No notice when no setting changed. |
+| Inventory | Bridge calls the sessions API every 5 seconds, includes all tabs, minimized and buried sessions; only complete inventories POST `/internal/liveness`, authenticated on the private socket. Example: `{"windows":["w1"],"sessions":["p1"],"keys":["p1"],"protect_tmux":true}`. |
+| Cleanup | Window state, panel claims and bridge caches expire after 60 seconds of confirmed absence; gaps over 15 seconds reset absence grace. A missing window query returns an empty state, never another window. Live workspace timestamps refresh at most hourly without revision changes; expired non-live workspaces are removed during inventories, default TTL 14 days. Unknown tmux keys conservatively protect tmux state until resolution. |
+| Navigation | Authenticated `POST /api/ui/open-quickly` sends only `{"action":"open-quickly","by":"panel-id"}`; bridge selects `MainMenu.View.OPEN_QUICKLY`. Errors go only to that panel. Native ⌘⇧O and `/f` search are documented. |
+
+Terminal recovery uses separate immutable checkpoints and controlled reconstruction described
+in [the design and support matrix](../terminal-state-restoration-plan.md). Interrupted ended native panes
+remain intact because the public restart API reruns their original program. Recorded intentional
+closures are excluded from every retained source. Exact original
+GUIDs, creation-time markers and journal GUIDs establish identity; duplicate candidates stop
+recovery. Fresh pre-creation inventory reduces, but cannot eliminate, late native reopening
+races: the installed public create APIs cannot run transactionally. Files workspace state
+is not migrated across new terminal IDs. Real reboot, remote/-CC, authentication prompts,
+fullscreen and display/Spaces changes remain owner-validation items.
 
 ### Install and upgrade (AC-33, AC-34, AC-35)
 
@@ -1806,7 +2322,7 @@ Measured on a MacBook (Apple Silicon, APFS SSD).
 | Listing cache | 128 MB (`FB_LIST_CACHE_MB`) | Least recently used folders are dropped and re-read on demand. |
 | Watched folders | expanded folders of the focused pane + open tab files | Others are re-validated by mtime on access. |
 | Name length | 255 bytes | "Name is too long (max 255 bytes)". |
-| Workspace entries | idle 14 days (AC-23) | Removed at fbd start. |
+| Workspace entries | idle 14 days (AC-23, AC-44) | Removed continuously after authoritative liveness; live panes retained. |
 
 ### Security
 
@@ -1865,6 +2381,8 @@ The panel shows a red dot in the header when `bridge_connected` is false or SSE 
 | Stage 8 | AC-37, AC-38, AC-39 | Remote tmux -CC panes browse their host's files; one command readies a host; agents build for four platforms and release from the owner's runner. | — |
 | Stage 9 | AC-38 (panel), AC-40 | A user installs one package with one line, enables a host with one click, and runs one command for upgrades and hosts. | — |
 | Stage 10 | AC-03, AC-07, AC-08, AC-12, AC-37, AC-39, AC-40 (security) | Nothing in a file, a file name, a remote host, another local account or a fork can run a command, act on the wrong machine, take the backend's place or change a release. | — |
+| Stage 11 | AC-43, AC-44, AC-45 | Installation configures native restoration; closed-window metadata expires; native session search is one shortcut or button away. | — |
+| Stage 12 | AC-46, AC-47, AC-48, AC-49, AC-50 | Automatically save and recover after reboot/unclean launches; skip same-boot normal relaunch, with manual Restore, durable reconciliation and honest limits. | — |
 | Backlog | AC-21, AC-22 | Git colors, drag and drop. | M |
 
 ### Stage 7 plan (AC-33, AC-34, AC-35)
@@ -1968,7 +2486,62 @@ Results of 2026-09-30 on a MacBook (Apple Silicon) (iTerm2 3.6.11, tmux 3.6a). `
 - [x] AC-24 — Verified by: `e2e_panel` local `.md` link opens a tab, `../README.md#sandbox` back, panel URL unchanged.
 - [x] AC-41 — Verified by: `cargo test socket` 3 pass (Origin required and exact, a socket behind the bus closed, frames carry the SSE payload); `npm test` `stream` 5 pass; `e2e_panel` 148/148 with 7 AC-41 checks (upgrade 101 with the panel Origin, 403 for another or no Origin, 401 without the token, 12 panels in one browser load in 267 ms over 12 sockets with no SSE stream and all follow the next pane); with the SSE panel the 12-panel check fails (`sse` 7, timeouts). Chromium does not count WebSockets either, so the WebKit claim rests on the live run: 2026-10-03, iTerm2 with the installed build, 100 new windows opened in 60 s → `ws_clients` 112 (100 + 12 kept web views), every panel rendered its tree (screenshot), `/api/ls` 2 ms, fbd 136 open files, panels about 50 MB each; closing them returned `ws_clients` to 12. `scripts/e2e_cwd.py 3`, `scripts/e2e_terminal.py` (its check now joins soft-wrapped rows: the typed `cd` is longer than the window), `scripts/security_check.sh` pass.
 - [x] AC-42 — Verified by: `bridge/tests/test_agents.py` 20 pass, 7 for AC-42 (an outdated helper is replaced, says "updating the helper on devbox…" meanwhile without a second connection, then "updated to <build>" for 60 s; a failed copy says "Could not update the helper on devbox: …" and waits 10 minutes; a host removed during the copy stays removed; the same build copies nothing; two Macs' helpers on one host each run their own, with the real tunnel command through a fake ssh; open tmux -CC windows of enabled hosts are found unfocused); `e2e_panel` 150/150 with 2 AC-42 checks (toast "Helper on devbox updated to v9.9.0", header note). Live 2026-10-03 on the owner's Mac and host devbox.example (Linux x86_64), its window not focused: with the helper of the previous build linked and this build's removed, a bridge restart logged `agent on devbox.example: 4e37ea05e357 → 3fe3f830d8f7` after 1 s and `connected` after 4 s (twice).
+- [x] AC-40 release notes (2026-10-05) — `test_release.py` 9/9 against scratch repositories, fake GitHub and a private throwaway key: UTF-8/Markdown preservation, shared temporary notes, resumed draft refresh, missing-file fallback, empty/unreadable/linked-file refusal before reading or building, and upload failure without publication. The maintainer signing path is unchanged; versioned notes ship through `make release` only.
+- [x] AC-43 — Verified by: isolated installer and bridge tests for changes, no-op, deferred setup, partial failure and restart idempotence; no live preference changes during tests.
+- [x] AC-44 — Verified by: Rust and bridge tests for complete inventories, absence grace, gaps, live inactive/buried panes, claims, watcher state and ongoing TTL.
+- [x] AC-45 — Verified by: bridge menu success/failure tests and private browser test for the addressed command and error; native shortcut documented.
 
+AC-43–50 evidence (2026-10-04): final `make test` → Rust 91, Python 240,
+UI 30 passed with no new warnings. Private browser `e2e_panel` → 182/182;
+`e2e_review` → 25 review regressions passed after merging `origin/main` at `d0e4b6f`.
+`python3 scripts/e2e_isolated.py` → cwd and terminal actions PASS, security 33/33;
+tmux -CC did not attach and was reported SKIP.
+`e2e_recovery.py` → 17 owned native checks; `e2e_restore_platform.py` → 7 API proofs;
+`e2e_connection_failure.py` → 3 owned generated-connection failure checks using a
+private SSH stub, without network traffic or SSH configuration reads.
+No installation, preferences or live token/workspaces were changed. Existing spec-lint
+failures (length, historical stage/coverage rows and a literal image example) predate
+this revision. One earlier parallel run hit the existing free-port assertion in
+`local::tests`; the final general run passed without competing integration servers.
+
+- [x] AC-46 — Verified by: default-on/opt-out, latest including empty startup source, capture gating, legacy index migration, corruption/durability/quota, delayed old-epoch progress and protected pending-source tests; 15 owned inactive/native windows captured. Lifecycle regressions cover all retained-source projection, retired-ID collection on changed and unchanged captures, backend failure/corruption, Undo with a matching live root despite unavailable exit-status enrollment, and expired creation markers. Five seconds is a polling interval, not a completed-sweep guarantee. Mixed remote capture remains owner validation.
+- [x] AC-47 — Verified by: `e2e_recovery.py` restores 15 owned windows with ordered tabs/nested splits/cwd/frames; exact-ID/marker adoption, removed directories, partial nested retry and simulated new iTerm epochs all PASS. Real controlled-shell `exit 0`/`exit 7` closes without a restart prompt; an explicit owned GUI close is retired before another capture; neither reappears in later epochs. PID reuse, signals and absent exit status never prove normal completion. Missing/file/broken-link/denied directories, inaccessible home, launch-time path loss, removed profiles, unknown identities and clamped frames have regressions. `e2e_restore_platform.py` → 7/7 owned API/launch proofs. Real reboot, fullscreen and display/Spaces placement remain unverified.
+- [ ] AC-48 — Implemented; safe SSH allowlist, generated `/bin/sh -c` bootstrap, missing remote directory/home, quoting, restored-recipe recapture and new-process cwd provenance tests PASS. A generated connection returning 255 retains its diagnostic pane and retry eligibility through an upgrade and a later epoch (3 owned checks); successful owned connections close. Tests cover explicit close, known remote cwd preservation during authentication, superseded diagnostic attempts before journal acknowledgement and generic-profile rejection. Only canonical generated bootstraps are normalized; modified commands remain rejected. Real password/MFA, host-key and unreachable-host fixtures remain unverified; credentials/config files were not inspected.
+- [ ] AC-49 — Local private real tmux tests PASS: four-pane/two-window shell/layout/cwd recovery, deleted cwd and partial retry; PID/start identity, busy/changed/layout preservation and config sentinel. Seven group regressions cover two full generations, same-pane independent TTY clients, separate control targets, client-local pane limit/report, unrelated linked windows, partial original survival in both orders, conflicting/deleted completed aliases, whole private loss with stale socket, durable-reset crash/retry and unknown socket preservation. Remote identity/probe/post-auth mismatch tests use mocks/fake tmux and PASS; actual remote and tmux -CC attachment remain unverified (SKIP).
+- [x] AC-50 — Verified by: concurrent joining, epoch-checked completion/progress, startup settle/delay/outage/storage failures; owned bridge/backend restart, build upgrade, pending-source preservation and missing-ack reconciliation. Private browser checks cover global two-panel progress, reserved latest-source Retry, delayed GET versus newer event ordering and recovery-dialog upgrade deferral. Native ⌘⇧T remains occupied by Undo Close.
+
+Pragmatic design and independent implementation review findings were fixed with regressions:
+fresh panel identity, continuous purge, narrow profile classification, corrupt setup results,
+broadcast suppression, correct native/control detection, durable quota/error recovery,
+native ambiguity in both orders, UTF-8 message limits, partial native/tmux preservation,
+plain tmux client selection, safe ended-session replacement, forbidden tmux server startup
+on attach/helpers, explicit sh wrapping/canonical recapture of generated remote scripts,
+authoritative tmux groups, independent client identities, separated original/private caches,
+durable whole-server-loss resets before reconstruction, normal-exit retirement across
+retained sources, Undo revival, failed connection diagnostics, and stale diagnostic
+generations before acknowledgement. Closed control panes prohibit reconstructing their
+old physical server graph. Integration child entry points reject live state before
+initializing the backend. Public create
+transactions deadlocked in an owned proof; immediate inventory was adopted instead, with
+the remaining late-native-reopening race explicitly documented.
+
+Final pragmatic verdict: no blockers; approval conditioned on the final passing general
+run and honest unverified-scenario boundaries. Both conditions are satisfied above.
+The final narrow review approved fresh live-root revival when exit-status enrollment
+is denied and private integration-child guards; no additional blockers were found.
+The normal-quit design and implementation reviews approved exact kernel status,
+durable-before-stop delivery, source-preserving same-boot skip, new-boot override,
+native settling, and legacy marker clearing. Ten bridge quit regressions and nine Rust
+quit regressions cover status zero/nonzero/signals, missing/denied/reused identity,
+concurrent delivery, callback ordering, cached delivery retry, stale/corrupt state,
+journal/index commit failures, same-process manual actors and legacy reloads. Two
+startup tests cover skipped native settling and capture gating. Three added owned
+native checks prove kernel exit delivery, skipped relaunch/manual Restore and a
+simulated new-boot rebuild; three browser checks prove skip explanation and controls.
+Real Cmd-Q and native saved-state disposal remain owner validation; fixtures never
+quit the user's application. One private follower exited during a parallel general
+test run; the sequential final cwd/terminal/security run passed. Its removed temporary
+log prevents identifying the exit cause; no product cause is claimed.
 
 ### Max review — 2026-10-04
 

@@ -61,6 +61,12 @@ def foreground_pid(pid):
     return _u32(_bsdinfo(pid), 112) or None
 
 
+def proc_terminal(pid):
+    """Controlling terminal device, to reject reused restored PIDs without reading argv."""
+    device = _u32(_bsdinfo(pid), 108)  # e_tdev
+    return device if device not in (None, 0xffffffff) else None
+
+
 def shell_of(job_pid, root_pid):
     """Nearest shell at or above the foreground job, so `vim` after `:cd` or a nested
     bash reports the shell's cwd, not the job's."""

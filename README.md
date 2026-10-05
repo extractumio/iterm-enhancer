@@ -53,6 +53,108 @@ installs it into one folder, `~/.iterm-filebrowser/`, plus the bridge entry in i
 AutoLaunch. Needs macOS 14+ and iTerm2 3.5+ with **Settings → General → Magic → Enable
 Python API**; no build tools (tmux 3.2+ for tmux panes).
 
+Each explicit install configures **General → Startup → Use System Window Restoration
+Setting**, **Advanced → Enable session restoration**, and **Profiles → General → Load
+shell integration automatically** for supported shell/SSH profiles. Browser and custom
+application profiles are excluded. The installer and a dismissible Files notice report
+only settings actually changed; failures are reported separately. If iTerm2 is stopped,
+setup runs when the bridge next launches. Later bridge restarts preserve your preference
+changes. A changed session-restoration setting requires restarting iTerm2; automatic
+integration applies to new supported shell sessions.
+
+Press **⌘⇧O** or click **Find terminal session** in Files to open iTerm2's native **Open
+Quickly** popup. Type `/f` followed by a title, directory or host to search only open
+sessions; selecting one focuses its window, tab and split pane.
+
+Closed-window caches and panel bindings are removed after 60 seconds of confirmed
+absence. Inventory failures pause cleanup. Files workspaces survive for 14 days of
+inactivity (`FB_WORKSPACE_TTL_DAYS`), with live inactive/minimized/buried panes retained.
+Unknown or hidden tmux identities conservatively protect tmux workspaces until resolved.
+These native settings cannot preserve arbitrary local processes through a Mac reboot.
+macOS must also keep windows when quitting for system window restoration to reopen them.
+
+## Save and restore terminals
+
+Saving and restoration are enabled by default after installation. No checkpoint or
+checkbox is required. Capture includes inactive windows, ordered tabs,
+split trees, directories, window frames and supported SSH/tmux connections. It checks
+every five seconds; a slow or failed sweep leaves the previous snapshot available.
+
+After a reboot, open iTerm2: the bridge waits for native reopening to settle, then
+automatically restores the latest durable state and adopts identified live panes.
+Starting tmux first is unnecessary. **Terminal checkpoints and recovery** in Files
+shows the shared report, history and **Retry / reconcile**. You can disable
+**Save and restore terminals automatically**; that choice survives upgrades.
+⌘⇧T already belongs to iTerm2's **Undo Close**, so File Browser preserves it.
+
+A normal iTerm2 exit (including ⌘Q), once observed and durably recorded, skips File
+Browser's automatic reconstruction on the next launch in the same macOS boot.
+Automatic saving stays enabled; the recovery dialog explains the skip and offers
+manual **Restore**. A machine reboot overrides the marker. iTerm2/macOS window
+restoration is independent: File Browser does not close windows it reopens. iTerm2's
+**⌘⌥Q — Quit and Close All Windows** can discard that native saved window state.
+The observed zero process status also covers AppleScript Quit, orderly application
+updates and logout; it does not identify who initiated Quit. Signals, nonzero or
+unavailable status, a missing bridge/backend, or an uncommitted marker remain unknown
+and retain automatic recovery. No raw application exit status is stored.
+
+- Native panes reopen with controlled shells at their saved directories. Identified live
+  panes are adopted; busy panes and changed directories/layouts are preserved. Ordinary
+  exits and explicit pane/tab/window closes, once observed and committed, are excluded
+  from every retained checkpoint and retry. Our controlled shells close on completion;
+  their profiles do not show a Restart prompt. Undo Close can make a proven live pane
+  recoverable again. Interrupted ended panes reopened by iTerm2 receive separate shells:
+  iTerm2's restart API would rerun their original command.
+- Missing or inaccessible directories open a shell in home, with a report; a directory
+  that disappears during launch prints a warning and falls back to home or `/`.
+  Ended history remains in iTerm2 and is excluded from future captures when its process
+  is provably gone; unavailable liveness is preserved without guessing or reading its cwd.
+- Ordinary SSH reconnects supported destinations with interactive authentication.
+  A trustworthy Shell Integration observation supplies the remote directory. Wrappers,
+  arbitrary remote commands and executable connection options are reported as unsupported.
+  Failed controlled SSH/tmux attempts retain diagnostics and pause capture so Retry and
+  the next iTerm2 launch keep their source. A nonzero remote exit is conservatively treated
+  as a failed connection; explicitly close its diagnostic pane to exclude it from recovery.
+  Capture also waits while authentication or unavailable remote metadata would lose a
+  previously verified remote-directory target.
+- Surviving tmux servers retain their jobs. Lost local servers are recreated with shells
+  only on a private socket using an empty configuration. Recorded session groups keep one
+  shared window/pane graph; plain clients select windows independently. Client-local
+  `active-pane` selection cannot be observed through the read-only tmux API and falls back
+  to the window's active pane with a report. Remote control-mode attachment requires a
+  verified surviving server and working noninteractive authentication; lost remote servers
+  require manual recovery.
+
+Previously running Claude, Codex and other applications are recorded by name and are
+not relaunched. Your shell startup files, SSH configuration and iTerm2's own restoration
+may independently run programs. Exact Spaces/display placement is not guaranteed.
+Native recovery was verified with 15 owned windows; real reboot, interactive SSH and
+tmux -CC recovery still require owner validation. Normal app-exit proof uses owned
+processes and simulated run identities; tests never quit the user's iTerm2.
+
+Bridge/backend restarts and upgrades in the same iTerm2 process do not repeat completed
+restoration. Interrupted startup retains its source and pauses capture until recovery
+finishes or is disabled. Delayed launch uses the saved source before collecting new state;
+unrecorded changes during a bridge outage or the last seconds before shutdown can be lost.
+An intentionally empty latest snapshot restores nothing.
+Closure tracking checks fresh native inventory and root-process exit evidence while the
+same iTerm2 process is operational; API loss or signal termination alone cannot prove a
+deliberate close. A close during a bridge outage or before its durable acknowledgement
+cannot be distinguished reliably after a crash. This restores lost iTerm2/Mac state;
+it does not continuously revive individual processes that fail while iTerm2 keeps running.
+
+Checkpoints live separately from Files workspaces in `~/.iterm-filebrowser/state/recovery`.
+History is bounded to 64 snapshots and 128 MiB, with up to 4 MiB temporary headroom;
+one nonempty checkpoint per recent iTerm2 run and the current job's source are protected.
+Closing a window expires its live cache while older recovery snapshots remain bounded
+history; closed session IDs are excluded while any retained snapshot still references
+them. Terminal output, exit codes, history, environment and arbitrary application commands are
+not recorded. Files tree/editor state is not migrated to newly assigned terminal IDs.
+
+Upgrades install only releases signed by the maintainer's key; its fingerprint is in every
+release's notes, to check a first install by hand. Should the key ever change, installed
+copies refuse upgrades until installed again with the line above.
+
 ## Uninstall
 
 The command lives in `~/.iterm-filebrowser/bin`, which is not on your PATH unless you added it.
@@ -241,49 +343,8 @@ tests on Linux and builds the Linux agents on every push to `main`. A tag `v*` r
 repository or a release, so code running on the runner cannot change what users install.
 `make release TAG=v…` on the Mac publishes the release: it builds the package users install
 (all four helpers) from the tag and attaches it with `install.sh`, `SHA256SUMS` and its
-signature (see "Signed releases").
-
-### Signed releases
-
-Installs and upgrades accept a release only if its `SHA256SUMS` is signed by the
-maintainer's release key (an ed25519 ssh key; `ssh-keygen -Y`, built into macOS). Its public
-half is in `release-signers` and in `scripts/install.sh`, and every package carries it, so
-`iterm-filebrowser upgrade` checks with the key of the build already installed. Once, in
-your own terminal:
-
-```bash
-make signing-key        # ~/.config/iterm-filebrowser/release-key (FB_RELEASE_KEY); writes the public half
-git add release-signers scripts/install.sh && git commit -m "Release key"
-ssh-keygen -p -f ~/.config/iterm-filebrowser/release-key                 # give it a passphrase
-ssh-add --apple-use-keychain ~/.config/iterm-filebrowser/release-key \
-  && ssh-add -d ~/.config/iterm-filebrowser/release-key.pub                # keep it in the Keychain, not loaded
-```
-
-Then a release is one command, with no prompt: `make release TAG=vX.Y.Z` refuses unless
-the tree is clean, a new version is above every `v*` tag and is made at `origin/main`, and
-its release is not published yet; it installs the UI's dependencies with `npm ci
---ignore-scripts`, builds with `cargo --locked`, signs `SHA256SUMS` through ssh-agent (the
-key loaded for two minutes with the Keychain's passphrase, then removed), checks the
-signature, and only then tags `HEAD`, pushes the tag and publishes the GitHub release once
-all its files are attached. A failure before signing leaves nothing public.
-
-Who else could ship code to users: an upgrade installs only what this key signed, and the
-key exists only on the maintainer's Mac (and its backups). Publishing needs write access to
-the repository, which only the maintainer has; the CI runner has neither. Left: whoever
-controls the maintainer's GitHub account (or its `gh` login on that Mac) can replace a
-release's `install.sh`, which a *first* `curl | sh` trusts; and a program running as the
-maintainer while the Keychain is unlocked can sign. The key's fingerprint is in every
-release's notes for those who check a first install by hand. Keep the key and its
-passphrase backed up: a new key makes existing installs refuse upgrades until they are
-installed again with the one-line installer.
-
-Set the runner up once on a Linux VM (as root; the token travels on stdin):
-
-```bash
-scp scripts/runner/setup.sh root@<vm>:/root/fb-runner-setup.sh
-gh api -X POST repos/extractumio/iterm-extension/actions/runners/registration-token --jq .token \
-  | ssh root@<vm> 'bash /root/fb-runner-setup.sh --name vm102-iterm'
-```
+signature; signing, the release key and the runner setup are in
+[docs/RELEASING.md](docs/RELEASING.md).
 
 ## License
 

@@ -49,7 +49,7 @@ class Windows:
     async def tick(self, conn):
         ids = {w.window_id for w in self.app.terminal_windows} - {self.viewer_id}  # never a Toolbelt there
         self.pending |= ids - self.known
-        self.known |= ids
+        self.known = ids
         self.pending &= ids
         self.shown = {w: v for w, v in self.shown.items() if w in ids}  # closed windows
         self.refused &= ids

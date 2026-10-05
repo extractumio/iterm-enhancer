@@ -80,6 +80,7 @@ export interface TermState {
   window?: string;  // the iTerm2 window of the pane (AC-36)
   panel?: boolean;  // false: that window shows no Toolbelt, so no panel lives there
   build?: string;   // fbd's build: another one than this page's means an upgrade (AC-34)
+  setup_notice?: { id: string; message: string; error: boolean };
   host?: string;    // a remote pane's host: its files are reached through that host's agent (AC-37)
   /** a remote pane's host as offered to the user (AC-38): key = its ssh arguments */
   remote?: {

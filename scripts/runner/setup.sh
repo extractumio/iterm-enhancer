@@ -7,7 +7,7 @@
 # Run as root on the VM, with a registration token on stdin (never on a command line):
 #   scp scripts/runner/setup.sh root@<vm>:/root/fb-runner-setup.sh
 #   gh api -X POST repos/extractumio/iterm-extension/actions/runners/registration-token --jq .token \
-#     | ssh root@<vm> 'bash /root/fb-runner-setup.sh --name vm102-iterm'                (see README)
+#     | ssh root@<vm> 'bash /root/fb-runner-setup.sh --name vm102-iterm'                (see docs/RELEASING.md)
 # Re-running it is safe: existing pieces are kept, the registration is replaced.
 set -euo pipefail
 

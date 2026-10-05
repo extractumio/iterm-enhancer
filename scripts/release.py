@@ -19,6 +19,8 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 import cli
 import package
@@ -95,20 +97,44 @@ def sign(sums):
         sys.exit("the signature does not match release-signers: commit the key's public half (make signing-key)")
 
 
-def publish(tag, draft):
+def release_notes(tag):
+    """Read versioned Markdown before building; only an absent file uses legacy notes."""
+    path = package.REPO / "docs/releases" / f"{tag}.md"
+    if path.is_symlink():
+        sys.exit(f"cannot read release notes {path.relative_to(package.REPO)}: symlink notes are not allowed")
+    try:
+        path.resolve().relative_to(package.REPO.resolve())
+    except (OSError, RuntimeError, ValueError):
+        sys.exit(f"cannot read release notes {path.relative_to(package.REPO)}: path must stay inside the repository")
+    try:
+        notes = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+    except (OSError, UnicodeError) as e:
+        sys.exit(f"cannot read release notes {path.relative_to(package.REPO)}: {e}")
+    if not notes.strip():
+        sys.exit(f"release notes {path.relative_to(package.REPO)} are empty")
+    return notes
+
+
+def publish(tag, draft, notes):
     """Tag HEAD, push the tag (again, if an earlier run stopped after tagging), fill a draft
     release and publish it."""
-    if not tag_exists(tag):
-        run("git", "tag", "-a", tag, "-m", tag)
-    run("git", "push", "--quiet", "origin", f"refs/tags/{tag}")
-    if not draft:
-        gh("release", "create", tag, "--verify-tag", "--draft", "--title", tag, "--notes",
-           "Install or upgrade: curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/download/install.sh | sh\n\n"
-           f"SHA256SUMS is signed with the release key {signing_key.fingerprint()}.")
-    files = [str(package.OUT / f) for f in (package.TARBALL, "install.sh", "SHA256SUMS", "SHA256SUMS.sig")]
-    gh("release", "upload", tag, *files, "--clobber")  # into the draft only
-    gh("release", "edit", tag, "--draft=false", "--latest")  # public once complete; it is the newest
-    return gh("release", "view", tag, "--json", "url", "--jq", ".url").stdout.strip()
+    footer = ("Install or upgrade: curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/download/install.sh | sh\n\n"
+              f"SHA256SUMS is signed with the release key {signing_key.fingerprint()}.")
+    body = (notes.rstrip() + "\n\n" if notes.strip() else "") + footer + "\n"
+    with tempfile.TemporaryDirectory(prefix="fb-release-") as folder:
+        path = Path(folder) / "notes.md"
+        path.write_text(body, encoding="utf-8")
+        if not tag_exists(tag):
+            run("git", "tag", "-a", tag, "-m", tag)
+        run("git", "push", "--quiet", "origin", f"refs/tags/{tag}")
+        if not draft:
+            gh("release", "create", tag, "--verify-tag", "--draft", "--title", tag, "--notes-file", str(path))
+        files = [str(package.OUT / f) for f in (package.TARBALL, "install.sh", "SHA256SUMS", "SHA256SUMS.sig")]
+        gh("release", "upload", tag, *files, "--clobber")  # into the draft only
+        gh("release", "edit", tag, "--notes-file", str(path), "--draft=false", "--latest")
+        return gh("release", "view", tag, "--json", "url", "--jq", ".url").stdout.strip()
 
 
 def main(argv):
@@ -116,6 +142,7 @@ def main(argv):
         sys.exit("usage: release.py vX.Y.Z")
     tag = argv[0]
     check_source(tag)
+    notes = release_notes(tag)
     draft = check_unpublished(tag)
     run("npm", "ci", "--ignore-scripts", "--no-fund", "--no-audit", cwd=package.REPO / "ui")
     run("npm", "run", "-s", "build", cwd=package.REPO / "ui")
@@ -123,7 +150,7 @@ def main(argv):
     if not (package.OUT / package.NAME / "agents/linux-x86_64/fbd").is_file():
         sys.exit("the package has no Linux helpers (run make toolchain): not released")
     sign(package.OUT / "SHA256SUMS")
-    print(f"{tag}: {publish(tag, draft)}")  # only now does anything become public
+    print(f"{tag}: {publish(tag, draft, notes)}")  # only now does anything become public
 
 
 if __name__ == "__main__":

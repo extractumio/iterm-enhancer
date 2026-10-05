@@ -239,6 +239,22 @@ html.viewer-mode #pathbar { display: flex; align-items: center; gap: 6px; flex: 
 #notice { display: none; padding: 16px; color: var(--fg-dim); }
 #notice.on { display: block; }
 #notice b { color: var(--warn); display: block; margin-bottom: 6px; }
+#setup-notice { display: none; flex: none; padding: 12px 14px; background: var(--bg-2); border-bottom: 1px solid var(--line); }
+#setup-notice.on { display: flex; align-items: start; gap: 8px; }
+#setup-notice span { flex: 1; }
+#setup-notice button { cursor: pointer; }
+#setup-notice.error { color: var(--warn); }
+#recovery-dialog { color: var(--fg); background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px;
+  width: min(520px, calc(100vw - 24px)); max-height: calc(100vh - 24px); padding: 14px; overflow: auto; }
+#recovery-dialog::backdrop { background: rgb(0 0 0 / .45); }
+#recovery-dialog p { color: var(--fg-dim); margin: 10px 0; }
+.recovery-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.recovery-top h2 { font-size: 16px; margin: 0 0 10px; }
+#recovery-history { display: block; width: 100%; color: var(--fg); background: var(--bg); margin: 6px 0 10px; }
+.recovery-actions { display: flex; gap: 8px; }
+#recovery-error { color: var(--bad); margin-top: 8px; }
+.recovery-step { padding: 6px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.recovery-step.failed strong, .recovery-step.deviation strong { color: var(--warn); }
 /* rendered HTML documents: a sandboxed frame that fills the viewer */
 #vbody .scroll.doc:has(> .html-doc) { overflow: hidden; }
 .html-doc { display: block; width: 100%; height: 100%; border: 0; background: var(--bg); }

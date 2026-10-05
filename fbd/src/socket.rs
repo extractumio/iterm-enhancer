@@ -83,6 +83,9 @@ async fn serve(app: Shared, client: Option<String>, mut rx: Receiver<Event>, ws:
     if !send(&mut tx, frame(&Event::State(state_json(&app)))).await {
         return;
     }
+    if let Some(value) = crate::recovery::current(&app).await {
+        if !send(&mut tx, frame(&Event::Recovery(value))).await { return; }
+    }
     let mut ping = tokio::time::interval(PING);
     ping.tick().await;
     loop {

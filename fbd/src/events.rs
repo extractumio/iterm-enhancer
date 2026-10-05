@@ -29,6 +29,7 @@ pub struct Moved {
 pub enum Event {
     /// terminal state pushed by the bridge (focused pane, cwd, theme)
     State(Value),
+    Recovery(Value),
     /// a pane's workspace changed; `by` is the panel that wrote it (it ignores its own echo)
     Workspace { key: String, rev: u64, by: Option<String> },
     /// folders or files changed on disk; renames done through a panel arrive as `moved`
@@ -54,6 +55,7 @@ impl Event {
     pub fn name(&self) -> &'static str {
         match self {
             Event::State(_) => "state",
+            Event::Recovery(_) => "recovery",
             Event::Workspace { .. } => "workspace",
             Event::FsChange { .. } => "fs-change",
             Event::ViewerOpen { .. } => "viewer-open",
@@ -66,7 +68,7 @@ impl Event {
     /// SSE payload: the bare state object, or the tagged event.
     pub fn data(&self) -> String {
         match self {
-            Event::State(v) => v.to_string(),
+            Event::State(v) | Event::Recovery(v) => v.to_string(),
             other => serde_json::to_string(other).unwrap_or_default(),
         }
     }

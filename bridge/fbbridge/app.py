@@ -12,24 +12,37 @@ import urllib.error
 import iterm2
 
 from .backend import Backend
-from . import agentctl
+from . import agentctl, settings
 from .common import APP_DIR, BASE, HEARTBEAT, HOSTS_EVERY, POLL, POLL_TIMEOUT, SHELLS, THEME_EVERY, TOOL_ID, UserError, log
 from .lifecycle import LockError, bounded, connection_closed, take_lock, watch
+from .inventory import Inventory
+from .navigation import open_quickly
 from .procinfo import iterm_process
 from .registry import heal
 from .resolve import open_hosts, resolve, static_vars, theme_of
 from .remote import Remotes
+from .recovery_capture import Capture, epoch
+from .recovery_lifecycle import Lifecycle
+from .recovery_runner import Runner
+from .recovery_startup import Startup
+from .recovery_quit import QuitWatch
 from .viewer_profile import install_viewer_profile
 from .windows import Windows
 
 backend = Backend()
 remotes = Remotes(backend.post)
+_quit = None
 
 
 def stop(reason, code=0):
     """Take fbd down with us so the port is free at once, then exit without waiting for
     asyncio (it may be stuck on a call to a dead connection)."""
     log(f"exit: {reason}")
+    if _quit is not None:
+        # API shutdown can precede the app's kernel exit. A bridge takeover only
+        # drains already queued evidence, so a live parent never becomes normal Quit.
+        _quit.finish(timeout=3 if reason == "iTerm2 API connection closed" else 0)
+        _quit.close()
     remotes.stop()
     backend.stop()
     os._exit(code)
@@ -68,11 +81,11 @@ async def send_command(conn, app, command):
             raise UserError("The terminal is busy — command not sent")
     if not typable(command.get("text")):
         raise UserError("Text with control or invisible characters — not sent to the terminal")
-    await session.async_send_text(command["text"])
+    await session.async_send_text(command["text"], suppress_broadcast=True)
     await session.async_activate()
 
 
-async def run_commands(conn, app, windows, queue):
+async def run_commands(conn, app, windows, queue, recovery=None):
     while True:
         c = await queue.get()
         try:
@@ -83,6 +96,17 @@ async def run_commands(conn, app, windows, queue):
                 await windows.open_viewer(conn, c["path"], c["code"], c.get("host"))
             elif action == "default-width":
                 await windows.set_default_width(conn)
+            elif action == "open-quickly":
+                await open_quickly(conn)
+            elif action == "save-checkpoint" and recovery:
+                async def save(command=c):
+                    try:
+                        await recovery.capture.save(force=True)
+                    except Exception as e:
+                        await asyncio.to_thread(backend.report_failure, command, e)
+                asyncio.create_task(save())
+            elif action == "restore-checkpoint" and recovery:
+                recovery.start(c["job"])
             elif action in ("host-enable", "host-dismiss", "host-remove"):  # the panel's buttons (AC-38)
                 k = c.get("host", "")
                 if action == "host-enable":
@@ -174,7 +198,9 @@ class Follower:
             if state != last or time.monotonic() - self.last_sent > HEARTBEAT:
                 await self.push(state)
                 backend.failures = 0
-        elif self.last and time.monotonic() - self.last_sent > HEARTBEAT:
+        elif (self.last and app.get_session_by_id(self.last.get("session"))
+              and app.get_window_by_id(self.last.get("window"))
+              and time.monotonic() - self.last_sent > HEARTBEAT):
             await self.push(self.last)  # stay "connected"
 
 
@@ -193,6 +219,7 @@ async def register(conn):
 
 
 async def main(conn):
+    global _quit
     loop = asyncio.get_running_loop()
     # main runs once the API connection is up, so a bridge that cannot connect evicts nobody;
     # the lock is held until this process exits
@@ -206,6 +233,15 @@ async def main(conn):
         log(str(e))
         raise SystemExit(1)
     iterm = iterm_process()
+    run_epoch = None
+    try:
+        run_epoch = await loop.run_in_executor(None, epoch, iterm)
+        _, pid, started = run_epoch.rsplit(":", 2)
+        iterm = int(pid), int(started)
+        _quit = QuitWatch(iterm, lambda: backend.query("POST", "/internal/recovery/exit",
+                                                     {"epoch": run_epoch}, timeout=1))
+    except Exception as e:
+        log(f"Normal application exit tracking unavailable ({type(e).__name__}); recovery history preserved")
     watch(stop, lambda: connection_closed(conn.websocket), iterm if iterm and iterm[1] else None)
     backend.start(new_token=not (ours or took_over))
     if not await loop.run_in_executor(None, backend.wait_ready):
@@ -218,7 +254,17 @@ async def main(conn):
     await windows.adopt_viewer()
     commands: asyncio.Queue = asyncio.Queue()
     backend.listen_commands(loop, commands)
-    asyncio.create_task(run_commands(conn, app, windows, commands))
+    capture = Capture(conn, app, windows, backend)
+    capture.epoch = run_epoch
+    capture.lifecycle = Lifecycle(capture)
+    asyncio.create_task(capture.lifecycle.follow())
+    recovery = Runner(capture)
+    asyncio.create_task(run_commands(conn, app, windows, commands, recovery))
+    asyncio.create_task(Startup(capture, recovery).follow())
+    asyncio.create_task(recovery.follow())
+    asyncio.create_task(capture.follow())
+    asyncio.create_task(Inventory().follow(conn, backend.post))
+    asyncio.create_task(settings.follow(conn, APP_DIR, backend.post))
 
     follower = Follower(conn, app, windows)
     while True:

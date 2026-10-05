@@ -3,8 +3,8 @@
 Binding on humans and AI (`AGENTS.md` symlinks here); every rule is a MUST unless marked
 otherwise. This file holds principles, terms and dos and don'ts; behavior, limits and
 evidence live in the spec (`docs/specs/iterm-file-browser.md`), usage in `README.md`,
-the threat model in `SECURITY.md`. Write compactly: one precise sentence over a
-paragraph, a table where denser, no narration.
+the threat model in `SECURITY.md`, the release procedure in `docs/RELEASING.md`. Write
+compactly: one precise sentence over a paragraph, a table where denser, no narration.
 
 ## Project
 
