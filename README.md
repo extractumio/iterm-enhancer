@@ -73,6 +73,38 @@ Unknown or hidden tmux identities conservatively protect tmux workspaces until r
 These native settings cannot preserve arbitrary local processes through a Mac reboot.
 macOS must also keep windows when quitting for system window restoration to reopen them.
 
+## Upgrade
+
+For an existing installation, update to the latest signed release from iTerm2:
+
+```bash
+~/.iterm-filebrowser/bin/iterm-filebrowser upgrade
+```
+
+To install a specific release, for example v0.18.0:
+
+```bash
+~/.iterm-filebrowser/bin/iterm-filebrowser upgrade --to v0.18.0
+```
+
+Check the result:
+
+```bash
+~/.iterm-filebrowser/bin/iterm-filebrowser status
+```
+
+Check the output: with iTerm2 running, `current` and `running` should show the
+installed version and the bridge should report `connected`. The installer restarts
+the bridge automatically; panels defer reload while edits are
+unsaved. If iTerm2 is stopped, the update takes effect when it next starts. If setup
+reports a changed **Enable session restoration** setting, restart iTerm2 to apply
+that setting. An existing automatic-saving opt-out survives the upgrade.
+
+Upgrades install only releases signed by the maintainer's key; its fingerprint is in
+every release's notes, to check a first install by hand. Should the key ever change,
+installed copies refuse upgrades until installed again with the
+[one-line installer](#install).
+
 ## Save and restore terminals
 
 Saving and restoration are enabled by default after installation. No checkpoint or
@@ -150,10 +182,6 @@ Closing a window expires its live cache while older recovery snapshots remain bo
 history; closed session IDs are excluded while any retained snapshot still references
 them. Terminal output, exit codes, history, environment and arbitrary application commands are
 not recorded. Files tree/editor state is not migrated to newly assigned terminal IDs.
-
-Upgrades install only releases signed by the maintainer's key; its fingerprint is in every
-release's notes, to check a first install by hand. Should the key ever change, installed
-copies refuse upgrades until installed again with the line above.
 
 ## Uninstall
 
