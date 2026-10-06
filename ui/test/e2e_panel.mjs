@@ -18,6 +18,7 @@ import { recoveryTools } from "./e2e_recovery.mjs";
 import { recoveryUpgrade } from "./e2e_recovery_upgrade.mjs";
 import { windowTools } from "./e2e_windows.mjs";
 import { updateTools } from "./e2e_update.mjs";
+import { layoutTools } from "./e2e_layout.mjs";
 import { base, bringBack, check, cleanup, cmds, FBD, internal, PORT, push, restartFbd, results, resume, SB, silence, stopFbd, TOKEN, within } from "./e2e_harness.mjs";
 
 // playwright-core is a devDependency; PLAYWRIGHT_CORE may point at another copy
@@ -48,6 +49,7 @@ try {
   await sessionTools(page, () => client);
   await recoveryTools(page, browser);
   await updateTools(page);
+  await layoutTools(page);
 
   // AC-09 create file (opens in a tab), duplicate name, nested folder
   await page.click("#new-file"); await focusInput();
@@ -447,7 +449,7 @@ try {
   // AC-42 a helper the bridge updated by itself is announced, and the header says so
   await push("e2eO", null, "w1", true, undefined, { mode: "remote", note: "devbox (helper updated to v9.9.0)", stale: true, remote: { key: "devbox", name: "devbox", state: "up", updated: "v9.9.0" } });
   await within("AC-42 the helper update is announced", (ms) => page.waitForFunction(() => document.getElementById("toast").textContent === "Helper on devbox updated to v9.9.0", null, { timeout: ms }));
-  check("AC-42 … and the header says so", (await page.textContent("#note")).includes("helper updated to v9.9.0"));
+  check("AC-42 … and the footer says so", (await page.textContent("#foot")).includes("helper updated to v9.9.0"));
   await push("e2eA", SB);
 
   await manyPanels(browser, row);

@@ -5,6 +5,16 @@ import { base, check, cmds, internal, PORT, SB, TOKEN, within } from "./e2e_harn
 export async function recoveryTools(page, browser) {
   await page.click("#terminal-recovery");
   await page.waitForSelector("#recovery-dialog[open]");
+  const dialog = await page.evaluate(() => ({
+    title: document.getElementById("recovery-heading").textContent,
+    close: [document.getElementById("recovery-close").getAttribute("aria-label"), !!document.querySelector("#recovery-close svg"), document.getElementById("recovery-close").textContent.trim()],
+    save: document.getElementById("recovery-save").textContent, restore: document.getElementById("recovery-restore").textContent,
+    parts: [...document.querySelectorAll("#recovery-dialog h3")].map((h) => h.textContent),
+  }));
+  check("AC-50 the dialog is Session Window Recovery, closed by an × icon", dialog.title === "Session Window Recovery" &&
+    dialog.close[0] === "Close" && dialog.close[1] && dialog.close[2] === "", JSON.stringify(dialog));
+  check("AC-50 … saving a new checkpoint and restoring the selected one are separate parts", dialog.parts.join("|") === "Automatic saving|Restore" &&
+    dialog.save === "Save a new checkpoint now" && /^(Restore selected|Retry \/ reconcile)$/.test(dialog.restore), JSON.stringify(dialog));
   check("AC-46 capture and restore enabled on a fresh install", await page.isChecked("#recovery-enabled"));
   await page.uncheck("#recovery-enabled");
   await within("AC-46 explicit opt-out persisted", (ms) => page.waitForFunction(async () => {

@@ -94,7 +94,10 @@ Check the result:
 ```
 
 Check the output: with iTerm2 running, `current` and `running` should show the
-installed version and the bridge should report `connected`. The installer restarts
+installed version and the bridge should report `connected`. `panels` counts the connected
+Files panels against iTerm2's windows: each registration of the tool (every install or
+token change) gives each window a new panel, and iTerm2 keeps the earlier ones, hidden,
+until it quits; quitting iTerm2 frees them. The installer restarts
 the bridge automatically; panels defer reload while edits are
 unsaved. If iTerm2 is stopped, the update takes effect when it next starts. If setup
 reports a changed **Enable session restoration** setting, restart iTerm2 to apply
@@ -123,9 +126,12 @@ every five seconds; a slow or failed sweep leaves the previous snapshot availabl
 
 After a reboot, open iTerm2: the bridge waits for native reopening to settle, then
 automatically restores the latest durable state and adopts identified live panes.
-Starting tmux first is unnecessary. **Terminal checkpoints and recovery** in Files
-shows the shared report, history and **Retry / reconcile**. You can disable
-**Save and restore terminals automatically**; that choice survives upgrades.
+Starting tmux first is unnecessary. **Session window recovery** (the clock button in the
+Files header) opens **Session Window Recovery**: **Automatic saving** (the switch, and
+**Save a new checkpoint now**, which adds a checkpoint and changes no other) and **Restore**
+(the checkpoint list, newest selected, and **Restore selected** or **Retry / reconcile**),
+with the shared report. The list shows checkpoints that stayed unchanged for 30 s, plus the
+newest of each iTerm2 run, grouped by run. Turning automatic saving off survives upgrades.
 ⌘⇧T already belongs to iTerm2's **Undo Close**, so File Browser preserves it.
 
 A normal iTerm2 exit (including ⌘Q), once observed and durably recorded, skips File

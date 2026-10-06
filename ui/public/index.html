@@ -13,10 +13,9 @@
   <header>
     <div class="top">
       <span class="dot" id="dot"></span>
-      <span class="badge" id="mode">…</span>
       <span class="title" id="title">connecting…</span>
       <button class="chip" id="update" aria-haspopup="menu" aria-expanded="false"></button>
-      <button class="icon" id="terminal-recovery" title="Terminal checkpoints and recovery" aria-label="Terminal checkpoints and recovery">
+      <button class="icon" id="terminal-recovery" title="Session window recovery" aria-label="Session window recovery">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4a5.5 5.5 0 1 1-1 6M1.5 1.5V5H5M8 4.5V8l2 1.5"/></svg></button>
       <button class="icon" id="find-session" title="Find terminal session (⌘⇧O · /f for open sessions)" aria-label="Find terminal session">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="2.5" width="9" height="7" rx="1"/><path d="M5 12.5h9v-7M4 5l2 1.5-2 1.5"/></svg></button>
@@ -33,7 +32,7 @@
       <button class="icon" id="refresh" title="Re-read folders and files">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5V5h-2.5"/></svg></button>
     </div>
-    <div class="crumbs" id="crumbs"></div>
+    <div class="where"><span class="badge" id="mode">…</span><div class="crumbs" id="crumbs"></div></div>
     <div class="note" id="note"></div>
     <input class="filter" id="filter" placeholder="Filter by name…   ( / )" spellcheck="false" autocomplete="off">
   </header>
@@ -53,15 +52,26 @@
     </div>
     <div id="vbody"></div>
   </div>
+  <footer id="foot" role="status"></footer>
 </div>
 <div id="toast"></div>
 <dialog id="recovery-dialog" aria-labelledby="recovery-heading">
-  <div class="recovery-top"><h2 id="recovery-heading">Terminal recovery</h2><button id="recovery-close" aria-label="Close terminal recovery">Close</button></div>
-  <label><input type="checkbox" id="recovery-enabled"> Save and restore terminals automatically</label>
-  <p>Restore creates shells and supported connections. Previous applications are not restarted. iTerm2, shell and SSH startup configuration may run independently. Check authentication prompts in the restored panes.</p>
-  <label for="recovery-history">Checkpoint</label>
-  <select id="recovery-history" aria-label="Checkpoint"></select>
-  <div class="recovery-actions"><button id="recovery-save">Save now</button><button id="recovery-restore">Restore</button></div>
+  <div class="recovery-top"><h2 id="recovery-heading">Session Window Recovery</h2>
+    <button class="icon" id="recovery-close" title="Close" aria-label="Close">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></div>
+  <section aria-labelledby="recovery-auto">
+    <h3 id="recovery-auto">Automatic saving</h3>
+    <label><input type="checkbox" id="recovery-enabled"> Save windows, tabs and panes as they change, and restore them after a crash or reboot</label>
+    <div class="recovery-actions"><button id="recovery-save">Save a new checkpoint now</button></div>
+    <p class="hint">Adds a checkpoint of the windows as they are now. It changes no other checkpoint.</p>
+  </section>
+  <section aria-labelledby="recovery-restore-heading">
+    <h3 id="recovery-restore-heading">Restore</h3>
+    <label for="recovery-history">Checkpoint</label>
+    <select id="recovery-history"></select>
+    <div class="recovery-actions"><button id="recovery-restore">Restore selected</button></div>
+    <p class="hint">Restore creates shells and supported connections. Previous applications are not restarted. iTerm2, shell and SSH startup configuration may run independently. Check authentication prompts in the restored panes.</p>
+  </section>
   <div id="recovery-error" role="alert"></div><div id="recovery-report" role="status" aria-live="polite"></div>
 </dialog>
 </body>

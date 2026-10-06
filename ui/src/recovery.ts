@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Whole-app checkpoints and one shared recovery report, always addressed to this Mac.
 import { api, toast } from "./api";
+import { defaultSelection, groups, visibleEntries, type Status as ListStatus } from "./recovery-list";
 
-interface Entry { id: string; captured: number; windows: number; panes: number; stable: boolean; epoch: string }
 interface Step { state: string; message: string }
-interface Status {
+interface Status extends ListStatus {
   instance: string; revision: number;
-  enabled: boolean; entries: Entry[]; recommended: string | null; error: string | null;
-  startup: { snapshot: string | null; phase: string; skipped?: boolean } | null;
+  enabled: boolean; error: string | null;
   job: { id: string; snapshot: string; status: string; steps: Record<string, Step> } | null;
 }
 const button = document.getElementById("terminal-recovery") as HTMLButtonElement;
@@ -28,26 +27,25 @@ export function renderRecovery(value: Status) {
   changes++;
   status = value;
   if (!pending) automatic.checked = value.enabled;
-  history.replaceChildren();
-  for (const entry of [...value.entries].reverse()) {
-    const option = document.createElement("option");
-    option.value = entry.id;
-    option.textContent = `${new Date(entry.captured * 1000).toLocaleString()} · ${entry.windows} windows / ${entry.panes} panes${entry.stable ? " · stable" : ""}`;
-    history.append(option);
-  }
+  history.replaceChildren(...groups(value).map((g) => {
+    const group = document.createElement("optgroup");
+    group.label = g.label;
+    group.append(...g.items.map((i) => Object.assign(document.createElement("option"), { value: i.id, textContent: i.label })));
+    return group;
+  }));
   if (value.startup?.phase === "pending") selected = value.startup.snapshot ?? "";
-  else if (!value.entries.some((e) => e.id === selected)) selected = value.recommended ?? value.entries.at(-1)?.id ?? "";
+  else if (!visibleEntries(value).some((e) => e.id === selected)) selected = defaultSelection(value);
   history.value = selected;
   const running = value.job?.status === "running";
   const starting = value.startup?.phase === "pending";
   history.disabled = starting;
   button.classList.toggle("active", !!running || starting);
-  button.title = running || starting ? "Automatic terminal recovery is pending" : "Terminal checkpoints and recovery";
+  button.title = running || starting ? "Automatic session window recovery is pending" : "Session window recovery";
   save.disabled = !!running || starting || pending;
   restore.disabled = !!running || pending || !selected || (starting &&
     (selected !== value.startup?.snapshot || value.job?.status !== "interrupted"));
   automatic.disabled = pending;
-  restore.textContent = value.job?.snapshot === selected ? "Retry / reconcile" : "Restore";
+  restore.textContent = value.job?.snapshot === selected ? "Retry / reconcile" : "Restore selected";
   error.textContent = value.error ?? "";
   report.replaceChildren();
   if (starting) {
@@ -93,7 +91,12 @@ async function action(method: string, path: string, body: unknown) {
   catch (e) { failure = (e as Error).message; toast(failure); }
   finally { pending = false; if (status) renderRecovery(status); if (failure) error.textContent = failure; }
 }
-button.addEventListener("click", () => { dialog.showModal(); void refreshRecovery(); });
+button.addEventListener("click", () => {  // each opening starts from the default checkpoint
+  selected = "";
+  if (status) renderRecovery(status);
+  dialog.showModal();
+  void refreshRecovery();
+});
 document.getElementById("recovery-close")!.addEventListener("click", () => dialog.close());
 automatic.addEventListener("change", () => void action("PUT", "/api/recovery", { enabled: automatic.checked }));
 history.addEventListener("change", () => { selected = history.value; if (status) renderRecovery(status); });

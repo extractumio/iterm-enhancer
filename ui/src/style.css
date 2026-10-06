@@ -59,10 +59,13 @@ button.icon { border: 0; background: transparent; color: var(--fg-dim); cursor: 
   border-radius: 4px; display: grid; place-items: center; flex: none; padding: 0; }
 button.icon:hover { background: var(--bg-hover); color: var(--fg); }
 button.icon.on { color: var(--accent); background: var(--bg-hover); }
-.crumbs { margin-top: 5px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+.where { display: flex; align-items: center; gap: 6px; margin-top: 5px; min-width: 0; }
+.where .badge { flex: none; }
+.crumbs { flex: 1; min-width: 0; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   direction: rtl; text-align: left; color: var(--fg-dim); }
 .crumbs b { color: var(--fg); font-weight: 600; }
-.note { margin-top: 2px; font-size: .88em; color: var(--fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1.2em; }
+.note { margin-top: 2px; font-size: .88em; color: var(--fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note:empty { display: none; }
 .filter { margin-top: 6px; width: 100%; padding: 4px 8px; border-radius: 5px; border: 1px solid var(--line); background: var(--bg);
   color: var(--fg); font: inherit; outline: none; }
 .filter:focus { border-color: var(--accent); }
@@ -102,7 +105,10 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
 #viewer { display: none; flex: 1; min-height: 0; flex-direction: column; background: var(--bg); }
 #app.has-tabs #splitter { display: block; }
 #app.has-tabs #viewer { display: flex; }
-#app.max header .crumbs, #app.max header .note, #app.max header .filter, #app.max #tree, #app.max #splitter { display: none !important; }
+#foot { flex: none; padding: 3px 10px; border-top: 1px solid var(--line); background: var(--bg-2); font-size: .85em; color: var(--fg-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#foot:empty { display: none; }
+#app.max header .where, #app.max header .note, #app.max header .filter, #app.max #tree, #app.max #splitter { display: none !important; }
 
 .vbar { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); background: var(--bg-2); flex: none; min-width: 0; }
 #tabs { display: flex; overflow-x: auto; flex: 1; min-width: 0; scrollbar-width: none; }
@@ -226,7 +232,7 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
 .ctx .sep { height: 1px; background: var(--line); margin: 4px 6px; }
 
 /* ── viewer window (AC-26): tabs and editor only ─────────── */
-html.viewer-mode header, html.viewer-mode #tree, html.viewer-mode #splitter, html.viewer-mode #empty,
+html.viewer-mode header, html.viewer-mode #foot, html.viewer-mode #tree, html.viewer-mode #splitter, html.viewer-mode #empty,
 html.viewer-mode #maximize { display: none !important; }
 html.viewer-mode #viewer { display: flex !important; }
 html.viewer-mode .md-body { font-size: 16px; max-width: 82ch; padding-top: 28px; }
@@ -252,7 +258,11 @@ html.viewer-mode #pathbar { display: flex; align-items: center; gap: 6px; flex: 
 #recovery-dialog::backdrop { background: rgb(0 0 0 / .45); }
 #recovery-dialog p { color: var(--fg-dim); margin: 10px 0; }
 .recovery-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.recovery-top h2 { font-size: 16px; margin: 0 0 10px; }
+.recovery-top h2 { font-size: 16px; margin: 0; }
+#recovery-dialog section { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+#recovery-dialog h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--fg-dim); margin: 0 0 8px; }
+#recovery-dialog .hint { font-size: 11px; margin: 6px 0 0; }
+#recovery-dialog .recovery-actions { margin-top: 8px; }
 #recovery-history { display: block; width: 100%; color: var(--fg); background: var(--bg); margin: 6px 0 10px; }
 .recovery-actions { display: flex; gap: 8px; }
 #recovery-error { color: var(--bad); margin-top: 8px; }

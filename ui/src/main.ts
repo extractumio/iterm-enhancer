@@ -135,9 +135,9 @@ function renderHeader(s: TermState) {
   bdi.append(home ? head.replace(home, "~") : head, b);
   $("crumbs").replaceChildren(bdi);
   $("crumbs").title = cwd;
-  $("note").textContent = updateNote + (unseen ? "Switch to this window to update · " : "") +
-    (unlinked ? "Click here to follow this window · " : "") +
-    (s.stale ? "⏸ cwd unavailable — showing last known · " : "") + (s.note ?? "");
+  $("note").textContent = [updateNote, unseen && "Switch to this window to update", unlinked && "Click here to follow this window",
+    s.stale && "⏸ cwd unavailable — showing last known"].filter(Boolean).join(" · ");
+  $("foot").textContent = s.note ?? "";  // the bridge's note on the pane (pid, job, host)
 }
 
 /** fbd answers, but nothing tells it where the terminal is: say so, the tree stays usable (AC-30). */
@@ -399,7 +399,7 @@ const upgrade = new Upgrade({
   beforeReload: () => saveNow(),
   waiting: (text) => {
     if (updateNote) return;
-    updateNote = text + " · ";
+    updateNote = text;
     if (VIEW) toast(text); else renderHeader(term);
   },
 });
