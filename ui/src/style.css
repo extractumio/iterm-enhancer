@@ -51,6 +51,9 @@ header { padding: 7px 8px 6px 10px; border-bottom: 1px solid var(--line); backgr
 .badge { font: 600 10px/1 var(--ui); letter-spacing: .05em; text-transform: uppercase; padding: 3px 6px; border-radius: 4px;
   background: var(--bg-hover); color: var(--accent); flex: none; }
 .badge.warn { color: var(--warn); }
+.chip { display: none; flex: none; font: 600 10px/1 var(--ui); padding: 3px 6px; border-radius: 9px; border: 1px solid var(--accent); color: var(--accent);
+  background: transparent; cursor: pointer; }
+.chip.on { display: inline-block; } .chip:hover { background: var(--bg-hover); }
 .title { flex: 1; min-width: 0; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 button.icon { border: 0; background: transparent; color: var(--fg-dim); cursor: pointer; width: 22px; height: 22px;
   border-radius: 4px; display: grid; place-items: center; flex: none; padding: 0; }

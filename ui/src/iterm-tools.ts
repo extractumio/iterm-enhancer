@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Native iTerm2 controls and installation notices; these always address this Mac.
-import { api, apiOrToast, type TermState } from "./api";
+import { api, apiOrToast, toast, type TermState } from "./api";
+import { menu } from "./dialogs";
 
 const navigation = document.getElementById("find-session")!;
 navigation.addEventListener("click", () => {
@@ -31,6 +32,37 @@ export function renderSetupNotice(value: TermState["setup_notice"]) {
   notice.append(message, close);
   notice.className = "on" + (value.error ? " error" : "");
 }
+
+// A newer release (AC-51): a small chip; its menu copies the command, never runs it.
+const UPGRADE = "~/.iterm-filebrowser/bin/iterm-filebrowser upgrade";
+const chip = document.getElementById("update")!;
+let latest = "";
+
+export function renderUpdate(value: TermState["update"]) {
+  latest = value?.latest ?? "";
+  chip.classList.toggle("on", !!latest);
+  chip.textContent = latest ? `↑ ${latest}` : "";
+  chip.title = chip.ariaLabel = latest ? `Update available: ${latest}` : "";
+}
+
+chip.addEventListener("click", async () => {
+  const at = chip.getBoundingClientRect(), tag = latest;
+  chip.ariaExpanded = "true";
+  const choice = await menu(at.left, at.bottom + 2, [
+    { id: "info", label: `${tag} is available (this is ${__BUILD__})`, disabled: true },
+    "-",
+    { id: "copy", label: "Copy upgrade command" },
+    { id: "skip", label: `Skip ${tag}` },
+    { id: "off", label: "Don't check for updates" },
+  ]);
+  chip.ariaExpanded = "false";
+  if (choice === "copy") {
+    try { await navigator.clipboard.writeText(UPGRADE); toast("Copied: run it in a terminal"); }
+    catch { toast(`Run in a terminal: ${UPGRADE}`); }
+  } else if (choice === "skip" || choice === "off") {
+    void apiOrToast("POST", "/api/update", { body: { action: choice, version: tag }, host: null });
+  }
+});
 
 /** The user resized this Toolbelt: make its width the default for new windows (AC-27). */
 export function watchToolbeltWidth() {

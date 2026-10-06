@@ -16,6 +16,8 @@ BUILD_DIR = Path(__file__).resolve().parents[2]
 BUILD = (BUILD_DIR / "BUILD").read_text().strip() if (BUILD_DIR / "BUILD").is_file() else "dev"
 LOG_DIR = APP_DIR / "logs" if os.environ.get("FB_APP_DIR") else ROOT / "logs"
 TOOL_ID = "com.local.iterm-filebrowser"
+# where releases are published (the installer's CLI reads the same variable)
+RELEASES = os.environ.get("FB_RELEASE_URL", "https://github.com/extractumio/iterm-extension/releases")
 POLL = 0.5
 POLL_TIMEOUT = 10.0  # one poll of the focused pane (AC-30)
 HEARTBEAT = 5.0

@@ -100,6 +100,15 @@ unsaved. If iTerm2 is stopped, the update takes effect when it next starts. If s
 reports a changed **Enable session restoration** setting, restart iTerm2 to apply
 that setting. An existing automatic-saving opt-out survives the upgrade.
 
+### Update notice
+
+About once a day the bridge asks GitHub which release is the latest (one small request,
+nothing of yours in it; see [SECURITY.md](SECURITY.md)). When it is newer than the one you run,
+the panel header shows a small chip such as `↑ v0.19.0`. Click it for the menu: **Copy upgrade
+command** (then run it in a terminal; nothing is installed from the panel), **Skip v0.19.0**
+(hidden until a later release), or **Don't check for updates**. To check again, delete
+`~/.iterm-filebrowser/state/no-update-check`. A build made from a checkout never checks.
+
 Upgrades install only releases signed by the maintainer's key; its fingerprint is in
 every release's notes, to check a first install by hand. Should the key ever change,
 installed copies refuse upgrades until installed again with the

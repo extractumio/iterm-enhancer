@@ -43,6 +43,9 @@ fn with_status(t: &Term, state: &Value) -> Value {
     if !t.setup.is_null() {
         s["setup_notice"] = t.setup.clone();
     }
+    if !t.update.is_null() {
+        s["update"] = t.update.clone();
+    }
     s
 }
 
@@ -145,7 +148,7 @@ pub(crate) fn client(headers: &HeaderMap) -> Option<String> {
 }
 
 /// A command for the bridge, addressed back to the panel that asked (its errors go there).
-fn command(app: &App, mut cmd: Value, headers: &HeaderMap) {
+pub(crate) fn command(app: &App, mut cmd: Value, headers: &HeaderMap) {
     cmd["by"] = json!(client(headers));
     let _ = app.commands.send(cmd);
 }

@@ -17,6 +17,7 @@ import { sessionTools } from "./e2e_session_tools.mjs";
 import { recoveryTools } from "./e2e_recovery.mjs";
 import { recoveryUpgrade } from "./e2e_recovery_upgrade.mjs";
 import { windowTools } from "./e2e_windows.mjs";
+import { updateTools } from "./e2e_update.mjs";
 import { base, bringBack, check, cleanup, cmds, FBD, internal, PORT, push, restartFbd, results, resume, SB, silence, stopFbd, TOKEN, within } from "./e2e_harness.mjs";
 
 // playwright-core is a devDependency; PLAYWRIGHT_CORE may point at another copy
@@ -46,6 +47,7 @@ try {
   await within("AC-01 tree shows the pane's folder", (ms) => page.waitForSelector(row("app.py"), { timeout: ms }));
   await sessionTools(page, () => client);
   await recoveryTools(page, browser);
+  await updateTools(page);
 
   // AC-09 create file (opens in a tab), duplicate name, nested folder
   await page.click("#new-file"); await focusInput();

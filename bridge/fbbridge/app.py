@@ -21,6 +21,7 @@ from .procinfo import iterm_process
 from .registry import heal, registered_here, remember
 from .resolve import open_hosts, resolve, static_vars, theme_of
 from .remote import Remotes
+from .updates import Updates
 from .recovery_capture import Capture, epoch
 from .recovery_lifecycle import Lifecycle
 from .recovery_runner import Runner
@@ -85,7 +86,7 @@ async def send_command(conn, app, command):
     await session.async_activate()
 
 
-async def run_commands(conn, app, windows, queue, recovery=None):
+async def run_commands(conn, app, windows, queue, recovery=None, updates=None):
     while True:
         c = await queue.get()
         try:
@@ -115,6 +116,8 @@ async def run_commands(conn, app, windows, queue, recovery=None):
                     remotes.dismiss(k)
                 else:
                     remotes.remove(k, c.get("by"))
+            elif action in ("update-skip", "update-off", "update-on") and updates:  # the chip's menu (AC-51)
+                await updates.choose(action[7:], c.get("version"))
             elif action == "which-window":  # its own task: never delays a terminal command
                 asyncio.create_task(answer_which_window(conn, app, windows, c))
         except Exception as e:
@@ -264,7 +267,9 @@ async def main(conn):
     capture.lifecycle = Lifecycle(capture)
     asyncio.create_task(capture.lifecycle.follow())
     recovery = Runner(capture)
-    asyncio.create_task(run_commands(conn, app, windows, commands, recovery))
+    updates = Updates(backend.post)
+    asyncio.create_task(run_commands(conn, app, windows, commands, recovery, updates))
+    asyncio.create_task(updates.follow())
     asyncio.create_task(Startup(capture, recovery).follow())
     asyncio.create_task(recovery.follow())
     asyncio.create_task(capture.follow())
@@ -285,6 +290,7 @@ async def main(conn):
                 await register(conn, run_epoch)  # fbd made a new token if it could not get its port
                 await loop.run_in_executor(None, remotes.reregister)
                 follower.last = None  # re-push state to the fresh process
+                await updates.publish()
             if not await bounded(follower.poll(), POLL_TIMEOUT):  # costs one poll, not the loop
                 log(f"poll timed out after {POLL_TIMEOUT:g} s")
         except (urllib.error.URLError, ConnectionError, TimeoutError) as e:

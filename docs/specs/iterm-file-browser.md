@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.20.0 |
+| Version | 0.21.0 |
 | Date | 2026-10-05 |
 | Status | draft |
 | Author | Project maintainers |
@@ -13,6 +13,7 @@ Change log:
 
 | Version | Date | Change |
 |---|---|---|
+| 0.21.0 | 2026-10-05 | AC-51 (P1), from the owner: how do users learn that a new version exists? The bridge asks GitHub once a day (one `HEAD` of `<releases>/latest`, the tag read from the redirect) and tells fbd when that tag is newer than the running release; panels show a small chip with a menu to copy the upgrade command, skip that version or stop checking. Implementation review: spec section order, wall-clock daily check, certificate failures logged and the system CA bundle, a lost post retried, an accessible chip. Pragmatic review: the bridge, not fbd, makes the request (fbd would need an HTTP/TLS client, CLAUDE.md §4) and the panel's CSP stays closed; the panel never installs or types the command (a click on the loopback page must not become code execution; the signature check stays in the CLI); only the tag, shown as text, reaches the panel (no URL from the network); a persistent opt-out, because the bridge's environment is iTerm2's, not the shell's; checked daily rather than every 12 h; cut: a settings toggle, a link to GitHub, a fixed key in prefs |
 | 0.20.0 | 2026-10-05 | AC-36 (P0) again, from the owner: opening a window, starting `screen` or restarting iTerm2 re-read the Files panel in every window, not only the current one. Found in `fbd.log` after an upgrade: 11 of 16 panels ended with `level=Tentative holds=false` (their load guesses collided on the one key window), and an unbound panel took every state of every window, so each focus change re-rooted and re-read all of them. Fix: a panel without a binding keeps the window it first showed and says "Click here to follow this window" when another window's state arrives; a click binds it (AC-36 interaction); a bridge restart inside the same iTerm2 process (an upgrade) no longer re-registers the tool with an unchanged URL (that reloaded every panel as a new web view and dropped its binding); an iTerm2 restart still registers it, so its panels start unbound and rely on the first fix; a terminal command from a panel without a binding is refused (it may show another window's pane). Pragmatic review: rejected binding on hover or scroll (macOS delivers them to windows that are not key, the bridge would read the wrong key window and store it as sure), rejected resolving collisions by order or window size, no safe discriminator exists (AS-09). Accepted cost: after a burst, the panel of the window you switch to shows its older pane until you click in it |
 | 0.19.0 | 2026-10-04 | AC-50 skips automatic reconstruction on the next same-boot launch after an observed, durably recorded normal iTerm2 exit; snapshots remain available manually, a new boot overrides the marker, and unknown/crash exits retain automatic recovery. |
 | 0.18.0 | 2026-10-04 | AC-46–50 distinguish durably observed normal root exits and explicit pane/window closes from loss of iTerm2 or the machine; exact-ID retirement excludes closed panes from pinned sources and retries, Undo/restart re-enables a verified live identity, and controlled profiles close on process exit. |
@@ -148,6 +149,7 @@ Open questions:
 | AC-48 | [SHOULD / P1] | Restore reconnects supported SSH destinations using current authentication; known remote directories use a generated bootstrap, and unsupported connection recipes are reported without replaying commands. |
 | AC-49 | [SHOULD / P1] | Restore attaches surviving tmux sessions or recreates recorded local tmux topology with shells only on a private server; remote/control-mode limitations are reported per connection. |
 | AC-50 | [SHOULD / P1] | All panels show one recovery job, its checkpoint history, progress and per-pane deviations; retries reconcile creation markers and do not duplicate successful terminals. |
+| AC-51 | [SHOULD / P1] | The user learns from the panel that a newer release exists and can copy the command that installs it, skip that release, or stop the check. |
 
 ## 5. BDD scenarios
 
@@ -1894,6 +1896,44 @@ Scenario: AC-50 edge — requested recovery shortcut already belongs to iTerm2
   And automatic startup recovery and the Files retry button remain available
 ```
 
+### AC-51 — Update notice [SHOULD / P1]
+
+```gherkin
+Scenario: AC-51 happy path — a newer release
+  Given the running build is release "v0.18.0" and the check is on
+  When the bridge's daily check finds that "<releases>/latest" redirects to ".../tag/v0.19.0"
+  Then every panel shows the chip "↑ v0.19.0" in its header within 1 s, and no toast or dialog
+  When the user clicks the chip
+  Then a menu says "v0.19.0 is available (this is v0.18.0)" and offers "Copy upgrade command", "Skip v0.19.0" and "Don't check for updates"
+  And "Copy upgrade command" copies "~/.iterm-filebrowser/bin/iterm-filebrowser upgrade" and runs nothing
+
+Scenario: AC-51 happy path — skip
+  When the user chooses "Skip v0.19.0"
+  Then the bridge stores the tag, every panel loses the chip, and it stays away after restarts
+  But a later release ("v0.20.0") shows the chip again
+
+Scenario: AC-51 happy path — stop checking
+  When the user chooses "Don't check for updates"
+  Then the bridge creates "no-update-check" in the state folder, sends no request from then on and the chip goes
+  And deleting that file (or the bridge's "on" command) checks again
+
+Scenario: AC-51 edge — nothing to show
+  Given the latest release is the running one, an older one, or the check failed (offline, rate limited, no release page)
+  Then no chip appears and nothing is reported; a failed try repeats within the hour, a successful one is one day later
+  And a build from a checkout (its id is not "vMAJOR.MINOR.PATCH") never makes a request
+
+Scenario: AC-51 edge — untrusted text
+  When the redirect names anything but "vMAJOR.MINOR.PATCH" (or fbd is told so)
+  Then the bridge drops it and fbd shows nothing: no URL or other text from the network reaches the panel
+
+Scenario: AC-51 edge — fbd restarts
+  Then the bridge sends the notice again; a panel opened later receives it with its first state
+
+Scenario: AC-51 failure — no bridge
+  When the user chooses skip or stop while the bridge is not connected
+  Then the panel shows "iTerm2 bridge not connected" and nothing is stored
+```
+
 ## 6. Flow and sequence diagrams
 
 ### Normal application exit and the next run (AC-50)
@@ -2152,6 +2192,7 @@ State when this spec was written: a Python prototype in `demo/` (removed in 0.3.
 | AC-48 | Helper SSH parsing allows executable options. | Separate recovery allowlist and generated remote bootstrap. | `bridge/fbbridge/sshargs.py` |
 | AC-49 | Resolver sees the focused tmux pane only. | One graph per reachable server and controlled shell-only recreation. | `bridge/fbbridge/resolve.py` |
 | AC-50 | Global checkpoint/retry controls and a durable normal-exit skip for same-boot relaunch. | Real Cmd-Q and native saved-state disposal need owner validation. | `bridge/fbbridge/recovery_quit.py`, `fbd/src/recovery_startup.rs`, `ui/src/recovery.ts` |
+| AC-51 | Users had to remember `iterm-filebrowser upgrade`. | The bridge checks GitHub once a day and tells fbd the newer tag; the panel shows a chip whose menu copies the command, skips a version or stops the check. | `bridge/fbbridge/updates.py`, `fbd/src/update.rs`, `ui/src/iterm-tools.ts` |
 
 ## 8. Recommendation and ownership
 
@@ -2397,6 +2438,7 @@ The panel shows a red dot in the header when `bridge_connected` is false or SSE 
 | Stage 10 | AC-03, AC-07, AC-08, AC-12, AC-37, AC-39, AC-40 (security) | Nothing in a file, a file name, a remote host, another local account or a fork can run a command, act on the wrong machine, take the backend's place or change a release. | — |
 | Stage 11 | AC-43, AC-44, AC-45 | Installation configures native restoration; closed-window metadata expires; native session search is one shortcut or button away. | — |
 | Stage 12 | AC-46, AC-47, AC-48, AC-49, AC-50 | Automatically save and recover after reboot/unclean launches; skip same-boot normal relaunch, with manual Restore, durable reconciliation and honest limits. | — |
+| Stage 13 | AC-51 | Users see that a newer release exists, and how to install it. | — |
 | Backlog | AC-21, AC-22 | Git colors, drag and drop. | M |
 
 ### Stage 7 plan (AC-33, AC-34, AC-35)
@@ -2523,6 +2565,7 @@ this revision. One earlier parallel run hit the existing free-port assertion in
 - [ ] AC-48 — Implemented; safe SSH allowlist, generated `/bin/sh -c` bootstrap, missing remote directory/home, quoting, restored-recipe recapture and new-process cwd provenance tests PASS. A generated connection returning 255 retains its diagnostic pane and retry eligibility through an upgrade and a later epoch (3 owned checks); successful owned connections close. Tests cover explicit close, known remote cwd preservation during authentication, superseded diagnostic attempts before journal acknowledgement and generic-profile rejection. Only canonical generated bootstraps are normalized; modified commands remain rejected. Real password/MFA, host-key and unreachable-host fixtures remain unverified; credentials/config files were not inspected.
 - [ ] AC-49 — Local private real tmux tests PASS: four-pane/two-window shell/layout/cwd recovery, deleted cwd and partial retry; PID/start identity, busy/changed/layout preservation and config sentinel. Seven group regressions cover two full generations, same-pane independent TTY clients, separate control targets, client-local pane limit/report, unrelated linked windows, partial original survival in both orders, conflicting/deleted completed aliases, whole private loss with stale socket, durable-reset crash/retry and unknown socket preservation. Remote identity/probe/post-auth mismatch tests use mocks/fake tmux and PASS; actual remote and tmux -CC attachment remain unverified (SKIP).
 - [x] AC-50 — Verified by: concurrent joining, epoch-checked completion/progress, startup settle/delay/outage/storage failures; owned bridge/backend restart, build upgrade, pending-source preservation and missing-ack reconciliation. Private browser checks cover global two-panel progress, reserved latest-source Retry, delayed GET versus newer event ordering and recovery-dialog upgrade deferral. Native ⌘⇧T remains occupied by Undo Close.
+- [x] AC-51 — Verified by: `cargo test update` (tags validated, the notice announced once and only as a tag, choices validated and forwarded); `bridge/tests/test_updates.py` (numeric version compare, tag from a redirect of a local server, request carries no cookie, bad tags and failures dropped, a non-release build never asks, skip/off/on); `e2e_panel` 200 checks, 10 for AC-51 (chip, menu, copy runs nothing, skip and off reach the bridge, untrusted text shows nothing). Also: `latest_tag()` against the real GitHub returned `v0.18.0` in the Python of the owner's running bridge (uv 3.12) and in iTerm2's bundled 3.8 and 3.14, which have no CA bundle of their own: the check uses macOS's `/etc/ssl/cert.pem`, verification stays on. Review fixes: a stamp file keeps the wall-clock time and the last answer (a sleeping Mac stretched a monotonic sleep, a bridge restart would ask again), a failed check or post is retried at the next hourly tick, the log keeps the reason of a failure. Not run: the chip against a real newer release (none exists yet) and the owner's look at it in iTerm2.
 
 Pragmatic design and independent implementation review findings were fixed with regressions:
 fresh panel identity, continuous purge, narrow profile classification, corrupt setup results,

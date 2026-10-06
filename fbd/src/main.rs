@@ -33,6 +33,7 @@ mod recovery_quit_tests;
 mod recovery_tests;
 mod socket;
 mod termtext;
+mod update;
 mod watcher;
 mod workspace;
 
@@ -87,6 +88,8 @@ struct Term {
     /// what panels were last told about the bridge (AC-30)
     announced_alive: bool,
     setup: Value,
+    /// the newest release the bridge found, `{"latest": tag}`, or null (AC-51)
+    update: Value,
 }
 
 impl Term {
@@ -219,6 +222,7 @@ fn routes(app: Shared) -> Router {
         .route("/api/view/pending", get(view_pending))
         .route("/api/ui/toolbelt-width", post(toolbelt_width))
         .route("/api/ui/open-quickly", post(open_quickly))
+        .route("/api/update", post(update::choose))
         .route("/api/panel/claim", post(panels::panel_claim))
         .route("/api/panel/bind", post(panels::panel_bind))
         .route("/ticket", get(ticket))
@@ -240,6 +244,7 @@ fn bridge_routes(app: Shared) -> Router {
         .route("/internal/state", post(internal_state))
         .route("/internal/liveness", post(liveness::inventory))
         .route("/internal/setup", post(liveness::setup))
+        .route("/internal/update", post(update::internal_update))
         .route("/internal/recovery", get(recovery::get))
         .route("/internal/recovery/snapshot/{id}", get(recovery::snapshot))
         .route("/internal/recovery/capture", post(recovery::capture).layer(axum::extract::DefaultBodyLimit::max(4 << 20)))
@@ -307,7 +312,7 @@ async fn main() {
         store: Store::load(dir.join("workspaces.json"), env("FB_WORKSPACE_TTL_DAYS", 14), bus.clone()),
         roots: Roots::parse(&std::env::var("FB_WRITABLE_ROOTS").unwrap_or_else(|_| "$HOME:/tmp".into())),
         bus,
-        term: Mutex::new(Term { state: json!({}), windows: HashMap::new(), version: 0, last_push: None, announced_alive: false, setup: Value::Null }),
+        term: Mutex::new(Term { state: json!({}), windows: HashMap::new(), version: 0, last_push: None, announced_alive: false, setup: Value::Null, update: Value::Null }),
         panels: Default::default(),
         live: Default::default(),
         recovery: Arc::new(Mutex::new(recovery_store::Store::load(dir.join("recovery")))),
@@ -391,7 +396,7 @@ mod tests {
             bus: Bus::new(), cache: Cache::new(1024), store: Store::load(path.clone(), 14, Bus::new()),
             roots: Roots::parse("/tmp"),
             term: Mutex::new(Term { state: json!({}), windows: HashMap::new(), version: 0,
-                last_push: None, announced_alive: false, setup: Value::Null }),
+                last_push: None, announced_alive: false, setup: Value::Null, update: Value::Null }),
             panels: Default::default(), live: Default::default(), remotes: Default::default(),
             recovery: Arc::new(Mutex::new(recovery_store::Store::load(path.with_extension("recovery")))),
             bridge_build: Mutex::new(Value::Null), streams: Default::default(), started: Instant::now(),
@@ -402,7 +407,7 @@ mod tests {
 
     #[test]
     fn bridge_silence_is_announced_once() {
-        let mut t = Term { state: json!({}), windows: HashMap::new(), version: 3, last_push: None, announced_alive: false, setup: Value::Null };
+        let mut t = Term { state: json!({}), windows: HashMap::new(), version: 3, last_push: None, announced_alive: false, setup: Value::Null, update: Value::Null };
         assert!(!t.went_silent(), "never connected: nothing to announce");
         t.last_push = Some(Instant::now());
         t.announced_alive = true;

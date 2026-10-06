@@ -19,7 +19,7 @@ import { Stream } from "./stream";
 import { Upgrade } from "./upgrade";
 import { commitPath, trashPaths } from "./file-actions";
 import { refreshScope } from "./panel-refresh";
-import { renderSetupNotice, watchToolbeltWidth } from "./iterm-tools";
+import { renderSetupNotice, renderUpdate, watchToolbeltWidth } from "./iterm-tools";
 import { refreshRecovery, renderRecovery } from "./recovery";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -172,7 +172,7 @@ function confirmWindow() {
 }
 
 async function onState(s: TermState) {
-  renderSetupNotice(s.setup_notice);
+  renderSetupNotice(s.setup_notice); renderUpdate(s.update);
   upgrade.build(s.build);
   if (!VIEW && !binding.accepts(s)) { // another window's pane (AC-36): only the bridge status counts here
     const foreign = binding.foreign(s);
