@@ -10,7 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.modules.setdefault("iterm2", types.ModuleType("iterm2"))
-from fbbridge import app, registry  # noqa: E402
+from fbbridge import app, common, registry  # noqa: E402
 
 
 class RegisterTest(unittest.IsolatedAsyncioTestCase):
@@ -24,7 +24,8 @@ class RegisterTest(unittest.IsolatedAsyncioTestCase):
         iterm2 = sys.modules["iterm2"]
         self.addCleanup(lambda old=getattr(iterm2, "tool", None): setattr(iterm2, "tool", old) if old else delattr(iterm2, "tool"))
         iterm2.tool = types.SimpleNamespace(async_register_web_view_tool=self.register)
-        for patch in (mock.patch.object(app, "APP_DIR", self.dir), mock.patch.object(registry, "MARKER", self.marker),
+        for patch in (mock.patch.object(common, "LOG_DIR", self.dir / "logs"),  # never the live log
+                      mock.patch.object(app, "APP_DIR", self.dir), mock.patch.object(registry, "MARKER", self.marker),
                       mock.patch.object(app, "heal", mock.AsyncMock()),
                       mock.patch.object(app, "_registered", {"url": None})):
             patch.start()

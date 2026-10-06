@@ -11,7 +11,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.modules.setdefault("iterm2", types.ModuleType("iterm2"))
-from fbbridge import updates  # noqa: E402
+from fbbridge import common, updates  # noqa: E402
 
 
 class Releases(http.server.BaseHTTPRequestHandler):
@@ -75,7 +75,8 @@ class UpdatesTest(unittest.IsolatedAsyncioTestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         d = Path(tmp.name)
-        for patch in (mock.patch.object(updates, "OFF", d / "no-update-check"),
+        for patch in (mock.patch.object(common, "LOG_DIR", d / "logs"),  # never the live log
+                      mock.patch.object(updates, "OFF", d / "no-update-check"),
                       mock.patch.object(updates, "SKIPPED", d / "update-skipped"),
                       mock.patch.object(updates, "CHECKED", d / "update-checked")):
             patch.start()
