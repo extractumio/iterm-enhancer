@@ -58,6 +58,16 @@ def say(msg):
     print(msg, flush=True)
 
 
+def color():
+    """Colors only for a person at a terminal that takes them (NO_COLOR: no-color.org)."""
+    return sys.stdout.isatty() and "NO_COLOR" not in os.environ and os.environ.get("TERM", "dumb") != "dumb"
+
+
+def done(msg):
+    """A success line: with a green check where colors work, the bare text elsewhere (logs, scripts)."""
+    say(f"\033[32m✓\033[0m {msg}" if color() else msg)
+
+
 # ── build id ────────────────────────────────────────────────────────────────
 
 def build_id(repo=REPO):
@@ -297,7 +307,7 @@ def install(pkg=REPO):
     if old == build:
         if live.iterm_running() and live.runs(live.health(legacy(build)), build):
             report_settings(request_id, True)
-            return say(f"{build} is already installed and running")
+            return done(f"{build} is already installed and running")
     copy_build(build, pkg)
     if old and old != build:
         relink("previous", old)
@@ -318,17 +328,41 @@ def install(pkg=REPO):
             raise Failed(f"Upgrade to {build} failed ({e}); switched back to {old}, which did not come up either ({again})")
         raise Failed(f"Upgrade to {build} failed ({e}); rolled back to {old} — see {live.LOG_DIR}")
     if not is_live:
-        return say(f"Installed {build}; takes effect when iTerm2 starts")
+        return done(f"Installed {build}; takes effect when iTerm2 starts")
     report_settings(request_id, True)
     prune()
-    say(f"Upgraded {old} → {build}" if old and old != build else f"Installed {build}; the Files panel is live (View → Toolbelt → Files)")
+    done(f"Upgraded {old} → {build}" if old and old != build else f"Installed {build}; the Files panel is live (View → Toolbelt → Files)")
+
+
+STARTUP_FILES = (".zshenv", ".zprofile", ".zshrc", ".bash_profile", ".bashrc", ".profile", ".config/fish/config.fish")
+
+
+def path_ready():
+    """Is the command reachable already: on this shell's PATH, or set up in a startup file (a
+    shell opened before that edit has not read it, and must not be told to do it again)."""
+    if str(BIN) in os.environ.get("PATH", "").split(":"):
+        return True
+    zdot = Path(os.environ["ZDOTDIR"]) if os.environ.get("ZDOTDIR") else None
+    files = [HOME / f for f in STARTUP_FILES] + ([zdot / ".zshenv", zdot / ".zprofile", zdot / ".zshrc"] if zdot else [])
+    for f in files:
+        try:
+            with open(f, errors="ignore") as lines:
+                if any(".iterm-filebrowser/bin" in line for line in lines if not line.lstrip().startswith("#")):
+                    return True
+        except OSError:
+            pass
+    return False
 
 
 def path_tip():
-    """The command moved out of ~/.local/bin (AC-40): say how to reach it, once per install."""
-    if str(BIN) not in os.environ.get("PATH", "").split(":"):
-        say(f"Tip: add {BIN} to your PATH to use the iterm-filebrowser command:\n"
-            f"  echo 'export PATH=\"$HOME/.iterm-filebrowser/bin:$PATH\"' >> ~/.zshrc")
+    """The command moved out of ~/.local/bin (AC-40): after the result, a blank line and a gray
+    tip on how to reach it, unless the user did that already."""
+    if path_ready():
+        return
+    tip = (f"Tip: add {BIN} to your PATH to use the iterm-filebrowser command:\n"
+           f"  echo 'export PATH=\"$HOME/.iterm-filebrowser/bin:$PATH\"' >> ~/.zshrc")
+    say("")
+    say(f"\033[90m{tip}\033[0m" if color() else tip)
 
 
 def rollback():

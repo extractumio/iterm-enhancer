@@ -217,5 +217,22 @@ class UpgradeTest(unittest.TestCase):
         self.assertIn("download failed", str(cm.exception.code))
 
 
+    # status: connected panels against iTerm2's windows
+    def test_panels_against_windows(self):
+        self.assertEqual(self.cli.panels_line(2, 2), "panels:   2 connected, 2 iTerm2 windows")
+        self.assertEqual(self.cli.panels_line(1, 1), "panels:   1 connected, 1 iTerm2 window")
+        self.assertEqual(self.cli.panels_line(14, 2), "panels:   14 connected, 2 iTerm2 windows "
+                         "(12 more than windows: iTerm2 keeps panels of earlier registrations until it quits)")
+
+    def test_status_shows_panels_only_once_fbd_knows_the_windows(self):
+        health = {"build": "v1.0.0", "bridge_connected": True, "ws_clients": 3, "windows": 2}
+        for h, shown in ((health, True), ({**health, "windows": None}, False), (None, False)):
+            out = io.StringIO()
+            with mock.patch.object(self.cli.live, "health", lambda legacy=False, h=h: h), \
+                    mock.patch.object(self.cli, "hosts_list", lambda: None), mock.patch("sys.stdout", out):
+                self.cli.status()
+            self.assertEqual("panels:   3 connected" in out.getvalue(), shown, out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

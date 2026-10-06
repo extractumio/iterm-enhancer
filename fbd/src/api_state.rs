@@ -357,6 +357,7 @@ pub async fn health(State(app): State<Shared>) -> Json<Value> {
         "cache_dirs": cache_dirs,
         "sse_clients": app.streams.sse.load(Ordering::Relaxed),
         "ws_clients": app.streams.ws.load(Ordering::Relaxed),
+        "windows": app.live.lock().window_count(),
         "workspaces": app.store.len(),
         "watched_dirs": app.watcher.as_ref().map_or(0, |w| w.len()),
         "writable_roots": app.roots.list(),

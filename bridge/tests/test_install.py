@@ -304,5 +304,76 @@ class InstallTest(unittest.TestCase):
             self.assertNotEqual(a, self.inst.build_id(repo), "a bridge-only change is a new build")
 
 
+    # The result line and the PATH tip: colors only on a terminal that takes them, and no
+    # tip for a user who has done what it says.
+
+    def tty(self, tty=True, term="xterm-256color", no_color=False):
+        env = {"TERM": term}
+        if no_color:
+            env["NO_COLOR"] = "1"
+        stdout = mock.Mock(isatty=lambda: tty)
+        for p in (mock.patch.object(sys, "stdout", stdout), mock.patch.dict(os.environ, env)):
+            p.start()
+            self.addCleanup(p.stop)
+        os.environ.pop("NO_COLOR", None) if not no_color else None  # the patched copy of the environment
+
+    def test_colors_only_where_they_work(self):
+        self.tty()
+        self.assertTrue(self.inst.color())
+        with mock.patch.dict(os.environ, {"NO_COLOR": "1"}):
+            self.assertFalse(self.inst.color(), "NO_COLOR")
+        with mock.patch.dict(os.environ, {"TERM": "dumb"}):
+            self.assertFalse(self.inst.color(), "a dumb terminal")
+        self.tty(tty=False)
+        self.assertFalse(self.inst.color(), "a pipe or a log file")
+
+    def test_the_result_has_a_green_check_on_a_color_terminal_and_none_elsewhere(self):
+        self.tty()
+        self.inst.done("Upgraded a → b")
+        self.assertEqual(self.said[-1], "\033[32m✓\033[0m Upgraded a → b")
+        with mock.patch.dict(os.environ, {"NO_COLOR": "1"}):
+            self.inst.done("Upgraded a → b")
+        self.assertEqual(self.said[-1], "Upgraded a → b")
+
+    def tip(self):
+        self.said.clear()
+        self.inst.path_tip()
+        return list(self.said)
+
+    def test_the_tip_follows_a_blank_line_and_is_gray_on_a_color_terminal(self):
+        self.tty()
+        said = self.tip()
+        self.assertEqual(said[0], "")
+        self.assertTrue(said[1].startswith("\033[90mTip: add ") and said[1].endswith("\033[0m"), said)
+        self.tty(tty=False)
+        said = self.tip()
+        self.assertEqual((said[0], said[1].startswith("Tip: add ")), ("", True))
+        self.assertNotIn("\033", said[1])
+
+    def test_no_tip_when_the_command_is_reachable_or_the_user_set_it_up(self):
+        self.tty()
+        with mock.patch.dict(os.environ, {"PATH": f"/usr/bin:{self.inst.BIN}"}):
+            self.assertEqual(self.tip(), [], "on PATH")
+        zshrc = self.home / ".zshrc"
+        zshrc.write_text("# mine\nexport PATH=\"$HOME/.iterm-filebrowser/bin:$PATH\"\n")
+        self.assertEqual(self.tip(), [], "added to .zshrc, this shell has not read it yet")
+        zshrc.write_text("  # export PATH=\"$HOME/.iterm-filebrowser/bin:$PATH\"\n")
+        self.assertEqual(len(self.tip()), 2, "a comment does not count")
+        zshrc.unlink()
+        (self.home / ".config/fish").mkdir(parents=True)
+        (self.home / ".config/fish/config.fish").write_text("fish_add_path ~/.iterm-filebrowser/bin\n")
+        self.assertEqual(self.tip(), [], "fish")
+        (self.home / ".config/fish/config.fish").write_bytes(b"\xff\xfe not text .iterm-filebrowser/bin")
+        self.assertEqual(self.tip(), [], "unreadable text is not a crash")
+
+    def test_a_zdotdir_counts(self):
+        self.tty()
+        zdot = self.home / "zdot"
+        zdot.mkdir()
+        (zdot / ".zshrc").write_text("path+=(~/.iterm-filebrowser/bin)\n")
+        with mock.patch.dict(os.environ, {"ZDOTDIR": str(zdot)}):
+            self.assertEqual(self.tip(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

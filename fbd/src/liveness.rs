@@ -22,6 +22,11 @@ pub struct Live {
 }
 
 impl Live {
+    /// iTerm2's windows in the last inventory, if one came (for status).
+    pub fn window_count(&self) -> Option<usize> {
+        self.last.map(|_| self.windows.len())
+    }
+
     pub fn allows_window(&self, window: &str) -> bool {
         self.last.is_none_or(|t| t.elapsed() > GAP) || self.windows.contains(window)
     }

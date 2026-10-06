@@ -42,7 +42,18 @@ def status():
           + (f", bridge {'connected' if h.get('bridge_connected') else 'not connected'}" if h else ""))
     print(f"current:  {install.target('current') or '-'}")
     print(f"previous: {install.target('previous') or '-'}")
+    if h and h.get("windows") is not None:
+        print(panels_line(h["ws_clients"], h["windows"]))
     hosts_list()
+
+
+def panels_line(panels, windows):
+    """Connected panels against iTerm2's windows: every registration of the tool gives each
+    window a panel, and iTerm2 keeps the old ones until it quits (AC-41)."""
+    line = f"panels:   {panels} connected, {windows} iTerm2 window{'s' * (windows != 1)}"
+    if panels > windows:
+        line += f" ({panels - windows} more than windows: iTerm2 keeps panels of earlier registrations until it quits)"
+    return line
 
 
 def fetch(url, dest):
