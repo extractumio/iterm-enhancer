@@ -262,5 +262,51 @@ class InstallTest(unittest.TestCase):
             self.assertEqual(self.tip(), [])
 
 
+
+class LaunchTest(unittest.TestCase):
+    """How iTerm2's answers to "launch API script" become the installer's result."""
+
+    def setUp(self):
+        sys.path.insert(0, str(REPO / "scripts"))
+        import install_launch
+        self.live = install_launch
+        self.clock = [0.0]
+        for p in (mock.patch.object(self.live.time, "monotonic", lambda: self.clock[0]),
+                  mock.patch.object(self.live.time, "sleep", lambda s: self.clock.__setitem__(0, self.clock[0] + s))):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def answers(self, *errors):
+        """osascript fails with each of `errors` in turn ("" means it worked), then keeps the last."""
+        calls = []
+
+        def run(cmd, **kw):
+            err = errors[min(len(calls), len(errors) - 1)]
+            calls.append(cmd)
+            return mock.Mock(returncode=1 if err else 0, stderr=err, stdout="")
+        return calls, mock.patch.object(self.live.subprocess, "run", run)
+
+    def test_a_script_placed_after_iterm2_started_is_asked_for_again(self):
+        calls, run = self.answers("execution error: iTerm got an error: Script not found (2)", "")
+        with run:
+            self.live.launch()
+        self.assertEqual(len(calls), 2)
+
+    def test_a_script_never_listed_asks_for_a_restart(self):
+        calls, run = self.answers("execution error: iTerm got an error: Script not found (2)")
+        with run, self.assertRaises(self.live.LaunchError) as cm:
+            self.live.launch()
+        self.assertIn("restart iTerm2", str(cm.exception))
+        self.assertNotIn("Enable Python API", str(cm.exception))
+        self.assertGreater(len(calls), 5, "asked again while iTerm2 may still list it")
+
+    def test_automation_refused_is_not_retried(self):
+        calls, run = self.answers("Not authorized to send Apple events to iTerm2. (-1743)")
+        with run, self.assertRaises(self.live.LaunchError) as cm:
+            self.live.launch()
+        self.assertIn("Automation", str(cm.exception))
+        self.assertEqual(len(calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

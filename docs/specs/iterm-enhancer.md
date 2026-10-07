@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.25.0 |
+| Version | 0.25.1 |
 | Date | 2026-10-07 |
 | Status | draft |
 | Author | Project maintainers |
@@ -13,6 +13,7 @@ Change log:
 
 | Version | Date | Change |
 |---|---|---|
+| 0.25.1 | 2026-10-07 | AC-33: a first install with iTerm2 running failed with "Script not found" and advice to turn on the Python API (it was on): iTerm2 lists AutoLaunch scripts when it starts, and listed the new one only later on the owner's Mac (a retry minutes later worked). The installer now asks again for 15 s, then says to restart iTerm2 |
 | 0.25.0 | 2026-10-07 | From the owner: the project is renamed iterm-enhancer everywhere: the command `iterm-enhancer`, the root `~/.iterm-enhancer/` on the Mac and on hosts, the package `iterm-enhancer-macos.tar.gz`, the release signature namespace `iterm-enhancer-release`, the Toolbelt tool id, the viewer's dynamic profile, the recovery marker ("iterm-enhancer Restore …") and this spec's file name. Owner decision: a new setup with no backward compatibility, so the migrations from earlier layouts (the unversioned install, `~/.local/lib`, `~/.local/bin`, Application Support, Library/Logs; Stage 8's host helper) and the health check of builds from before fbd's socket are removed with their scenarios and tests; an install of the old name is removed with its own `uninstall` before the new setup (both use port 47821 and the AutoLaunch `fb_bridge.py`). The maintainer moved the release key to `~/.config/iterm-enhancer/release-key` and renamed the GitHub repository to `extractumio/iterm-enhancer` (GitHub redirects the old name). Kept: the earlier release notes (history). Change-log rows and evidence below name the new paths |
 | 0.24.0 | 2026-10-07 | AC-52 and AC-53, from the owner: on touch screens and narrow windows the hot keys panel is hidden until asked and two floating buttons open and close the keyboard and the panel; hot keys ⇧Tab, ⇧← and ⇧↩; Shift+Enter (and Ctrl+Enter) are sent as their own key (CSI u `ESC[13;2u`), not as Enter; at 1400 px and wider Files is docked on the right like the session list, with × to close, and File is a window over the terminal; session groups collapse; fixed: Files and File wore the focused pane's colors instead of the shown pane's; Wrap/Grid/Fit is remembered per session and the last choice is the default for new session ids (they change when iTerm2 restarts or tmux -CC attaches again). Install: the PATH tip is cornflower blue (gray was unreadable). Choices: CSI u is how iTerm2 reports Shift+Enter to apps that ask for it (Claude Code, Codex, editors); a plain shell shows it as text, as in iTerm2 with that mode on |
 | 0.23.0 | 2026-10-06 | AC-52 and AC-53 (P1), from the owner: work with the iTerm2 sessions and their files from a browser on another device (iPhone, iPad) on the local network or over Tailscale: every window, tab and pane, the profile's look, typing, scrollback, selection, and the Files panel with its viewer and editor, "links opening". Owner decisions: listen on every address (0.0.0.0, plain HTTP; HTTPS through `tailscale serve`), a password given in the command line now, a setting later; switched on and off from the panel's menu or the CLI. Reviews (pragmatic): accepted: the browser never holds fbd's token (the proxy adds it and passes only file work), the proxy repeats fbd's Origin check before it rewrites Host and Origin, the web panel keeps a workspace of its own (`web:`), per-address sign-in brake, sign-in as an HttpOnly cookie, fbd's CSP kept (only the panel page's framing and connections change), a hidden page pauses its stream; rejected: a web listener inside fbd (fbd stays loopback-only; one language for the web side), a second fbd access tier with per-route policy (the proxy allowlist is the boundary now), web-panel liveness by connection instead of a 15-minute window (later). Second /simplify pass: one pane-location rule for the bridge and the web (`Remotes.place`), the proxy proves fbd (`/api/hello`) before its token goes out, the CLI shows the bridge's real web status (`/health`), one clipboard helper, one at-the-Mac flag in the context menu; skipped: one screen stream per session for several browsers, fbd-owned web keys, the bridge pushing the web pane's folder, shared bridge-status helpers in fbd |
@@ -1113,6 +1114,12 @@ Scenario: AC-33 failure — iTerm2 refuses the launch
   Given macOS has not allowed the terminal to control iTerm2 (osascript error -1743), or iTerm2's Python API is off or waiting for consent
   When the launch is attempted
   Then the switch is kept (the build itself is fine), nothing is rolled back, and the command exits non-zero with the cause and its fix, e.g. "Allow <terminal> to control iTerm2 in System Settings → Privacy & Security → Automation, then run make install again"
+
+Scenario: AC-33 edge — first install while iTerm2 runs
+  Given iTerm2 started before the installer placed "fb_bridge.py" in AutoLaunch (a first install, or one after an uninstall)
+  When the launch is attempted and iTerm2 answers "Script not found"
+  Then the installer asks again every second for up to 15 s (iTerm2 notices the new script on its own)
+  But if iTerm2 still does not list it, the command exits non-zero saying to restart iTerm2, never that the Python API is off
 
 Scenario: AC-33 failure — the new build does not come up
   Given "current" was switched to "B" and the launch succeeded

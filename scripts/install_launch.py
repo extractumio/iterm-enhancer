@@ -21,6 +21,9 @@ SCRIPT = "fb_bridge.py"
 
 AUTOMATION_FIX = ("macOS does not let this terminal control iTerm2. Allow it in System Settings → "
                   "Privacy & Security → Automation (iTerm2 under your terminal app), then run make install again.")
+NOT_LISTED_FIX = ("iTerm2 has not listed the new AutoLaunch script yet (it reads the folder when it starts): "
+                  "restart iTerm2 and the Files panel starts by itself.")
+NOT_LISTED_WAIT = 15.0  # seconds iTerm2 takes to notice a script placed after it started
 API_FIX = ("iTerm2 did not run the script. Turn on iTerm2 → Settings → General → Magic → "
            "Enable Python API (and confirm iTerm2's prompt), then run make install again.")
 
@@ -37,12 +40,20 @@ def iterm_running():
 
 def launch():
     """Ask the running iTerm2 to start the AutoLaunch bridge (a new one takes over from the
-    old one, AC-30). Never starts iTerm2: call only when iterm_running()."""
-    r = subprocess.run(["osascript", "-e", f'tell application "iTerm2" to launch API script named "{SCRIPT}"'],
-                       capture_output=True, text=True, timeout=30)
-    if r.returncode == 0:
-        return
-    err = (r.stderr or r.stdout).strip()
+    old one, AC-30). Never starts iTerm2: call only when iterm_running(). A first install
+    places the script after iTerm2 started, so "Script not found" is asked again for a while."""
+    deadline = time.monotonic() + NOT_LISTED_WAIT
+    while True:
+        r = subprocess.run(["osascript", "-e", f'tell application "iTerm2" to launch API script named "{SCRIPT}"'],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode == 0:
+            return
+        err = (r.stderr or r.stdout).strip()
+        if "Script not found" not in err:
+            break
+        if time.monotonic() >= deadline:
+            raise LaunchError(f"{NOT_LISTED_FIX} ({err})")
+        time.sleep(1)
     if "-1743" in err or "Not authorized" in err:
         raise LaunchError(f"{AUTOMATION_FIX} ({err})")
     raise LaunchError(f"{API_FIX} ({err or f'osascript exited {r.returncode}'})")
