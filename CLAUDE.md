@@ -16,7 +16,8 @@ TypeScript UI bundled by esbuild (CodeMirror 6, markdown-it; no framework). Rust
 
 | Term | Meaning |
 | --- | --- |
-| Bridge | `bridge/fb_bridge.py`: starts `fbd`, registers the tool, tracks the focused pane, resolves cwd and theme, pushes them to `fbd`, types into the terminal on request |
+| Bridge | `bridge/fb_bridge.py`: starts `fbd`, registers the tool, tracks the focused pane, resolves cwd and theme, pushes them to `fbd`, types into the terminal on request; serves web access when it is on |
+| Web access | `bridge/fbbridge/web/`: the bridge's password-protected listener (off by default) that mirrors the iTerm2 sessions to a browser and proxies file work to `fbd`, which stays on loopback |
 | fbd | `fbd/`: the backend on `127.0.0.1:47821`; listings, file operations, workspaces, watcher, SSE, the embedded UI |
 | Panel | `ui/`: the Toolbelt web view (WKWebView): tree, tabs, viewer/editor |
 | Key | The state key of a terminal pane: the iTerm2 session id, or `tmux:<host>:<socket>:%N` for a tmux pane |
@@ -40,7 +41,8 @@ TypeScript UI bundled by esbuild (CodeMirror 6, markdown-it; no framework). Rust
 
 ### 2. Security and secrets
 - `fbd` is reachable only by the panel: loopback, token, exact Host, Origin and
-  Content-Type checks on writes, bridge secret on `/internal`; writes only under Roots,
+  Content-Type checks on writes, bridge secret on `/internal`; web access reaches it only
+  through the bridge's proxy, which keeps the token and passes only file work; writes only under Roots,
   judged on resolved paths (a symlink is judged where it lives for rename and trash).
 - The panel page runs no content from files: Markdown raw HTML off, `javascript:` links
   dropped, remote images not loaded, CSP `script-src 'self'`, no navigation away.

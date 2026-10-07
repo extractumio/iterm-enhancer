@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.22.0 |
+| Version | 0.23.0 |
 | Date | 2026-10-06 |
 | Status | draft |
 | Author | Project maintainers |
@@ -13,6 +13,7 @@ Change log:
 
 | Version | Date | Change |
 |---|---|---|
+| 0.23.0 | 2026-10-06 | AC-52 and AC-53 (P1), from the owner: work with the iTerm2 sessions and their files from a browser on another device (iPhone, iPad) on the local network or over Tailscale: every window, tab and pane, the profile's look, typing, scrollback, selection, and the Files panel with its viewer and editor, "links opening". Owner decisions: listen on every address (0.0.0.0, plain HTTP; HTTPS through `tailscale serve`), a password given in the command line now, a setting later; switched on and off from the panel's menu or the CLI. Reviews (pragmatic): accepted: the browser never holds fbd's token (the proxy adds it and passes only file work), the proxy repeats fbd's Origin check before it rewrites Host and Origin, the web panel keeps a workspace of its own (`web:`), per-address sign-in brake, sign-in as an HttpOnly cookie, fbd's CSP kept (only the panel page's framing and connections change), a hidden page pauses its stream; rejected: a web listener inside fbd (fbd stays loopback-only; one language for the web side), a second fbd access tier with per-route policy (the proxy allowlist is the boundary now), web-panel liveness by connection instead of a 15-minute window (later). Second /simplify pass: one pane-location rule for the bridge and the web (`Remotes.place`), the proxy proves fbd (`/api/hello`) before its token goes out, the CLI shows the bridge's real web status (`/health`), one clipboard helper, one at-the-Mac flag in the context menu; skipped: one screen stream per session for several browsers, fbd-owned web keys, the bridge pushing the web pane's folder, shared bridge-status helpers in fbd |
 | 0.22.0 | 2026-10-06 | From the owner: (1) panel memory: iTerm2's WebKit processes holding Files panels showed 160–260 MB each; measured in Chromium against a private fbd: 3,000 state, recovery and file events and 300 open/close cycles of tabs, the dialog and the context menu leave the DOM flat (484 nodes) and the JS heap within 1.6 MB of the start (about 0.6 KB per tab cycle, CodeMirror's caches); a first count that grew was the test's own unreleased element handles; hours later the same WebKit processes held 40–90 MB without any action (reclaimable caches): no leak in the panel; the real cost is the hidden panels of earlier registrations (AC-41), counted by `status` (`panels:`). (2) Header: the mode badge moved to the second line, left of the path; the bridge's note on the pane moved to a footer. (3) Recovery dialog (AC-50): titled "Session Window Recovery" with an × button; "Automatic saving" and "Restore" are separate parts ("Save a new checkpoint now", "Restore selected"); the list hides unstable intermediates (stable ones, the newest of each run and the startup and job sources stay), groups by iTerm2 run and selects the newest checkpoint with a window, unless startup recovery is pending or a restore job is unfinished; it used fbd's `recommended`, which prefers the previous run's last stable checkpoint (crash recovery) and showed an old one. Pragmatic review: keep the crash's unstable last checkpoint and the job's, skip an empty newest one, keep seconds in labels and plurals right, no retention change at the source in this step |
 | 0.21.0 | 2026-10-05 | AC-51 (P1), from the owner: how do users learn that a new version exists? The bridge asks GitHub once a day (one `HEAD` of `<releases>/latest`, the tag read from the redirect) and tells fbd when that tag is newer than the running release; panels show a small chip with a menu to copy the upgrade command, skip that version or stop checking. Implementation review: spec section order, wall-clock daily check, certificate failures logged and the system CA bundle, a lost post retried, an accessible chip. Pragmatic review: the bridge, not fbd, makes the request (fbd would need an HTTP/TLS client, CLAUDE.md §4) and the panel's CSP stays closed; the panel never installs or types the command (a click on the loopback page must not become code execution; the signature check stays in the CLI); only the tag, shown as text, reaches the panel (no URL from the network); a persistent opt-out, because the bridge's environment is iTerm2's, not the shell's; checked daily rather than every 12 h; cut: a settings toggle, a link to GitHub, a fixed key in prefs |
 | 0.20.0 | 2026-10-05 | AC-36 (P0) again, from the owner: opening a window, starting `screen` or restarting iTerm2 re-read the Files panel in every window, not only the current one. Found in `fbd.log` after an upgrade: 11 of 16 panels ended with `level=Tentative holds=false` (their load guesses collided on the one key window), and an unbound panel took every state of every window, so each focus change re-rooted and re-read all of them. Fix: a panel without a binding keeps the window it first showed and says "Click here to follow this window" when another window's state arrives; a click binds it (AC-36 interaction); a bridge restart inside the same iTerm2 process (an upgrade) no longer re-registers the tool with an unchanged URL (that reloaded every panel as a new web view and dropped its binding); an iTerm2 restart still registers it, so its panels start unbound and rely on the first fix; a terminal command from a panel without a binding is refused (it may show another window's pane). Pragmatic review: rejected binding on hover or scroll (macOS delivers them to windows that are not key, the bridge would read the wrong key window and store it as sure), rejected resolving collisions by order or window size, no safe discriminator exists (AS-09). Accepted cost: after a burst, the panel of the window you switch to shows its older pane until you click in it |
@@ -52,11 +53,12 @@ Change log:
 In scope:
 - A Toolbelt web-view tool "Files", a Rust backend `fbd` on 127.0.0.1, and a Python bridge (iTerm2 AutoLaunch) that tracks the focused pane, its cwd (plain shell, local tmux, local tmux -CC) and theme.
 - Reading (tree, 500K-entry folders, highlighted text, Markdown and HTML rendered, images), editing (save, create, rename, Trash, IDE context menu and keys), per-pane memory, theme and font from the profile, a separate viewer window.
+- Web access (AC-52, AC-53), off by default: the bridge serves the iTerm2 sessions and the Files panel to a signed-in browser on the network.
 
 Out of scope (explicit):
 - Remote hosts without an agent, plain `ssh` panes (no tmux -CC), sshfs: the panel shows "remote" and freezes. Remote tmux -CC panes on a host with an agent are AC-37.
 - A panel on the left side: the Toolbelt is right side only; a glued native window needs Accessibility permission and breaks in fullscreen (owner accepted, 2026-09-30).
-- IDE features (LSP, project search), Windows/Linux (iTerm2 is macOS only), network access (loopback only).
+- IDE features (LSP, project search), Windows/Linux (iTerm2 is macOS only), fbd on the network (it stays on 127.0.0.1; web access, AC-52, is the bridge's separate listener), HTTPS of its own (use `tailscale serve`), more than one web password or user.
 
 ## 3. Assumptions, dependencies, open questions
 
@@ -106,7 +108,7 @@ Open questions:
 | AC-04 | [MUST / P0] | The user can open a Markdown file rendered with typography by default and switch to highlighted source with one click. |
 | AC-05 | [MUST / P0] | The user gets back, per terminal pane (iTerm2 pane or tmux pane), the expanded folders, selection and open tabs after switching panes or reloading the panel; tree state clears on `cd`. |
 | AC-06 | [MUST / P0] | The user can install with one command, and after an iTerm2 restart the Files tool is available with no manual steps. |
-| AC-07 | [MUST / P0] | A web page or local process without the token cannot list, read or change files through the backend. |
+| AC-07 | [MUST / P0] | A web page or local process without the token cannot list, read or change files through the backend. With web access on (AC-52), the bridge, which holds the token, lets only a browser signed in with the web password through, and only for file work (AC-53); that password also opens the terminals (a shell as the user), so it guards the whole account. |
 | AC-08 | [SHOULD / P1] | The user can edit a text file and save it with ⌘S; unsaved tabs are marked, and a save over a file changed on disk is refused with a clear choice. |
 | AC-09 | [SHOULD / P1] | The user can create an empty file or a folder in the selected folder through the context menu or a shortcut, with the name typed inline. |
 | AC-10 | [SHOULD / P1] | The user can rename a file or folder inline (F2 or context menu); open tabs follow the new path. |
@@ -151,6 +153,8 @@ Open questions:
 | AC-49 | [SHOULD / P1] | Restore attaches surviving tmux sessions or recreates recorded local tmux topology with shells only on a private server; remote/control-mode limitations are reported per connection. |
 | AC-50 | [SHOULD / P1] | All panels show one recovery job, its checkpoint history, progress and per-pane deviations; retries reconcile creation markers and do not duplicate successful terminals. |
 | AC-51 | [SHOULD / P1] | The user learns from the panel that a newer release exists and can copy the command that installs it, skip that release, or stop the check. |
+| AC-52 | [SHOULD / P1] | With web access switched on, a browser on another device signs in with a password and sees every iTerm2 window, tab and pane by title and host, the shown pane's screen in its profile's colors, with typing, hot keys, scrollback, selection and copy; lines re-flow to a phone's width or keep iTerm2's grid. |
+| AC-53 | [SHOULD / P1] | In the web app the shown pane's files open in the Files panel, and files in its viewer and editor, as views that replace the terminal; links in documents open in the reader's browser; nothing of the Mac itself (Finder, apps, typing into a terminal, switching web access) is reachable from it. |
 
 ## 5. BDD scenarios
 
@@ -1957,6 +1961,77 @@ Scenario: AC-51 failure — no bridge
   Then the panel shows "iTerm2 bridge not connected" and nothing is stored
 ```
 
+### AC-52 — Web access to the sessions [SHOULD / P1]
+
+```gherkin
+Scenario: AC-52 happy path — switch on and sign in
+  Given the user ran "iterm-filebrowser web on" and typed a password of at least 8 characters twice
+  Then web.json in the state folder (0600) holds a salted PBKDF2-SHA256 hash, never the password
+  And within 2 s the bridge listens on 0.0.0.0:8765, prints its addresses to the log, and every panel's globe button shows "Web access is on" with them
+  When a browser on the network opens "http://<mac address>:8765/" and signs in with the password
+  Then it gets an HttpOnly, SameSite=Strict cookie for 7 days (30 days and Secure behind HTTPS), and no script on the page can read a sign-in
+  And before sign-in a request may carry at most 4 KB, its head must arrive within 10 s, and at most 64 connections are open at once
+
+Scenario: AC-52 happy path — sessions
+  Then the session list groups panes by iTerm2 window; a tmux -CC window shows as "tmux <session>" with its host
+  And each row shows the title the user set, else the program's title, then program and folder; a blue laptop marks this Mac's panes, a violet server a remote host's, with its name
+  When the user opens a pane
+  Then its screen appears in its profile's colors and font within 1 s, with the last 1000 lines of scrollback; scrolling up loads up to 10000
+  And on a phone lines re-flow to the screen ("Wrap"); "Grid" keeps iTerm2's layout, "Fit" scales it to the width, and "Resize iTerm to this screen" (menu) changes the Mac's window until restored or the browser leaves
+
+Scenario: AC-52 happy path — typing
+  When the user types, uses the hot keys panel (keyboard, Copy, Paste, Tab, ^C, Esc, Ctrl, Alt, arrows, Home, End, PgUp, PgDn), or pastes
+  Then the bytes reach the pane as iTerm2 would send them, and the echo shows within 100 ms on this Mac's network
+  And with "Show this session in iTerm" on, the pane's tab is selected in its window (not raised), because iTerm2 refreshes hidden tabs only a few times a second
+
+Scenario: AC-52 edge — selection and phones
+  When the user selects text (or a finger is down) while the screen keeps changing
+  Then updates pause with "Paused while you select" and catch up when the selection is cleared
+  And a short tap opens the iOS keyboard, a long press selects, and the page shrinks above the keyboard and grows back when it closes
+  And a hidden page (another app, a locked phone) pauses its stream
+
+Scenario: AC-52 failure — wrong passwords, other sites, other names
+  When a wrong password is sent
+  Then passwords are checked one at a time and a wrong one holds the next for 1 s (at most one guess a second in all)
+  And after 5 from one address that address waits 15 s, doubling up to 5 min, and after 20 from all addresses together every address waits
+  And behind a proxy on this Mac ("tailscale serve") the address is the proxy's X-Forwarded-For, believed only from loopback
+  And a request whose Host is not this Mac's name or address (or *.ts.net) is refused (DNS rebinding)
+  And a sign-in, sign-out or WebSocket whose Origin is not the page's own is refused
+
+Scenario: AC-52 edge — switch off, port in use, broken settings
+  When the user runs "iterm-filebrowser web off" or chooses "Turn Web Access Off" in a panel
+  Then the server closes within 2 s with every connection it holds (Files included), every browser returns to the sign-in, and iTerm2 sizes it changed are restored
+  But when the port is in use, the panel's globe and "iterm-filebrowser web" say so and how to choose another; a web.json that cannot be read keeps web access off and says why
+  And "Turn Web Access On" is offered only once a password is set; the menu copies "iterm-filebrowser web password"
+```
+
+### AC-53 — Files in the web app [SHOULD / P1]
+
+```gherkin
+Scenario: AC-53 happy path — browse, view, edit
+  Given a signed-in browser shows a pane of this Mac, or of a host whose helper is enabled (AC-37)
+  When the user switches the view to "Files"
+  Then the Files panel shows that pane's folder (not the focused pane's), under a workspace of its own ("web:" + JSON [host, key]) that the Mac's panel for the same pane does not share
+  When the user opens a file
+  Then the view switches to "File": the viewer and editor, where every opened file is a tab; Save writes it as the Mac's panel would (AC-08)
+  And the pane's folder changes follow when the user returns to Files; the folders shown are watched while the web panel is in use
+
+Scenario: AC-53 happy path — links and reveal
+  When the user clicks a web link in a document
+  Then it opens in a new tab of the reader's browser (noopener), not on the Mac
+  And a link to a file opens it as a tab; "Reveal in tree" switches to Files with the file selected
+
+Scenario: AC-53 failure — what stays on the Mac
+  Then Finder, "Open with Default App", "Open in Window", typing paths into a terminal, recovery, the update chip and the web access switch are not shown in the web app
+  And the web server passes to fbd only the page, listing, reading, saving and file operations; anything else answers 403
+  And the page never holds fbd's token: the server adds it to what it passes, and drops one a page sends
+  And a raw file (SVG, HTML) keeps fbd's sandbox policy, so it cannot run in the web app's origin
+
+Scenario: AC-53 failure — no files to show
+  When the pane's folder is not known, or its host has no helper
+  Then Files says so and how to fix it (enable the host in the Files panel on the Mac)
+```
+
 ## 6. Flow and sequence diagrams
 
 ### Normal application exit and the next run (AC-50)
@@ -2216,6 +2291,8 @@ State when this spec was written: a Python prototype in `demo/` (removed in 0.3.
 | AC-49 | Resolver sees the focused tmux pane only. | One graph per reachable server and controlled shell-only recreation. | `bridge/fbbridge/resolve.py` |
 | AC-50 | Global checkpoint/retry controls and a durable normal-exit skip for same-boot relaunch. | Real Cmd-Q and native saved-state disposal need owner validation. | `bridge/fbbridge/recovery_quit.py`, `fbd/src/recovery_startup.rs`, `ui/src/recovery.ts` |
 | AC-51 | Users had to remember `iterm-filebrowser upgrade`. | The bridge checks GitHub once a day and tells fbd the newer tag; the panel shows a chip whose menu copies the command, skips a version or stops the check. | `bridge/fbbridge/updates.py`, `fbd/src/update.rs`, `ui/src/iterm-tools.ts` |
+| AC-52 | iTerm2's sessions were reachable only at the Mac. | The bridge serves them to a signed-in browser (password hash in web.json, cookie sign-in, per-address brake, Host and Origin checks), off by default; the CLI and the panel's globe switch it. | `bridge/fbbridge/web/`, `scripts/cli.py`, `ui/src/web-access.ts`, `fbd/src/web.rs` |
+| AC-53 | The panel followed the focused pane only and needed fbd's token. | Pinned under /fb/ behind the bridge's proxy (token added there, file work only), a `web:` workspace, outside opening and reveal by message, Mac actions hidden. | `ui/src/embed.ts`, `bridge/fbbridge/web/proxy.py`, `fbd/src/watch_web.rs` |
 
 ## 8. Recommendation and ownership
 
@@ -2414,6 +2491,7 @@ Measured on a MacBook (Apple Silicon, APFS SSD).
 - The token is kept across a handover (the bridge found an fbd answering on the socket, or took the lock from a running bridge) and renewed at a cold start (`FB_NEW_TOKEN=1`) and after fbd could not bind its port (it deletes the token before exiting); fbd writes it atomically; the bridge registers the tool again only when the URL changed.
 - The panel proves the server (`/api/hello`) before any request with the token, again after every network failure; the event socket is closed on error and opened again only after a proof; image URLs carry no token before the proof.
 - UI response headers: `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'`, `X-Content-Type-Options: nosniff`.
+- Web access (AC-52, AC-53), off by default: the bridge's own listener (default 0.0.0.0:8765, plain HTTP; HTTPS through `tailscale serve`); fbd stays on 127.0.0.1. Sign-in: one password, kept as salted PBKDF2-SHA256 (200,000 rounds) in `web.json` (0600), and it opens the terminals too, so it guards the whole account; an HttpOnly, SameSite=Strict cookie for 7 days (30 and Secure behind HTTPS) held in memory, so a restart signs everyone out; passwords checked one at a time on a thread of their own, 1 s per wrong one, after 5 from one address 15 s doubling to 5 min, after 20 from all addresses every address waits; X-Forwarded-For believed only from loopback and only its last entry; before sign-in a request carries at most 4 KB, heads arrive within 10 s, at most 64 connections; Host must be this Mac's name or address or `*.ts.net`; sign-in, sign-out and the terminal WebSocket need the page's own Origin. The proxy to fbd needs the cookie, checks the Origin before it sets fbd's Host and Origin, adds the token (the page never holds it), passes only the page and file work (GET state, ws, ls, file, raw, workspace, prefs, view/pending; PUT file, prefs and `web:` workspaces; POST fs/*), keeps fbd's CSP except the panel page's `frame-ancestors 'self'` and `connect-src`. Owner-accepted: plain HTTP on the local network sends the password and the terminal unencrypted.
 - Markdown: `markdown-it` with `html: false`; links with `javascript:` are dropped; web links go to `POST /api/os/open` (default browser), so the panel never navigates away and the token never leaves in a Referer. SVG is shown only through an image tag.
 - The bridge types into the terminal only for explicit user actions (AC-12), never Enter for "Insert Path".
 
@@ -2462,6 +2540,7 @@ The panel shows a red dot in the header when `bridge_connected` is false or SSE 
 | Stage 11 | AC-43, AC-44, AC-45 | Installation configures native restoration; closed-window metadata expires; native session search is one shortcut or button away. | — |
 | Stage 12 | AC-46, AC-47, AC-48, AC-49, AC-50 | Automatically save and recover after reboot/unclean launches; skip same-boot normal relaunch, with manual Restore, durable reconciliation and honest limits. | — |
 | Stage 13 | AC-51 | Users see that a newer release exists, and how to install it. | — |
+| Stage 14 | AC-52, AC-53 | From an iPhone or iPad on the network: every iTerm2 session as in iTerm2, typing and hot keys, and the Files panel with its viewer and editor; switched on and off from the panel or the CLI. | — |
 | Backlog | AC-21, AC-22 | Git colors, drag and drop. | M |
 
 ### Stage 7 plan (AC-33, AC-34, AC-35)
@@ -2589,6 +2668,8 @@ this revision. One earlier parallel run hit the existing free-port assertion in
 - [ ] AC-49 — Local private real tmux tests PASS: four-pane/two-window shell/layout/cwd recovery, deleted cwd and partial retry; PID/start identity, busy/changed/layout preservation and config sentinel. Seven group regressions cover two full generations, same-pane independent TTY clients, separate control targets, client-local pane limit/report, unrelated linked windows, partial original survival in both orders, conflicting/deleted completed aliases, whole private loss with stale socket, durable-reset crash/retry and unknown socket preservation. Remote identity/probe/post-auth mismatch tests use mocks/fake tmux and PASS; actual remote and tmux -CC attachment remain unverified (SKIP).
 - [x] AC-50 — Verified by: concurrent joining, epoch-checked completion/progress, startup settle/delay/outage/storage failures; owned bridge/backend restart, build upgrade, pending-source preservation and missing-ack reconciliation. Private browser checks cover global two-panel progress, reserved latest-source Retry, delayed GET versus newer event ordering and recovery-dialog upgrade deferral. Native ⌘⇧T remains occupied by Undo Close. Update 0.22.0: `ui/test/recovery-list.test.mjs` 7 (unstable intermediates hidden, the crash's last checkpoint and the job's kept, newest selected, pending startup and unfinished job win, empty newest skipped, grouping and labels); `e2e_panel` 204 checks with the dialog's title, × button and parts, and the header and footer layout (AC-01).
 - [x] AC-51 — Verified by: `cargo test update` (tags validated, the notice announced once and only as a tag, choices validated and forwarded); `bridge/tests/test_updates.py` (numeric version compare, tag from a redirect of a local server, request carries no cookie, bad tags and failures dropped, a non-release build never asks, skip/off/on); `e2e_panel` 200 checks, 10 for AC-51 (chip, menu, copy runs nothing, skip and off reach the bridge, untrusted text shows nothing). Also: `latest_tag()` against the real GitHub returned `v0.18.0` in the Python of the owner's running bridge (uv 3.12) and in iTerm2's bundled 3.8 and 3.14, which have no CA bundle of their own: the check uses macOS's `/etc/ssl/cert.pem`, verification stays on. Review fixes: a stamp file keeps the wall-clock time and the last answer (a sleeping Mac stretched a monotonic sleep, a bridge restart would ask again), a failed check or post is retried at the next hourly tick, the log keeps the reason of a failure. Not run: the chip against a real newer release (none exists yet) and the owner's look at it in iTerm2.
+- [x] AC-52 — Verified by: `bridge/tests/test_web.py` 26 pass (hash only in web.json 0600; per-address and all-address brake; 12 sign-ins at once hash at most 5; last X-Forwarded-For entry; cookie flags and 7/30-day ages; bare LF, bad header names, chunked and >4 KB pre-sign-in bodies refused; a head that never ends closed; Host and Origin refusals; ETag 304); `cargo test web` (status sanitized, on/off only); `security_check.sh` 36 pass on a private fbd (3 web checks); live on the installed build 2026-10-06 over 127.0.0.1: sign-in, sessions with local/remote badges, typing echo 30 ms, Fit/Resize/Restore, selection pause, hidden-page pause; iPhone and iPad emulated in WebKit and Chromium at 320–1440 px. Owner 2026-10-07: works on the owner's iPhone over Tailscale with HTTPS (`tailscale serve`), after allowing iTerm2's Python in the macOS Firewall and the iPhone in the tailnet's access rules.
+- [x] AC-53 — Verified by: `cargo test watch_web` 5 pass (JSON web keys with slashes in hosts, union with the focused pane, at most 16 panes); `test_web.py` proxy cases (allowlist, token never passed, upgrade only for /api/ws, CSP kept with framing changed); `npm test` 37 and `e2e_panel` 204 pass (the Toolbelt panel unchanged); live on the installed build: local Files, edit and save to disk, relative link as a tab, web link in a new browser tab (noopener), Reveal in Files, 403 for os/terminal/web/health/foreign workspace, no token in the page; remote Files of a host with its helper (ai4) listed through the agent; the owner's check on an iPhone.
 
 Pragmatic design and independent implementation review findings were fixed with regressions:
 fresh panel identity, continuous purge, narrow profile classification, corrupt setup results,
