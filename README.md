@@ -1,45 +1,48 @@
 # iTerm2 File Browser
 
-An IDE-style **Files** panel inside every iTerm2 window (View → Toolbelt → Files) that
-always shows the directory of the pane you are working in. New windows open with it shown.
+An IDE-style **Files** panel in every iTerm2 window (View → Toolbelt → Files) that always shows
+the folder of the pane you work in, and an optional **web terminal** that brings your iTerm2
+sessions and files to a browser on your iPhone, iPad or another computer.
 
 ![The Files panel beside a terminal: the tree of the pane's folder and a rendered README](docs/images/file-browser-screen.png)
 
-## What the panel does
+## Key features
 
-- **Follows the cwd** of the focused pane in bash, tmux and tmux -CC; the tree re-roots in
-  about 0.2–0.5 s. A tmux -CC session on another machine shows that machine's files once
-  you enable it (see [Remote hosts](#remote-hosts)); other remote sessions (plain ssh,
-  mosh) freeze the tree and show `REMOTE`.
-- **Many windows**: up to 100 iTerm2 windows, each with its own panel, stay responsive.
-- **Large folders**: 500,000 files open in 0.3 s, scrolling to any position takes 9 ms per
-  page, filtering by name 0.33 s; the backend uses about 31 MB of memory.
-- **Viewing**: syntax highlighting by file name. Markdown opens rendered with proper
-  typography by default; the Source toggle shows highlighted source, including fenced code
-  blocks. HTML files render too (sandboxed, scripts never run). Images open in a tab. Links
-  inside Markdown and HTML open the linked document in a new tab (at its `#section`), web
-  links open in your browser.
-- **Editing**: a ● marks an unsaved tab, ⌘S saves. If the file changed on disk since you
-  opened it, you get "Overwrite / Reload / Cancel". Closing an unsaved tab asks first.
-- **Viewer window**: ⌘-click a file (or ⌘↩, or "Open in Window") to read and edit it in a
-  large separate window; more files open there as tabs, and it reopens at its last size. A
-  bar on top shows the file's full path with a copy button. The window uses a "Files
-  Viewer" browser profile that the bridge adds to iTerm2 (`make uninstall` removes it).
-- **Expand and collapse all**: header buttons, or ⌥→ / ⌥← (⌥-click the arrow) on one
-  folder. Expanding stops at 200 folders and depth 8, and skips `node_modules`, `.git`,
-  build output and folders with more than 500 entries; a toast says what it skipped.
-- **File-type icons** for code, config, data, docs, images, archives, keys and more.
-- **IDE operations**: new file or folder (⌥N / ⌥⇧N; `a/b` creates nested folders), rename
-  with F2, move to Trash with ⌘⌫. Select with ⇧-click and ⌥-click. The context menu copies
-  paths, reveals in Finder, inserts the path into the terminal, and `cd`s the terminal to a
-  folder.
-- **Live refresh**: changes made by other programs show up within about a second.
-- **Memory per pane**: every iTerm2 pane or tmux pane keeps its expanded folders,
-  selection, scroll position and tabs, across backend restarts too. A `cd` resets the
-  tree and keeps the tabs.
-- **Layout**: the latest Toolbelt width and tree/viewer split become the default for new
-  windows; every open window keeps its own until it is closed.
-- **Theme and font** come from the pane's iTerm2 profile.
+- **Follows your terminal**: the tree re-roots to the focused pane's folder in bash, tmux and
+  tmux -CC within 0.2–0.5 s; each pane keeps its own tree, selection and tabs.
+- **Remote file browsing**: a tmux -CC session on another machine shows that machine's files
+  after one click; nothing to install there by hand. [Remote hosts](#remote-hosts)
+- **Web terminal**: every iTerm2 window, tab and pane in a browser, with typing, hot keys,
+  scrollback, the profile's colors, and the Files panel with its editor; password-protected,
+  HTTPS through Tailscale. [Web access](#web-access)
+- **View and edit**: highlighted code, rendered Markdown and HTML, images; save with ⌘S and a
+  conflict check; a large viewer window (⌘-click); new, rename, Trash, copy path, `cd` here.
+- **Session window recovery**: windows, tabs, splits, folders and ssh/tmux connections come
+  back after a reboot. [Save and restore](#save-and-restore-terminals)
+- **Fast**: 500,000-file folders open in 0.3 s; 100 windows stay responsive; ~31 MB memory.
+- **Safe and simple**: one-line install, signed releases, upgrades with one command;
+  writes only under `$HOME` and `/tmp`, delete moves to the Trash. [SECURITY.md](SECURITY.md)
+
+## The Files panel
+
+- **cwd**: follows bash, tmux and tmux -CC panes; plain ssh and mosh panes freeze the tree and
+  show `REMOTE` (tmux -CC hosts: [Remote hosts](#remote-hosts)).
+- **Viewing**: syntax highlighting by file name; Markdown rendered by default (Source shows
+  it highlighted); HTML rendered sandboxed, scripts never run; images in a tab. Links open
+  the linked file in a tab (at its `#section`); web links open in your browser.
+- **Editing**: ● marks unsaved tabs, ⌘S saves; a file changed on disk asks Overwrite / Reload /
+  Cancel; closing an unsaved tab asks first.
+- **Viewer window**: ⌘-click a file (or ⌘↩, Open in Window) for a large window with tabs and
+  the full path; it uses a "Files Viewer" browser profile the bridge adds (`make uninstall`
+  removes it).
+- **Tree**: type-specific icons; ⌥→ / ⌥← expand or collapse everything below a folder (up to
+  200 folders, depth 8; skips `node_modules`, `.git`, build output); ⇧/⌥-click select; F2,
+  ⌥N / ⌥⇧N, ⌘⌫; the context menu copies paths, reveals in Finder, inserts paths into the
+  terminal or `cd`s it to a folder. Changes by other programs show within about a second.
+- **Layout and theme**: the last Toolbelt width and tree/viewer split become the default for
+  new windows; colors and font follow the pane's iTerm2 profile.
+- **Find a session**: ⌘⇧O (or Find terminal session) opens iTerm2's Open Quickly; `/f` plus a
+  title, folder or host searches open sessions.
 
 ## Install
 
@@ -47,263 +50,152 @@ always shows the directory of the pane you are working in. New windows open with
 curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/download/install.sh | sh
 ```
 
-Then in iTerm2: **View → Toolbelt → Show Toolbelt** and check **Files**. The same line
-upgrades an existing install. It downloads the latest release, checks its signature, and
-installs it into one folder, `~/.iterm-filebrowser/`, plus the bridge entry in iTerm2's
-AutoLaunch. Needs macOS 14+ and iTerm2 3.5+ with **Settings → General → Magic → Enable
-Python API**; no build tools (tmux 3.2+ for tmux panes).
+Then in iTerm2: **View → Toolbelt → Show Toolbelt** and check **Files**. Needs macOS 14+,
+iTerm2 3.5+ with **Settings → General → Magic → Enable Python API**, no build tools (tmux 3.2+
+for tmux panes). The installer checks the release's signature and installs into
+`~/.iterm-filebrowser/` plus the bridge in iTerm2's AutoLaunch. It also turns on iTerm2's
+session restoration and shell integration for shell and SSH profiles, and says which settings
+it changed (a changed restoration setting takes effect after restarting iTerm2).
 
-Each explicit install configures **General → Startup → Use System Window Restoration
-Setting**, **Advanced → Enable session restoration**, and **Profiles → General → Load
-shell integration automatically** for supported shell/SSH profiles. Browser and custom
-application profiles are excluded. The installer and a dismissible Files notice report
-only settings actually changed; failures are reported separately. If iTerm2 is stopped,
-setup runs when the bridge next launches. Later bridge restarts preserve your preference
-changes. A changed session-restoration setting requires restarting iTerm2; automatic
-integration applies to new supported shell sessions.
-
-Press **⌘⇧O** or click **Find terminal session** in Files to open iTerm2's native **Open
-Quickly** popup. Type `/f` followed by a title, directory or host to search only open
-sessions; selecting one focuses its window, tab and split pane.
-
-Closed-window caches and panel bindings are removed after 60 seconds of confirmed
-absence. Inventory failures pause cleanup. Files workspaces survive for 14 days of
-inactivity (`FB_WORKSPACE_TTL_DAYS`), with live inactive/minimized/buried panes retained.
-Unknown or hidden tmux identities conservatively protect tmux workspaces until resolved.
-These native settings cannot preserve arbitrary local processes through a Mac reboot.
-macOS must also keep windows when quitting for system window restoration to reopen them.
+Pane state lives 14 days without use (`FB_WORKSPACE_TTL_DAYS`); closed windows' caches go after
+60 s.
 
 ## Upgrade
 
-For an existing installation, update to the latest signed release from iTerm2:
-
 ```bash
-~/.iterm-filebrowser/bin/iterm-filebrowser upgrade
+~/.iterm-filebrowser/bin/iterm-filebrowser upgrade              # the latest signed release
+~/.iterm-filebrowser/bin/iterm-filebrowser upgrade --to v0.18.0 # a given one
+~/.iterm-filebrowser/bin/iterm-filebrowser status               # running build, bridge, panels, hosts, web
 ```
 
-To install a specific release, for example v0.18.0:
+The bridge restarts by itself and open panels reload (after saving unsaved edits). `panels`
+counts connected panels against windows: each install gives every window a new panel and
+iTerm2 keeps the old ones hidden until it quits.
 
-```bash
-~/.iterm-filebrowser/bin/iterm-filebrowser upgrade --to v0.18.0
-```
-
-Check the result:
-
-```bash
-~/.iterm-filebrowser/bin/iterm-filebrowser status
-```
-
-Check the output: with iTerm2 running, `current` and `running` should show the
-installed version and the bridge should report `connected`. `panels` counts the connected
-Files panels against iTerm2's windows: each registration of the tool (every install or
-token change) gives each window a new panel, and iTerm2 keeps the earlier ones, hidden,
-until it quits; quitting iTerm2 frees them. The installer restarts
-the bridge automatically; panels defer reload while edits are
-unsaved. If iTerm2 is stopped, the update takes effect when it next starts. If setup
-reports a changed **Enable session restoration** setting, restart iTerm2 to apply
-that setting. An existing automatic-saving opt-out survives the upgrade.
-
-### Update notice
-
-About once a day the bridge asks GitHub which release is the latest (one small request,
-nothing of yours in it; see [SECURITY.md](SECURITY.md)). When it is newer than the one you run,
-the panel header shows a small chip such as `↑ v0.19.0`. Click it for the menu: **Copy upgrade
-command** (then run it in a terminal; nothing is installed from the panel), **Skip v0.19.0**
-(hidden until a later release), or **Don't check for updates**. To check again, delete
-`~/.iterm-filebrowser/state/no-update-check`. A build made from a checkout never checks.
-
-Upgrades install only releases signed by the maintainer's key; its fingerprint is in
-every release's notes, to check a first install by hand. Should the key ever change,
-installed copies refuse upgrades until installed again with the
-[one-line installer](#install).
+About once a day the bridge asks GitHub for the latest release (nothing of yours is sent).
+A newer one shows a chip such as `↑ v0.21.0` in the panel header: **Copy upgrade command**,
+**Skip** it, or **Don't check for updates** (undo: delete
+`~/.iterm-filebrowser/state/no-update-check`). Only releases signed by the maintainer's key
+install; its fingerprint is in every release's notes.
 
 ## Save and restore terminals
 
-Saving and restoration are enabled by default after installation. No checkpoint or
-checkbox is required. Capture includes inactive windows, ordered tabs,
-split trees, directories, window frames and supported SSH/tmux connections. It checks
-every five seconds; a slow or failed sweep leaves the previous snapshot available.
+On by default. Every 5 s the bridge saves inactive windows, ordered tabs, split trees,
+folders, window frames and supported ssh/tmux connections. After a reboot, open iTerm2: once
+its own reopening settles, the bridge restores the latest saved state and adopts panes that
+are still alive (no need to start tmux first).
 
-After a reboot, open iTerm2: the bridge waits for native reopening to settle, then
-automatically restores the latest durable state and adopts identified live panes.
-Starting tmux first is unnecessary. **Session window recovery** (the clock button in the
-Files header) opens **Session Window Recovery**: **Automatic saving** (the switch, and
-**Save a new checkpoint now**, which adds a checkpoint and changes no other) and **Restore**
-(the checkpoint list, newest selected, and **Restore selected** or **Retry / reconcile**),
-with the shared report. The list shows checkpoints that stayed unchanged for 30 s, plus the
-newest of each iTerm2 run, grouped by run. Turning automatic saving off survives upgrades.
-⌘⇧T already belongs to iTerm2's **Undo Close**, so File Browser preserves it.
+- **Session Window Recovery** (the clock button in the Files header): **Automatic saving**
+  (switch, **Save a new checkpoint now**) and **Restore** (checkpoints that stayed unchanged
+  for 30 s plus the newest of each run, newest selected; **Restore selected**, **Retry /
+  reconcile**).
+- **A normal quit** (⌘Q, AppleScript, updates, logout) skips the automatic restore at the next
+  launch in the same boot; the dialog offers it by hand. A reboot or crash restores.
+- **Shells** reopen at their folders (a missing one opens home, with a report); deliberately
+  closed panes stay closed. **SSH** reconnects supported destinations (interactive login,
+  remote folder from shell integration). **tmux** servers that survived keep their jobs; lost
+  local ones come back with shells; lost remote ones need manual recovery.
+- **Not restored**: running programs (Claude, Codex, …; recorded by name), output, history,
+  environment, exact Spaces placement. Checkpoints live in `~/.iterm-filebrowser/state/recovery`
+  (at most 64 or 128 MiB).
 
-A normal iTerm2 exit (including ⌘Q), once observed and durably recorded, skips File
-Browser's automatic reconstruction on the next launch in the same macOS boot.
-Automatic saving stays enabled; the recovery dialog explains the skip and offers
-manual **Restore**. A machine reboot overrides the marker. iTerm2/macOS window
-restoration is independent: File Browser does not close windows it reopens. iTerm2's
-**⌘⌥Q — Quit and Close All Windows** can discard that native saved window state.
-The observed zero process status also covers AppleScript Quit, orderly application
-updates and logout; it does not identify who initiated Quit. Signals, nonzero or
-unavailable status, a missing bridge/backend, or an uncommitted marker remain unknown
-and retain automatic recovery. No raw application exit status is stored.
-
-- Native panes reopen with controlled shells at their saved directories. Identified live
-  panes are adopted; busy panes and changed directories/layouts are preserved. Ordinary
-  exits and explicit pane/tab/window closes, once observed and committed, are excluded
-  from every retained checkpoint and retry. Our controlled shells close on completion;
-  their profiles do not show a Restart prompt. Undo Close can make a proven live pane
-  recoverable again. Interrupted ended panes reopened by iTerm2 receive separate shells:
-  iTerm2's restart API would rerun their original command.
-- Missing or inaccessible directories open a shell in home, with a report; a directory
-  that disappears during launch prints a warning and falls back to home or `/`.
-  Ended history remains in iTerm2 and is excluded from future captures when its process
-  is provably gone; unavailable liveness is preserved without guessing or reading its cwd.
-- Ordinary SSH reconnects supported destinations with interactive authentication.
-  A trustworthy Shell Integration observation supplies the remote directory. Wrappers,
-  arbitrary remote commands and executable connection options are reported as unsupported.
-  Failed controlled SSH/tmux attempts retain diagnostics and pause capture so Retry and
-  the next iTerm2 launch keep their source. A nonzero remote exit is conservatively treated
-  as a failed connection; explicitly close its diagnostic pane to exclude it from recovery.
-  Capture also waits while authentication or unavailable remote metadata would lose a
-  previously verified remote-directory target.
-- Surviving tmux servers retain their jobs. Lost local servers are recreated with shells
-  only on a private socket using an empty configuration. Recorded session groups keep one
-  shared window/pane graph; plain clients select windows independently. Client-local
-  `active-pane` selection cannot be observed through the read-only tmux API and falls back
-  to the window's active pane with a report. Remote control-mode attachment requires a
-  verified surviving server and working noninteractive authentication; lost remote servers
-  require manual recovery.
-
-Previously running Claude, Codex and other applications are recorded by name and are
-not relaunched. Your shell startup files, SSH configuration and iTerm2's own restoration
-may independently run programs. Exact Spaces/display placement is not guaranteed.
-Native recovery was verified with 15 owned windows; real reboot, interactive SSH and
-tmux -CC recovery still require owner validation. Normal app-exit proof uses owned
-processes and simulated run identities; tests never quit the user's iTerm2.
-
-Bridge/backend restarts and upgrades in the same iTerm2 process do not repeat completed
-restoration. Interrupted startup retains its source and pauses capture until recovery
-finishes or is disabled. Delayed launch uses the saved source before collecting new state;
-unrecorded changes during a bridge outage or the last seconds before shutdown can be lost.
-An intentionally empty latest snapshot restores nothing.
-Closure tracking checks fresh native inventory and root-process exit evidence while the
-same iTerm2 process is operational; API loss or signal termination alone cannot prove a
-deliberate close. A close during a bridge outage or before its durable acknowledgement
-cannot be distinguished reliably after a crash. This restores lost iTerm2/Mac state;
-it does not continuously revive individual processes that fail while iTerm2 keeps running.
-
-Checkpoints live separately from Files workspaces in `~/.iterm-filebrowser/state/recovery`.
-History is bounded to 64 snapshots and 128 MiB, with up to 4 MiB temporary headroom;
-one nonempty checkpoint per recent iTerm2 run and the current job's source are protected.
-Closing a window expires its live cache while older recovery snapshots remain bounded
-history; closed session IDs are excluded while any retained snapshot still references
-them. Terminal output, exit codes, history, environment and arbitrary application commands are
-not recorded. Files tree/editor state is not migrated to newly assigned terminal IDs.
+Real reboots, interactive SSH and tmux -CC recovery still need owner validation; details and
+limits are in the [spec](docs/specs/iterm-file-browser.md).
 
 ## Uninstall
 
-The command lives in `~/.iterm-filebrowser/bin`, which is not on your PATH unless you added it.
+```bash
+~/.iterm-filebrowser/bin/iterm-filebrowser hosts remove devbox.example   # first, per remote host (optional)
+~/.iterm-filebrowser/bin/iterm-filebrowser uninstall
+```
 
-1. Remote hosts first, if you want them clean: the Mac's uninstall does not touch them. In
-   the panel, right click → **Remove Helper from devbox…**, or
-   `~/.iterm-filebrowser/bin/iterm-filebrowser hosts remove devbox.example`.
-2. On the Mac:
-   ```bash
-   ~/.iterm-filebrowser/bin/iterm-filebrowser uninstall
-   ```
-   This stops the bridge and fbd and removes the builds, the commands and the AutoLaunch
-   entry. Your token, workspaces and logs stay in `~/.iterm-filebrowser`; delete that
-   folder to remove them too.
-3. Optional: to take **Files** out of the Toolbelt menu (iTerm2 keeps registered tools in
-   its preferences), quit iTerm2 and run `make clean-registrations` in a checkout.
-
-From a checkout, `make uninstall` does step 2.
+This stops the bridge and fbd and removes the builds, the command and the AutoLaunch entry;
+your settings and logs stay in `~/.iterm-filebrowser` (delete it to remove them). To take
+**Files** out of the Toolbelt menu, quit iTerm2 and run `make clean-registrations` in a checkout.
 
 ## Installed layout and commands
 
 ```text
 ~/.iterm-filebrowser/
-  bin/      iterm-filebrowser (the command; add this folder to your PATH), fbd
+  bin/      iterm-filebrowser (add this folder to your PATH), fbd
   builds/   one folder per build; current, previous
   logs/     bridge.log, fbd.log
-  state/    token, workspaces.json, agents.json (enabled hosts)
+  state/    token, workspaces.json, agents.json (remote hosts), web.json (web access; password as a hash)
 ```
-
-An install from before this layout (`~/.local/lib`, `~/.local/bin`, `~/Library/Application
-Support/iterm-filebrowser`, `~/Library/Logs/iterm-filebrowser`) is moved on the next
-upgrade; the token and your workspaces come along.
 
 ```bash
-iterm-filebrowser                 # status: what runs, which builds, which remote hosts
-iterm-filebrowser upgrade         # the latest release (checked the same way); open panels reload by themselves
-iterm-filebrowser rollback        # back to the build before
-iterm-filebrowser uninstall       # remove it; your settings and logs stay in ~/.iterm-filebrowser
+iterm-filebrowser                       # status
+iterm-filebrowser upgrade | rollback | uninstall
+iterm-filebrowser hosts [enable <ssh args> | remove <host>]
+iterm-filebrowser web [on [--port N] [--host A] | off | password]
 ```
 
-From a checkout: `make install` builds the same package and installs it (`make toolchain`
-once for the Linux helpers); `make rollback`, `make uninstall`. Building needs Rust (stable)
-and Node.js 20+.
+From a checkout: `make install` (and `make toolchain` once for the Linux helpers), `make
+rollback`, `make uninstall`. Building needs Rust (stable) and Node.js 20+.
 
 ## Remote hosts
 
-A tmux -CC pane on another machine, for example from `ssh -tt devbox.example "tmux -CC
-new-session -A -s work"`, can show that machine's files. The first time you focus such a pane, the
-Files panel asks:
+A tmux -CC pane on another machine (for example `ssh -tt devbox.example "tmux -CC new -A -s
+work"`) can show that machine's files. The first time you focus it, the panel asks:
+**devbox is a remote host. Browse its files here?** — **Enable** copies a small helper (about
+6 MB) over your ssh connection, with your ssh settings, keys and jump hosts; nothing to run by
+hand, no password. The panel then shows `devbox:/path` and works as for local files: open,
+edit, save, create, rename, Trash, live refresh.
 
-> **devbox is a remote host.** Browse its files here? This copies a small helper (about 6 MB)
-> to ~/.iterm-filebrowser on devbox over your ssh connection; it runs only while you use it.
-> **[Enable]** [Not now]
+- The helper (`~/.iterm-filebrowser/bin/fbd-agent` on the host) runs only while your Mac is
+  connected, as your user, writes only under your home and /tmp, and opens no network port.
+- Upgrades on the Mac update every host's helper by themselves.
+- **Not now** hides the question until iTerm2 restarts; the context menu has **Browse Files
+  of devbox…** and **Remove Helper from devbox…**; from the command line: `iterm-filebrowser
+  hosts`, `hosts enable devbox.example` (any ssh options), `hosts remove devbox.example`.
+- Helpers exist for macOS (arm64, x86_64) and Linux (x86_64, arm64); plain ssh panes and mosh
+  stay frozen as `REMOTE`.
 
-**Enable** is all. Nothing is run on the remote host by hand and nothing needs a password:
-the bridge uses the very ssh command the tmux session was started with (destination, port,
-user, key, jump host) with your own ssh configuration. The panel then shows `devbox:/path` and
-works as for local files: open, edit, save, create, rename, Trash, live refresh.
+## Web access
 
-- **On the host**: the helper is `~/.iterm-filebrowser/bin/fbd-agent` (one older version kept),
-  its log `~/.iterm-filebrowser/logs/agent.log`. It runs only while your Mac is connected
-  (it exits with the ssh connection), as your user, writes only under your home and /tmp,
-  and listens on no network port.
-- **Authentication** is ssh itself: no pairing, no keys of its own. Each connection hands the
-  helper a fresh token over ssh. The host must accept your key or ssh-agent without a
-  prompt and allow socket forwarding (sshd's default).
-- **Not now** hides the question until iTerm2 restarts; the panel's menu (right click) has
-  **Browse Files of devbox…** any time, and **Remove Helper from devbox…** deletes the helper and
-  its log there (and `~/.iterm-filebrowser` once empty; a Mac host keeps its own install).
-- **Upgrades** of the Mac side update the helper by themselves: right after the upgrade,
-  every enabled host with an open tmux -CC window gets the new helper, focused or not, and
-  its panel says "updating the helper on devbox…", then "Helper on devbox updated to
-  v0.16.0". A host with no window open is updated when you next open one. If the copy fails,
-  the panel says why and it is tried again after 10 minutes.
-- From the command line: `iterm-filebrowser hosts`, `iterm-filebrowser hosts enable devbox.example`
-  (any ssh destination and options, e.g. `-p 2222 alex@10.0.0.5`),
-  `iterm-filebrowser hosts remove devbox.example`.
-- Helpers exist for macOS (arm64, x86_64) and Linux (x86_64, arm64; one static file for any
-  Ubuntu or Debian). Plain `ssh` panes without tmux -CC, and mosh, stay frozen as "remote".
-  On Linux, saving keeps a file's mode and owner, not its extended attributes; Trash is
-  `~/.local/share/Trash`.
+Your iTerm2 sessions and their files in a browser on another device. Off until you switch it
+on, in a terminal or with the globe button in the Files header:
+
+```bash
+iterm-filebrowser web on        # asks for a password (8+ characters) the first time
+iterm-filebrowser web           # on or off, its addresses, and any error
+iterm-filebrowser web off
+iterm-filebrowser web password  # change it (or FB_WEB_PASSWORD for a script)
+```
+
+Open one of the addresses (default port 8765, every network of this Mac; `--port`, `--host`)
+and sign in:
+
+- **Sessions**: every window, tab and pane by title and host (blue laptop: this Mac; violet
+  server: a remote host).
+- **Terminal**: the pane in its profile's colors and font, typing, a hot keys panel (keyboard,
+  Copy, Paste, Tab, ^C, Esc, Ctrl, Alt, arrows…), scrollback, selection. On a phone lines
+  re-flow to the screen (**Wrap**); **Grid** keeps iTerm2's layout, **Fit** scales it to the
+  width, **Resize iTerm to this screen** (⋯) changes the Mac's window until you restore it.
+- **Files** and **File**: this panel for the pane's folder (remote hosts too) and its editor;
+  web links open in your browser; Finder, apps and typing into a terminal are not offered.
+
+It is plain HTTP: on a network you do not trust, use HTTPS through Tailscale —
+`tailscale serve --bg 8765`, then open `https://<mac>.<tailnet>.ts.net/` (it also enables the
+Paste button). The password also opens your terminals: choose it like your Mac's. Sign-ins
+last 7 days (30 over HTTPS); repeated wrong passwords make an address, then everyone, wait.
 
 ## How it works
 
 ```
 iTerm2 ──Python API──▶ fb_bridge.py ──POST /internal/state──▶ fbd (Rust, 127.0.0.1:47821)
  (focus, cwd, theme)    (AutoLaunch)  ◀─SSE /internal/commands─┘         │ WebSocket /api/ws
-                                                                          ▼
+                            │                                            ▼
+                            └─ web access (optional): browser ⇄ mirror + proxy to fbd ─┘
                                              Toolbelt web view: tree · tabs · editor
 ```
 
 | Part | Path | Role |
 |---|---|---|
-| Bridge | `bridge/fb_bridge.py` + `bridge/fbbridge/` | iTerm2 AutoLaunch script and its package: starts `fbd`, registers the tool, tracks the focused pane, resolves its cwd and theme, shows the Toolbelt in new windows, opens viewer windows, types into the terminal on request |
-| Backend | `fbd/` | Rust (axum): listings, file operations, per-pane workspaces, FSEvents watcher, events to panels over a WebSocket (up to 100 windows); serves the embedded UI |
+| Bridge | `bridge/fb_bridge.py` + `bridge/fbbridge/` | iTerm2 AutoLaunch script: starts `fbd`, registers the tool, follows the focused pane's cwd and theme, opens viewer windows, types into the terminal on request, serves web access when it is on (`fbbridge/web/`) |
+| Backend | `fbd/` | Rust (axum): listings, file operations, per-pane workspaces, FSEvents watcher, events over a WebSocket; serves the embedded UI; stays on loopback |
 | UI | `ui/` | TypeScript: virtual tree, CodeMirror 6 viewer/editor, markdown-it rendering |
 | Spec | `docs/specs/iterm-file-browser.md` | Behavior as BDD scenarios, design, limits, test evidence |
-
-**cwd resolution**: plain shell → cwd of the shell (not of `vim`); tmux → `tmux display -c
-<tty>`; tmux -CC → `display -t %N` through iTerm2's tmux connection; ssh or another host →
-frozen tree.
-
-**Security**: loopback only; a random token in the tool URL; Host and Origin checks; writes
-only under `$HOME` and `/tmp`; delete moves to the Trash; raw HTML in Markdown is not
-rendered; terminal commands refuse control characters and only reach the pane the panel
-shows. See [SECURITY.md](SECURITY.md).
 
 ## Keys
 
@@ -353,6 +245,7 @@ Logs: `~/.iterm-filebrowser/logs/{fbd,bridge}.log`.
 | **Install of … failed** / **Upgrade to … failed; rolled back** | the new build did not report healthy within 10 s | see `bridge.log` and `fbd.log`; the build before keeps running |
 | **iTerm2 did not start it: … Automation** | macOS does not let your terminal control iTerm2 | System Settings → Privacy & Security → Automation: allow iTerm2 for your terminal app, then `make install` |
 | **Outdated panel link** | This panel was opened with a token fbd no longer accepts (the `token` file was deleted or `FB_PORT` changed while it was open) | Toggle View → Toolbelt → Files, or restart iTerm2. The bridge re-registers the tool with the current link at every start |
+| Web access: **another device gets no answer** (this Mac works) | the macOS Firewall holds connections for iTerm2's own Python, which serves web access | allow it when macOS asks, or System Settings → Network → Firewall → Options (`~/Library/Application Support/iTerm2/uv/python/…/python3.12`); over Tailscale, also check that its access rules let the device reach this Mac |
 
 iTerm2 keeps every registered Toolbelt tool in its preferences and has no API to remove
 one. The bridge keeps all entries that point at fbd up to date; after `make uninstall`,
