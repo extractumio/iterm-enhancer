@@ -344,7 +344,7 @@ class InstallTest(unittest.TestCase):
         self.tty()
         said = self.tip()
         self.assertEqual(said[0], "")
-        self.assertTrue(said[1].startswith("\033[90mTip: add ") and said[1].endswith("\033[0m"), said)
+        self.assertTrue(said[1].startswith("\033[38;5;69mTip: add ") and said[1].endswith("\033[0m"), said)
         self.tty(tty=False)
         said = self.tip()
         self.assertEqual((said[0], said[1].startswith("Tip: add ")), ("", True))

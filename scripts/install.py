@@ -355,14 +355,16 @@ def path_ready():
 
 
 def path_tip():
-    """The command moved out of ~/.local/bin (AC-40): after the result, a blank line and a gray
-    tip on how to reach it, unless the user did that already."""
+    """The command moved out of ~/.local/bin (AC-40): after the result, a blank line and a
+    cornflower-blue tip on how to reach it, unless the user did that already. A fixed
+    256-color shade, not a palette color: "bright black" is nearly the background in some
+    profiles (Solarized-like dark themes)."""
     if path_ready():
         return
     tip = (f"Tip: add {BIN} to your PATH to use the iterm-filebrowser command:\n"
            f"  echo 'export PATH=\"$HOME/.iterm-filebrowser/bin:$PATH\"' >> ~/.zshrc")
     say("")
-    say(f"\033[90m{tip}\033[0m" if color() else tip)
+    say(f"\033[38;5;69m{tip}\033[0m" if color() else tip)
 
 
 def rollback():

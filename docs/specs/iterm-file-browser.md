@@ -1420,7 +1420,7 @@ Scenario: AC-40 edge — upgrade from the earlier layout
   Then state and logs are moved (one rename each, so the token and the registered Toolbelt URL stay valid) and the old folders become links to the new ones while a kept build still uses them (rollback works)
   And the old "current" and "previous" builds are copied into "builds/", so the upgrade keeps the old build as "previous"; the command in "bin/" is the newest installed build's, so it still knows this layout after a rollback into an old build
   And our links in "~/.local/bin" (and the copied fbd of installs before Stage 7) are removed when the new command is placed; another "fbd" there stays; after the new build reports healthy, "~/.local/lib/iterm-filebrowser" is removed, and the old-folder links go once no kept build came from the old layout
-  And the command says how to add "~/.iterm-filebrowser/bin" to PATH when it is missing: after the result, a blank line and a gray "Tip: …" where the terminal takes colors, plain elsewhere
+  And the command says how to add "~/.iterm-filebrowser/bin" to PATH when it is missing: after the result, a blank line and a cornflower-blue "Tip: …" (256-color 69, readable on light and dark profiles) where the terminal takes colors, plain elsewhere
   But it says nothing when the folder is on PATH, or a startup file of the user's shell (.zshrc, .zprofile, .zshenv, .bashrc, .bash_profile, .profile, fish's config) already adds it on a line that is not a comment: a shell opened before that edit has not read it
   And a successful install or upgrade ends with a green check mark on the result line where colors work (no NO_COLOR, TERM not "dumb", output on a terminal), and the bare text in logs and scripts
 
