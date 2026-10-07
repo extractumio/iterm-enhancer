@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 # iterm-enhancer: install or upgrade with one line (AC-40)
 #
-#   curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/extractumio/iterm-enhancer/releases/latest/download/install.sh | sh
 #
 # Downloads the latest release's package, its SHA256SUMS and their signature into a
 # temporary folder, checks the signature with the release key below, then the checksum,
@@ -20,7 +20,7 @@ fail() { echo "install.sh: $*" >&2; exit 1; }
 main() {
     [ "$(uname -s)" = Darwin ] || fail "the iterm-enhancer runs on macOS"
     [ "$(id -u)" != 0 ] || fail "run it as your user, not root (it installs into your home folder)"
-    base="${FB_RELEASE_URL:-https://github.com/extractumio/iterm-extension/releases}/latest/download"
+    base="${FB_RELEASE_URL:-https://github.com/extractumio/iterm-enhancer/releases}/latest/download"
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
     echo "Downloading the iterm-enhancer …"

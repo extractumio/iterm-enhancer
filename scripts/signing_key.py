@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 """Make the maintainer's release key once (AC-40): an ed25519 ssh key outside the
-repository (FB_RELEASE_KEY, default ~/.config/iterm-filebrowser/release-key; ssh-keygen
+repository (FB_RELEASE_KEY, default ~/.config/iterm-enhancer/release-key; ssh-keygen
 asks for a passphrase), and its public half in release-signers and install.sh, which every
 package carries. Run it in your own terminal, then commit the two files.
 
@@ -15,7 +15,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 NAMESPACE = "iterm-enhancer-release"
-KEY = Path(os.environ.get("FB_RELEASE_KEY") or Path.home() / ".config/iterm-filebrowser/release-key")
+KEY = Path(os.environ.get("FB_RELEASE_KEY") or Path.home() / ".config/iterm-enhancer/release-key")
 
 
 def signers_line(pub):

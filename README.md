@@ -47,7 +47,7 @@ sessions and files to a browser on your iPhone, iPad or another computer.
 ## Install
 
 ```bash
-curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/extractumio/iterm-enhancer/releases/latest/download/install.sh | sh
 ```
 
 Then in iTerm2: **View → Toolbelt → Show Toolbelt** and check **Files**. Needs macOS 14+,

@@ -13,11 +13,11 @@ half is in `release-signers` and in `scripts/install.sh`, and every package carr
 your own terminal:
 
 ```bash
-make signing-key        # ~/.config/iterm-filebrowser/release-key (FB_RELEASE_KEY); writes the public half
+make signing-key        # ~/.config/iterm-enhancer/release-key (FB_RELEASE_KEY); writes the public half
 git add release-signers scripts/install.sh && git commit -m "Release key"
-ssh-keygen -p -f ~/.config/iterm-filebrowser/release-key                 # give it a passphrase
-ssh-add --apple-use-keychain ~/.config/iterm-filebrowser/release-key \
-  && ssh-add -d ~/.config/iterm-filebrowser/release-key.pub                # keep it in the Keychain, not loaded
+ssh-keygen -p -f ~/.config/iterm-enhancer/release-key                 # give it a passphrase
+ssh-add --apple-use-keychain ~/.config/iterm-enhancer/release-key \
+  && ssh-add -d ~/.config/iterm-enhancer/release-key.pub                # keep it in the Keychain, not loaded
 ```
 
 Then a release is one command, with no prompt: `make release TAG=vX.Y.Z` refuses unless
@@ -54,6 +54,6 @@ Set the runner up once on a Linux VM (as root; the token travels on stdin):
 
 ```bash
 scp scripts/runner/setup.sh root@<vm>:/root/fb-runner-setup.sh
-gh api -X POST repos/extractumio/iterm-extension/actions/runners/registration-token --jq .token \
+gh api -X POST repos/extractumio/iterm-enhancer/actions/runners/registration-token --jq .token \
   | ssh root@<vm> 'bash /root/fb-runner-setup.sh --name vm102-iterm'
 ```

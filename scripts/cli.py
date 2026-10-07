@@ -34,7 +34,7 @@ sys.path.insert(0, str(HERE.parent / "bridge"))
 import install  # noqa: E402
 import install_launch as live  # noqa: E402
 
-RELEASES = os.environ.get("FB_RELEASE_URL", "https://github.com/extractumio/iterm-extension/releases")
+RELEASES = os.environ.get("FB_RELEASE_URL", "https://github.com/extractumio/iterm-enhancer/releases")
 TARBALL = "iterm-enhancer-macos.tar.gz"
 # the maintainer's release key, as this installed build carries it: an upgrade must be
 # signed by it (AC-40); `make signing-key` makes the key and writes this file

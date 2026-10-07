@@ -120,7 +120,7 @@ def release_notes(tag):
 def publish(tag, draft, notes):
     """Tag HEAD, push the tag (again, if an earlier run stopped after tagging), fill a draft
     release and publish it."""
-    footer = ("Install or upgrade: curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/download/install.sh | sh\n\n"
+    footer = ("Install or upgrade: curl -fsSL https://github.com/extractumio/iterm-enhancer/releases/latest/download/install.sh | sh\n\n"
               f"SHA256SUMS is signed with the release key {signing_key.fingerprint()}.")
     body = (notes.rstrip() + "\n\n" if notes.strip() else "") + footer + "\n"
     with tempfile.TemporaryDirectory(prefix="fb-release-") as folder:
