@@ -80,7 +80,7 @@ impl Store {
         }
         // Creation markers remain valid across later jobs, but only for retained,
         // validated sources; a foreign marker cannot invent a source identity.
-        if let Some((selected, old)) = marker.and_then(|m| m.strip_prefix("File Browser Restore ")).and_then(|m| m.split_once(':')) {
+        if let Some((selected, old)) = marker.and_then(|m| m.strip_prefix("iterm-enhancer Restore ")).and_then(|m| m.split_once(':')) {
             if self.index.entries.iter().any(|e| e.id == selected) && self.snapshot(selected)?.windows.iter()
                 .flat_map(|w| &w.tabs).flat_map(|t| &t.panes).any(|p| p.id == old) {
                 identities.insert(old.to_string());

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-"""AC-40: `iterm-filebrowser upgrade` installs a release only when it is signed by the
+"""AC-40: `iterm-enhancer upgrade` installs a release only when it is signed by the
 release key and its checksum matches, from a fake release served as local files (no
 network), signed with a throwaway key made for the test."""
 import hashlib
@@ -69,17 +69,17 @@ class UpgradeTest(unittest.TestCase):
 
     def publish(self, files, checksum=None, key=None, release="v9.0.0"):
         data = tar_with(files)
-        (self.rel / "iterm-filebrowser-macos.tar.gz").write_bytes(data)
+        (self.rel / "iterm-enhancer-macos.tar.gz").write_bytes(data)
         digest = checksum or hashlib.sha256(data).hexdigest()
         sums = self.rel / "SHA256SUMS"
-        sums.write_text(f"# release {release}\n{digest}  iterm-filebrowser-macos.tar.gz\n")
+        sums.write_text(f"# release {release}\n{digest}  iterm-enhancer-macos.tar.gz\n")
         (self.rel / "SHA256SUMS.sig").unlink(missing_ok=True)
         if key is not False:
             subprocess.run(["ssh-keygen", "-Y", "sign", "-q", "-f", str(key or self.key), "-n", self.cli.NAMESPACE, str(sums)], check=True)
 
     def package(self):
-        return [("iterm-filebrowser/iterm-filebrowser", f"#!/bin/sh\necho \"$1\" > {self.marker}\n", 0o755),
-                ("iterm-filebrowser/BUILD", "v9\n", 0o644)]
+        return [("iterm-enhancer/iterm-enhancer", f"#!/bin/sh\necho \"$1\" > {self.marker}\n", 0o755),
+                ("iterm-enhancer/BUILD", "v9\n", 0o644)]
 
     def test_a_good_release_installs(self):
         self.publish(self.package())
@@ -128,9 +128,9 @@ class UpgradeTest(unittest.TestCase):
         outside.mkdir()
         victim = outside / "victim"
         victim.write_text("keep")
-        for bad in ([link("iterm-filebrowser/d", "../../outside"), ("iterm-filebrowser/d/planted", "x", 0o644)],
-                    [link("iterm-filebrowser/h", str(victim), tarfile.LNKTYPE), ("iterm-filebrowser/h", "owned", 0o644)],
-                    [link("iterm-filebrowser/null", "", tarfile.CHRTYPE)]):
+        for bad in ([link("iterm-enhancer/d", "../../outside"), ("iterm-enhancer/d/planted", "x", 0o644)],
+                    [link("iterm-enhancer/h", str(victim), tarfile.LNKTYPE), ("iterm-enhancer/h", "owned", 0o644)],
+                    [link("iterm-enhancer/null", "", tarfile.CHRTYPE)]):
             self.publish(self.package() + bad)
             with self.assertRaises(SystemExit) as cm:
                 self.cli.upgrade()
@@ -141,9 +141,9 @@ class UpgradeTest(unittest.TestCase):
 
     def test_setuid_bits_are_stripped(self):
         tar = self.root / "p.tar.gz"
-        tar.write_bytes(tar_with([("iterm-filebrowser/tool", "x", 0o6777)]))
+        tar.write_bytes(tar_with([("iterm-enhancer/tool", "x", 0o6777)]))
         self.cli.extract(tar, self.root / "x")
-        self.assertEqual((self.root / "x/iterm-filebrowser/tool").stat().st_mode & 0o7777, 0o755)
+        self.assertEqual((self.root / "x/iterm-enhancer/tool").stat().st_mode & 0o7777, 0o755)
 
     def install_sh(self, signers):
         """Run a copy of install.sh that carries `signers` against the fake release."""
@@ -171,7 +171,7 @@ class UpgradeTest(unittest.TestCase):
         self.assertEqual(key(sh), key((REPO / "release-signers").read_text()))
 
     def test_install_sh_rejects_a_replayed_signed_release(self):
-        build = self.root / "home/.iterm-filebrowser/builds/current/BUILD"
+        build = self.root / "home/.iterm-enhancer/builds/current/BUILD"
         build.parent.mkdir(parents=True)
         build.write_text("v9.1.0\n")
         signers = self.cli.SIGNERS.read_text().strip()

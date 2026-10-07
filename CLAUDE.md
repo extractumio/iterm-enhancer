@@ -1,8 +1,8 @@
-# iTerm2 File Browser contributor rules
+# iterm-enhancer contributor rules
 
 Binding on humans and AI (`AGENTS.md` symlinks here); every rule is a MUST unless marked
 otherwise. This file holds principles, terms and dos and don'ts; behavior, limits and
-evidence live in the spec (`docs/specs/iterm-file-browser.md`), usage in `README.md`,
+evidence live in the spec (`docs/specs/iterm-enhancer.md`), usage in `README.md`,
 the threat model in `SECURITY.md`, the release procedure in `docs/RELEASING.md`. Write
 compactly: one precise sentence over a paragraph, a table where denser, no narration.
 
@@ -23,7 +23,7 @@ TypeScript UI bundled by esbuild (CodeMirror 6, markdown-it; no framework). Rust
 | Key | The state key of a terminal pane: the iTerm2 session id, or `tmux:<host>:<socket>:%N` for a tmux pane |
 | Workspace | Per-key state in `workspaces.json`: root, expanded, selected, scroll, tabs; versioned by `rev` |
 | Roots | `FB_WRITABLE_ROOTS`: the only folders the panel writes to |
-| Spec | `docs/specs/iterm-file-browser.md`: acceptance cases `AC-nn`, BDD scenarios, design, limits, Definition of Done |
+| Spec | `docs/specs/iterm-enhancer.md`: acceptance cases `AC-nn`, BDD scenarios, design, limits, Definition of Done |
 
 ## Product principles
 

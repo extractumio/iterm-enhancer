@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-"""Install, upgrade, roll back and uninstall the iTerm2 File Browser (AC-33, AC-35, AC-40).
+"""Install, upgrade, roll back and uninstall iterm-enhancer (AC-33, AC-35, AC-40).
 
-Everything lives under one root, ~/.iterm-filebrowser/ (AC-40): bin/, builds/, logs/,
+Everything lives under one root, ~/.iterm-enhancer/ (AC-40): bin/, builds/, logs/,
 state/. Each build lives in its own folder, builds/<build>/ (a copy of its package: BUILD, agents/,
-bridge/, scripts/, the iterm-filebrowser command, and fbd linked to the macOS agent of this
+bridge/, scripts/, the iterm-enhancer command, and fbd linked to the macOS agent of this
 Mac); the links `current` and `previous` name the live and the last build, and each is
 switched with one rename. A running bridge keeps its own build (it resolved `current` when
 it started), so a switch takes effect when the new bridge takes over, and a build that
-does not come up healthy is switched back. Users run it through `iterm-filebrowser`.
+does not come up healthy is switched back. Users run it through `iterm-enhancer`.
 
     python3 scripts/install.py id                     the build id of a checkout's sources
     python3 scripts/install.py install [--from DIR]   install or upgrade to a package
@@ -39,15 +39,10 @@ LIB = ROOT / "builds"
 BIN = ROOT / "bin"
 APP_DIR, LOG_DIR = live.APP_DIR, live.LOG_DIR
 AUTOLAUNCH = HOME / "Library/Application Support/iTerm2/Scripts/AutoLaunch"
-PROFILE = HOME / "Library/Application Support/iTerm2/DynamicProfiles/iterm-filebrowser.json"
-# the layout before one root: moved by move_old_layout, removed by drop_old_layout
-OLD_LIB = HOME / ".local/lib/iterm-filebrowser"
-OLD_BIN = HOME / ".local/bin"
-OLD_DIRS = {HOME / "Library/Application Support/iterm-filebrowser": APP_DIR, HOME / "Library/Logs/iterm-filebrowser": LOG_DIR}
-OLD_MARK = ".old-layout"  # in a build copied from the earlier layout: it uses the old folders
+PROFILE = HOME / "Library/Application Support/iTerm2/DynamicProfiles/iterm-enhancer.json"
 SOURCES = ["bridge/fb_bridge.py", "bridge/fbbridge", "fbd/src", "fbd/Cargo.toml", "fbd/Cargo.lock",
            "ui/src", "ui/public", "ui/build.mjs", "ui/package.json", "ui/package-lock.json",
-           "scripts/install.py", "scripts/install_launch.py", "scripts/cli.py", "scripts/iterm-filebrowser", "release-signers"]
+           "scripts/install.py", "scripts/install_launch.py", "scripts/cli.py", "scripts/iterm-enhancer", "release-signers"]
 
 
 class Failed(Exception):
@@ -132,127 +127,28 @@ def copy_build(build, pkg):
 def place_entry_points(build):
     """`fbd` follows `current`; iTerm2's AutoLaunch runs the bridge entry."""
     BIN.mkdir(parents=True, exist_ok=True)
-    swap_link(BIN / "fbd", LIB / "current/fbd")  # also replaces the file of an unversioned install
+    swap_link(BIN / "fbd", LIB / "current/fbd")
     # the command of the newest installed build, not of `current`: after a rollback into an
     # older build it still knows this layout (a rollback never moves it)
-    swap_link(BIN / "iterm-filebrowser", LIB / build / "iterm-filebrowser")
-    drop_old_commands()
+    swap_link(BIN / "iterm-enhancer", LIB / build / "iterm-enhancer")
     AUTOLAUNCH.mkdir(parents=True, exist_ok=True)
     tmp = AUTOLAUNCH / ".fb_bridge.py.new"
     shutil.copy2(LIB / "current/bridge/fb_bridge.py", tmp)
     tmp.replace(AUTOLAUNCH / "fb_bridge.py")
 
 
-def move_dir(old, new):
-    """Move the folder `old` into `new` and leave a link at `old`. A missing or empty `new`
-    takes the whole folder with one rename (open files and locks stay valid); otherwise the
-    entries move one by one, and a name in both is refused, never overwritten. A log the
-    running bridge recreates meanwhile is merged again (AC-40)."""
-    for _ in range(5):
-        if not old.is_dir() or old.is_symlink():
-            return
-        if new.is_dir() and not new.is_symlink() and not any(new.iterdir()):
-            new.rmdir()
-        if not new.exists():
-            new.parent.mkdir(parents=True, exist_ok=True)
-            old.rename(new)
-        else:
-            for p in old.iterdir():
-                if not (new / p.name).exists():
-                    p.rename(new / p.name)
-                elif new == LOG_DIR and p.is_file():  # lines logged while moving
-                    with open(new / p.name, "ab") as f:
-                        f.write(p.read_bytes())
-                    p.unlink()
-                else:
-                    raise Failed(f"{p} and {new / p.name} both exist: keep the one you want "
-                                 f"(the old one holds what iTerm2 uses now), remove the other, and run again")
-            try:
-                old.rmdir()
-            except OSError:
-                continue  # written to while moving: merge again
-        try:
-            return old.symlink_to(new)
-        except FileExistsError:
-            continue
-    raise Failed(f"{old} keeps changing while it is moved to {new}: quit iTerm2 and run again")
-
-
-def move_old_layout():
-    """Move state and logs from the earlier layout (the token, so the registered Toolbelt
-    URL, stays valid) and leave links in the old places for builds that still use them;
-    copy the old `current` and `previous` builds into builds/, marked, and link them the same,
-    so an install that follows keeps the old build as `previous` (AC-40)."""
-    try:
-        for old, new in OLD_DIRS.items():
-            if new != APP_DIR or not os.environ.get("FB_APP_DIR"):
-                move_dir(old, new)
-        if target("current"):
-            return
-        for name in ("previous", "current"):  # `current` last: it is what says "moved"
-            link = OLD_LIB / name
-            build = os.readlink(link) if link.is_symlink() else ""
-            if not build or "/" in build or not (OLD_LIB / build).is_dir():
-                continue
-            if not (LIB / build).is_dir():
-                tmp = LIB / f".{build}.tmp"
-                shutil.rmtree(tmp, ignore_errors=True)
-                shutil.copytree(OLD_LIB / build, tmp, symlinks=True, ignore=shutil.ignore_patterns("__pycache__"))
-                (tmp / OLD_MARK).touch()
-                tmp.rename(LIB / build)
-            relink(name, build)
-    except OSError as e:
-        raise Failed(f"Could not move the earlier install into {ROOT}: {e}; nothing was deleted, run again")
-
-
-def drop_old_commands():
-    """Our commands in ~/.local/bin from the earlier layout: links into its builds, or the
-    copied fbd of installs before Stage 7 (an fbd that is not ours stays)."""
-    for name in ("fbd", "iterm-filebrowser"):
-        p = OLD_BIN / name
-        if p.is_symlink():
-            ours = os.readlink(p).startswith(str(OLD_LIB) + "/")
-        else:
-            ours = name == "fbd" and p.is_file() and b"FB_APP_DIR" in p.read_bytes()
-        if ours:
-            p.unlink()
-
-
-def drop_old_layout(kept):
-    """Remove the earlier layout's builds; the links at the old state and log folders go
-    once no build in `kept` came from it."""
-    if OLD_LIB.is_dir() and not OLD_LIB.is_symlink():
-        shutil.rmtree(OLD_LIB, ignore_errors=True)
-    if not any(b and (LIB / b / OLD_MARK).exists() for b in kept):
-        for old, new in OLD_DIRS.items():
-            if old.is_symlink() and old.resolve() == new.resolve():
-                old.unlink()
-
-
-def legacy(build):
-    """A build from before fbd's private socket (AC-07): its health is asked the old way."""
-    return bool(build) and (LIB / build).is_dir() and not (LIB / build / "bridge/fbbridge/unixhttp.py").is_file()
-
-
-def drop_unversioned():
-    """Installs before versioned builds kept the bridge package in the app folder."""
-    shutil.rmtree(APP_DIR / "bridge", ignore_errors=True)
-
-
 def prune():
-    """Keep `current` and `previous`; drop older builds and the unversioned bridge copy."""
+    """Keep `current` and `previous`; drop older builds."""
     keep = {target("current"), target("previous")}
     for d in LIB.iterdir():
         if d.is_dir() and not d.is_symlink() and not d.name.startswith(".") and d.name not in keep:
             shutil.rmtree(d, ignore_errors=True)
-    drop_unversioned()
-    drop_old_layout(keep)
 
 
 def lock():
     """One install at a time; the lock goes with the process. It lives in the root, beside
-    what uninstall removes and outside state/, which the earlier layout's move creates.
-    The root is private (0700): its state and logs are the user's alone (AC-07)."""
+    what uninstall removes. The root is private (0700): its state and logs are the user's
+    alone (AC-07)."""
     LIB.mkdir(parents=True, exist_ok=True)
     ROOT.chmod(0o700)
     fd = os.open(ROOT / "install.lock", os.O_RDWR | os.O_CREAT, 0o600)
@@ -271,7 +167,7 @@ def go_live(build):
     if not live.iterm_running():
         return False
     live.launch()
-    if not live.wait_healthy(build, legacy=legacy(build)):
+    if not live.wait_healthy(build):
         raise Failed(f"build {build} did not report healthy within 30 s ({live.describe_health()})")
     return True
 
@@ -301,11 +197,10 @@ def install(pkg=REPO):
     got = subprocess.run([str(fbd), "--version"], capture_output=True, text=True).stdout.strip()
     if got != build:
         raise Failed(f"{fbd} is build {got or 'unknown'}, expected {build}")
-    move_old_layout()  # only once the package is known to be good
     request_id = setup_state.request(APP_DIR)
     old = target("current")
     if old == build:
-        if live.iterm_running() and live.runs(live.health(legacy(build)), build):
+        if live.iterm_running() and live.runs(live.health(), build):
             report_settings(request_id, True)
             return done(f"{build} is already installed and running")
     copy_build(build, pkg)
@@ -347,7 +242,7 @@ def path_ready():
     for f in files:
         try:
             with open(f, errors="ignore") as lines:
-                if any(".iterm-filebrowser/bin" in line for line in lines if not line.lstrip().startswith("#")):
+                if any(".iterm-enhancer/bin" in line for line in lines if not line.lstrip().startswith("#")):
                     return True
         except OSError:
             pass
@@ -355,20 +250,19 @@ def path_ready():
 
 
 def path_tip():
-    """The command moved out of ~/.local/bin (AC-40): after the result, a blank line and a
+    """The command lives in the root's bin/ (AC-40): after the result, a blank line and a
     cornflower-blue tip on how to reach it, unless the user did that already. A fixed
     256-color shade, not a palette color: "bright black" is nearly the background in some
     profiles (Solarized-like dark themes)."""
     if path_ready():
         return
-    tip = (f"Tip: add {BIN} to your PATH to use the iterm-filebrowser command:\n"
-           f"  echo 'export PATH=\"$HOME/.iterm-filebrowser/bin:$PATH\"' >> ~/.zshrc")
+    tip = (f"Tip: add {BIN} to your PATH to use the iterm-enhancer command:\n"
+           f"  echo 'export PATH=\"$HOME/.iterm-enhancer/bin:$PATH\"' >> ~/.zshrc")
     say("")
     say(f"\033[38;5;69m{tip}\033[0m" if color() else tip)
 
 
 def rollback():
-    move_old_layout()
     prev, cur = target("previous"), target("current")
     if not prev or not (LIB / prev).is_dir():
         raise Failed("No previous build to roll back to")
@@ -385,18 +279,15 @@ def rollback():
 
 
 def uninstall():
-    move_old_layout()  # so the state it keeps is where it says
     subprocess.run(["pkill", "-f", "AutoLaunch/fb_bridge.py"], capture_output=True)
     subprocess.run(["pkill", "-x", "fbd"], capture_output=True)
     shutil.rmtree(LIB, ignore_errors=True)
-    for p in (BIN / "fbd", BIN / "iterm-filebrowser", AUTOLAUNCH / "fb_bridge.py", PROFILE):
+    for p in (BIN / "fbd", BIN / "iterm-enhancer", AUTOLAUNCH / "fb_bridge.py", PROFILE):
         if p.is_symlink() or p.exists():
             p.unlink()
     if BIN.is_dir() and not any(BIN.iterdir()):
         BIN.rmdir()
-    drop_unversioned()
-    drop_old_layout(kept=())
-    say(f"Removed the File Browser builds, its commands and the AutoLaunch bridge. Token, workspaces and logs kept in {ROOT}")
+    say(f"Removed iterm-enhancer builds, its commands and the AutoLaunch bridge. Token, workspaces and logs kept in {ROOT}")
     say("To remove the Files entry from iTerm2's Toolbelt menu: quit iTerm2, then run 'make clean-registrations'")
 
 

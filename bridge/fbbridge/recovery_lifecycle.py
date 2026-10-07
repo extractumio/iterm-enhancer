@@ -64,11 +64,11 @@ class Lifecycle:
             self.recipes[marker] = pane
 
     async def source(self, marker):
-        if not isinstance(marker, str) or not marker.startswith("File Browser Restore "):
+        if not isinstance(marker, str) or not marker.startswith("iterm-enhancer Restore "):
             return None
         if marker in self.recipes:
             return self.recipes[marker]
-        selected, separator, sid = marker[len("File Browser Restore "):].partition(":")
+        selected, separator, sid = marker[len("iterm-enhancer Restore "):].partition(":")
         if not separator or len(selected) != 16 or any(c not in "0123456789abcdef" for c in selected):
             return None
         status = await self.capture.call("GET", "/internal/recovery")
@@ -102,7 +102,7 @@ class Lifecycle:
                 continue
             marker = event.get("marker") or ""
             if not event["revive"] and (sid in (source_id, alias) or
-                    marker.startswith("File Browser Restore ") and marker.partition(":")[2] == source_id):
+                    marker.startswith("iterm-enhancer Restore ") and marker.partition(":")[2] == source_id):
                 return True
         return False
 
@@ -130,7 +130,7 @@ class Lifecycle:
                 if self.identities.get(sid) == identity:
                     source = self.recipe(sid)
                     if not success and ((source and source["connection"]["kind"] in ("ssh", "tmux")) or
-                            (source is None and (self.known.get(sid) or "").startswith("File Browser Restore "))):
+                            (source is None and (self.known.get(sid) or "").startswith("iterm-enhancer Restore "))):
                         self.failed.add(sid)
                     else:
                         self.exits.setdefault(sid, now)

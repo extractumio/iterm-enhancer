@@ -41,7 +41,7 @@ fn close_before_journal_ack_filters_pinned_source_and_live_undo_revives_it() {
     s.prepare_startup("run-b".into()).unwrap();
     let job = s.begin_startup("run-b").unwrap().unwrap();
     assert!(job.steps.is_empty());
-    let marker = format!("File Browser Restore {chosen}:a");
+    let marker = format!("iterm-enhancer Restore {chosen}:a");
     s.lifecycle("run-b", "created-before-ack".into(), Some(&marker), false).unwrap();
     assert_eq!(s.restorable(&chosen).unwrap().count(), 1);
     assert!(s.index.startup.as_ref().unwrap().pending());
@@ -89,7 +89,7 @@ fn stale_events_failed_commits_and_corrupt_history_preserve_state() {
 fn closure_gc_keeps_all_retained_history_and_rejects_foreign_markers() {
     let (dir, mut s, mut snapshot) = fixture("gc");
     let chosen = s.capture(snapshot.clone(), true).unwrap().unwrap();
-    s.lifecycle("run-a", "foreign".into(), Some("File Browser Restore ffffffffffffffff:a"), false).unwrap();
+    s.lifecycle("run-a", "foreign".into(), Some("iterm-enhancer Restore ffffffffffffffff:a"), false).unwrap();
     assert!(!s.index.retired.contains("a"));
     s.lifecycle("run-a", "a".into(), None, false).unwrap();
     assert!(!s.index.retired.contains("foreign"));

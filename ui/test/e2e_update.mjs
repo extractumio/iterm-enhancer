@@ -23,7 +23,7 @@ export async function updateTools(page) {
   await page.click('.ctx .mi:has-text("Copy upgrade command")');
   await page.waitForTimeout(200);
   const clip = await page.evaluate(() => navigator.clipboard.readText());
-  check("AC-51 copy puts the upgrade command on the clipboard, nothing is run", clip === "~/.iterm-filebrowser/bin/iterm-filebrowser upgrade" && !cmds.some((c) => /update/.test(c.action)), clip);
+  check("AC-51 copy puts the upgrade command on the clipboard, nothing is run", clip === "~/.iterm-enhancer/bin/iterm-enhancer upgrade" && !cmds.some((c) => /update/.test(c.action)), clip);
 
   await page.click("#update");
   await page.click('.ctx .mi:has-text("Skip v9.9.9")');

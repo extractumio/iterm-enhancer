@@ -34,7 +34,7 @@ export function renderSetupNotice(value: TermState["setup_notice"]) {
 }
 
 // A newer release (AC-51): a small chip; its menu copies the command, never runs it.
-const UPGRADE = "~/.iterm-filebrowser/bin/iterm-filebrowser upgrade";
+const UPGRADE = "~/.iterm-enhancer/bin/iterm-enhancer upgrade";
 const chip = document.getElementById("update")!;
 let latest = "";
 

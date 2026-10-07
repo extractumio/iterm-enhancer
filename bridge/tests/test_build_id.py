@@ -15,7 +15,7 @@ class BuildIdTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             inputs = ["scripts/install.py", "scripts/install_launch.py", "scripts/cli.py",
-                      "scripts/iterm-filebrowser", "release-signers", "ui/package.json"]
+                      "scripts/iterm-enhancer", "release-signers", "ui/package.json"]
             for rel in inputs:
                 p = root / rel
                 p.parent.mkdir(parents=True, exist_ok=True)

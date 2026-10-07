@@ -1,19 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-"""iterm-filebrowser: the one command a user needs after the one-line install (AC-40).
+"""iterm-enhancer: the one command a user needs after the one-line install (AC-40).
 
-    iterm-filebrowser status                    what runs, which builds, which hosts
-    iterm-filebrowser install                   install the package this command came in
-    iterm-filebrowser upgrade [--to vX.Y.Z]     download a release, check it, install it
-    iterm-filebrowser rollback                  back to the build before
-    iterm-filebrowser uninstall                 remove it (keeps your settings)
-    iterm-filebrowser hosts                     the remote hosts whose files you browse
-    iterm-filebrowser hosts enable <ssh destination and options>
-    iterm-filebrowser hosts remove <host>
-    iterm-filebrowser web                       web access: on or off, and its addresses
-    iterm-filebrowser web on [--port N] [--host ADDRESS]
+    iterm-enhancer status                    what runs, which builds, which hosts
+    iterm-enhancer install                   install the package this command came in
+    iterm-enhancer upgrade [--to vX.Y.Z]     download a release, check it, install it
+    iterm-enhancer rollback                  back to the build before
+    iterm-enhancer uninstall                 remove it (keeps your settings)
+    iterm-enhancer hosts                     the remote hosts whose files you browse
+    iterm-enhancer hosts enable <ssh destination and options>
+    iterm-enhancer hosts remove <host>
+    iterm-enhancer web                       web access: on or off, and its addresses
+    iterm-enhancer web on [--port N] [--host ADDRESS]
                                                 serve the sessions and files to a browser
-    iterm-filebrowser web off
-    iterm-filebrowser web password              set or change its password (FB_WEB_PASSWORD, or asked)
+    iterm-enhancer web off
+    iterm-enhancer web password              set or change its password (FB_WEB_PASSWORD, or asked)
 """
 import argparse
 import getpass
@@ -35,15 +35,15 @@ import install  # noqa: E402
 import install_launch as live  # noqa: E402
 
 RELEASES = os.environ.get("FB_RELEASE_URL", "https://github.com/extractumio/iterm-extension/releases")
-TARBALL = "iterm-filebrowser-macos.tar.gz"
+TARBALL = "iterm-enhancer-macos.tar.gz"
 # the maintainer's release key, as this installed build carries it: an upgrade must be
 # signed by it (AC-40); `make signing-key` makes the key and writes this file
 SIGNERS = HERE.parent / "release-signers"
-NAMESPACE = "iterm-filebrowser-release"
+NAMESPACE = "iterm-enhancer-release"
 
 
 def status():
-    h = live.health(install.legacy(install.target("current")))
+    h = live.health()
     print(f"running:  {h.get('build') if h else 'no (iTerm2 not running, or its Python API is off)'}"
           + (f", bridge {'connected' if h.get('bridge_connected') else 'not connected'}" if h else ""))
     print(f"current:  {install.target('current') or '-'}")
@@ -113,7 +113,7 @@ def check_release(sums, tag):
     here = (HERE.parent / "BUILD").read_text().strip() if (HERE.parent / "BUILD").is_file() else ""
     if not tag and version(named) and version(here) and version(named) < version(here):
         sys.exit(f"the latest release says {named}, older than the installed {here}: nothing installed "
-                 f"(to go back on purpose: iterm-filebrowser upgrade --to {named})")
+                 f"(to go back on purpose: iterm-enhancer upgrade --to {named})")
 
 
 def upgrade(tag=None):
@@ -137,8 +137,8 @@ def upgrade(tag=None):
         if want != got:
             sys.exit(f"checksum mismatch for {TARBALL}: nothing installed")
         extract(tmp / TARBALL, tmp / "pkg")
-        pkg = tmp / "pkg" / "iterm-filebrowser"
-        r = subprocess.run([str(pkg / "iterm-filebrowser"), "install"])
+        pkg = tmp / "pkg" / "iterm-enhancer"
+        r = subprocess.run([str(pkg / "iterm-enhancer"), "install"])
         sys.exit(r.returncode)
 
 
@@ -165,7 +165,7 @@ def hosts_remove(key):
     from fbbridge import agentctl, hosts
     e = agentctl.entry(key)
     if not e:
-        sys.exit(f"{key} is not an enabled host (see: iterm-filebrowser hosts)")
+        sys.exit(f"{key} is not an enabled host (see: iterm-enhancer hosts)")
     try:
         hosts.remove(e["ssh"])
     except agentctl.AgentError as err:
@@ -181,11 +181,11 @@ def web_status(health=None):
         cfg = config.load()
     except ValueError as e:
         return print(f"web:      {e}")
-    reported = (health or live.health(install.legacy(install.target("current"))) or {}).get("web")
+    reported = (health or live.health() or {}).get("web")
     if not cfg["enabled"]:
-        return print("web:      off (iterm-filebrowser web on)")
+        return print("web:      off (iterm-enhancer web on)")
     if not cfg["password"]:
-        return print("web:      on, but no password yet (iterm-filebrowser web password)")
+        return print("web:      on, but no password yet (iterm-enhancer web password)")
     if not reported:
         return print(f"web:      on, port {cfg['port']}; served once iTerm2 runs")
     print(f"web:      {'on' if reported['enabled'] else 'not serving'}, port {cfg['port']}"
@@ -229,7 +229,7 @@ def web(cmd, port=None, host=None):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="iterm-filebrowser", description=__doc__.split("\n\n")[0],
+    p = argparse.ArgumentParser(prog="iterm-enhancer", description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 1)[1])
     sub = p.add_subparsers(dest="cmd")
     for name in ("status", "install", "rollback", "uninstall"):
@@ -257,7 +257,7 @@ def main(argv=None):
     if a.cmd == "hosts":
         if a.hcmd == "enable":
             if not a.target:
-                sys.exit("usage: iterm-filebrowser hosts enable <ssh destination and options>")
+                sys.exit("usage: iterm-enhancer hosts enable <ssh destination and options>")
             return hosts_enable(a.target)
         if a.hcmd == "remove":
             return hosts_remove(a.host)

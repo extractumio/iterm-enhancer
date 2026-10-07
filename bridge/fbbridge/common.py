@@ -7,15 +7,15 @@ from pathlib import Path
 
 PORT = int(os.environ.get("FB_PORT", "47821"))
 BASE = f"http://127.0.0.1:{PORT}"
-# everything the File Browser keeps is under one root (AC-40)
-ROOT = Path.home() / ".iterm-filebrowser"
+# everything iterm-enhancer keeps is under one root (AC-40)
+ROOT = Path.home() / ".iterm-enhancer"
 APP_DIR = Path(os.environ.get("FB_APP_DIR") or ROOT / "state")
 SOCKET = APP_DIR / "fbd.sock"  # the bridge talks to fbd only here (AC-07)
 # an installed build is <root>/builds/<build>/{fbd, bridge/fbbridge, BUILD} (AC-33); a checkout has no BUILD
 BUILD_DIR = Path(__file__).resolve().parents[2]
 BUILD = (BUILD_DIR / "BUILD").read_text().strip() if (BUILD_DIR / "BUILD").is_file() else "dev"
 LOG_DIR = APP_DIR / "logs" if os.environ.get("FB_APP_DIR") else ROOT / "logs"
-TOOL_ID = "com.local.iterm-filebrowser"
+TOOL_ID = "com.local.iterm-enhancer"
 # where releases are published (the installer's CLI reads the same variable)
 RELEASES = os.environ.get("FB_RELEASE_URL", "https://github.com/extractumio/iterm-extension/releases")
 POLL = 0.5

@@ -32,7 +32,7 @@ async def main(conn):
     owned = []
     with tempfile.TemporaryDirectory(prefix="fbr-proof-") as directory:
         root = Path(directory).resolve()
-        marker = "File Browser Restore " + uuid.uuid4().hex
+        marker = "iterm-enhancer Restore " + uuid.uuid4().hex
         try:
             win = await iterm2.Window.async_create(conn, profile_customizations=profile(root, marker))
             if not win:

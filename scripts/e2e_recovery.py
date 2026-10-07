@@ -58,7 +58,7 @@ def child():
                 if w.window_id in before:
                     continue
                 names = [str(await s.async_get_variable("profileName")) for t in w.tabs for s in t.all_sessions]
-                marked = any(name.startswith("File Browser Restore " + identity + ":") for name in names for identity in jobs)
+                marked = any(name.startswith("iterm-enhancer Restore " + identity + ":") for name in names for identity in jobs)
                 if w.window_id in owned or marked:
                     found.append(w)
                     owned.add(w.window_id)
@@ -72,15 +72,15 @@ def child():
             for i in range(15):
                 directory = APP_DIR / f"cwd-{i}"
                 directory.mkdir()
-                w = await iterm2.Window.async_create(conn, profile_customizations=profile(directory, f"File Browser Test {i}"))
+                w = await iterm2.Window.async_create(conn, profile_customizations=profile(directory, f"iterm-enhancer Test {i}"))
                 originals.append(w)
                 owned.add(w.window_id)
                 if i == 0:
                     a = w.current_tab.current_session
-                    b = await a.async_split_pane(vertical=True, profile_customizations=profile(directory, "File Browser Test split"))
-                    await b.async_split_pane(vertical=False, profile_customizations=profile(directory, "File Browser Test nested"))
+                    b = await a.async_split_pane(vertical=True, profile_customizations=profile(directory, "iterm-enhancer Test split"))
+                    await b.async_split_pane(vertical=False, profile_customizations=profile(directory, "iterm-enhancer Test nested"))
                 if i == 1:
-                    await w.async_create_tab(profile_customizations=profile(directory, "File Browser Test second tab"))
+                    await w.async_create_tab(profile_customizations=profile(directory, "iterm-enhancer Test second tab"))
             await app.async_refresh()
             capture = Capture(conn, app, type("Windows", (), {"viewer_id": None})(), backend, window_ids=owned)
             await Startup(capture, Runner(capture)).initialize()
@@ -151,7 +151,7 @@ def child():
             changed_cwd = str(APP_DIR.resolve())
             await changed.async_send_text(f"cd {changed_cwd}\r", suppress_broadcast=True)
             customize = iterm2.LocalWriteOnlyProfile()
-            customize._simple_set("Name", "File Browser Test changed appearance")
+            customize._simple_set("Name", "iterm-enhancer Test changed appearance")
             await changed.async_set_profile_properties(customize)
             for _ in range(30):
                 if (await resolve(conn, changed))["cwd"] == changed_cwd:

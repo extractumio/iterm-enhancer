@@ -89,7 +89,7 @@ async def prove(port, token):
     except (ValueError, AttributeError):
         ok = False
     if not ok:
-        raise HttpError(502, "The program on the file browser's port is not fbd; the token was not sent.")
+        raise HttpError(502, "The program on iterm-enhancer's port is not fbd; the token was not sent.")
     _proven = (port, token)
 
 
@@ -109,7 +109,7 @@ async def forward(req, fbd_port, token):
         up_r, up_w = await asyncio.open_connection("127.0.0.1", fbd_port)
     except (OSError, asyncio.IncompleteReadError, TimeoutError):
         _proven = None
-        raise HttpError(502, "The file browser backend (fbd) is not running.")
+        raise HttpError(502, "The iterm-enhancer backend (fbd) is not running.")
     headers = {k: v for k, v in req.headers.items() if k in PASS}
     headers["host"] = fbd
     headers["x-fb-token"] = token

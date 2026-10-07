@@ -38,7 +38,7 @@ class NativeRestore:
         self.uncertain = set()
 
     def marker(self, sid):
-        return f"File Browser Restore {self.runner.job['id']}:{sid}"
+        return f"iterm-enhancer Restore {self.runner.job['id']}:{sid}"
 
     async def discover(self, profiles=True):
         await self.app.async_refresh()

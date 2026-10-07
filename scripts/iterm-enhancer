@@ -1,11 +1,11 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-# iterm-filebrowser: install, upgrade, roll back, uninstall, and the remote hosts (AC-40).
+# iterm-enhancer: install, upgrade, roll back, uninstall, and the remote hosts (AC-40).
 # Runs scripts/cli.py of the build it belongs to, with the Command Line Tools' python3 or,
 # on a Mac without them (python3 would only offer to install them), iTerm2's own Python.
 set -eu
 self=$0
-while [ -L "$self" ]; do                      # ~/.iterm-filebrowser/bin/iterm-filebrowser → the build
+while [ -L "$self" ]; do                      # ~/.iterm-enhancer/bin/iterm-enhancer → the build
     link=$(readlink "$self")
     case $link in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
 done
@@ -23,7 +23,7 @@ else
     done
 fi
 if [ -z "$py" ]; then
-    echo "iterm-filebrowser: no Python found. Install the Command Line Tools (xcode-select --install)," >&2
+    echo "iterm-enhancer: no Python found. Install the Command Line Tools (xcode-select --install)," >&2
     echo "or enable iTerm2's Python API (Settings → General → Magic) and let it install its runtime." >&2
     exit 1
 fi

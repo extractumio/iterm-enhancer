@@ -9,7 +9,7 @@ a release may happen are in [CLAUDE.md](../CLAUDE.md) §10; how users install is
 Installs and upgrades accept a release only if its `SHA256SUMS` is signed by the
 maintainer's release key (an ed25519 ssh key; `ssh-keygen -Y`, built into macOS). Its public
 half is in `release-signers` and in `scripts/install.sh`, and every package carries it, so
-`iterm-filebrowser upgrade` checks with the key of the build already installed. Once, in
+`iterm-enhancer upgrade` checks with the key of the build already installed. Once, in
 your own terminal:
 
 ```bash

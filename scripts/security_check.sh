@@ -12,7 +12,7 @@ app="$FB_APP_DIR"
 python3 - "$app" <<'PY'
 from pathlib import Path
 import sys
-if Path(sys.argv[1]).resolve() == (Path.home() / '.iterm-filebrowser/state').resolve():
+if Path(sys.argv[1]).resolve() == (Path.home() / '.iterm-enhancer/state').resolve():
     raise SystemExit('Integration tests refuse the live state directory, including symlinks')
 PY
 if [ "$?" != 0 ]; then exit 1; fi

@@ -261,7 +261,7 @@ const stream = new Stream({
     upgrade.lost(() => {
       $("dot").className = "dot off";
       if (lastUnproven) authFailed(true);
-      else notice("Backend not running", "fbd is not reachable; retrying. Check that iTerm2's Python API is enabled and see ~/.iterm-filebrowser/logs/fbd.log.");
+      else notice("Backend not running", "fbd is not reachable; retrying. Check that iTerm2's Python API is enabled and see ~/.iterm-enhancer/logs/fbd.log.");
     });
   },
 });

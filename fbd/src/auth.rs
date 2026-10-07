@@ -14,12 +14,12 @@ use crate::http::err;
 use crate::local::same;
 use crate::Shared;
 
-/// `FB_APP_DIR`, default `~/.iterm-filebrowser/state` (tests use their own): private (0700)
+/// `FB_APP_DIR`, default `~/.iterm-enhancer/state` (tests use their own): private (0700)
 /// and ours, or fbd does not start; what is in it is only for this user (AC-07).
 pub fn app_dir() -> PathBuf {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let dir = std::env::var_os("FB_APP_DIR").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(std::env::var("HOME").expect("HOME")).join(".iterm-filebrowser/state")
+        PathBuf::from(std::env::var("HOME").expect("HOME")).join(".iterm-enhancer/state")
     });
     std::fs::create_dir_all(&dir).expect("create app dir");
     let meta = std::fs::metadata(&dir).expect("app dir");

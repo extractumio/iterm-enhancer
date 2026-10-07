@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 """Enabling a remote host (AC-38), for the panel's Enable button (through the bridge) and
-the `iterm-filebrowser hosts enable` command: read the host's platform, copy the agent the
+the `iterm-enhancer hosts enable` command: read the host's platform, copy the agent the
 running build carries for it, check it answers through a trial tunnel, record the host."""
 import http.client
 import socket

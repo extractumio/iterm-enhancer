@@ -174,7 +174,7 @@ class ClosureTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_creation_guard_checks_local_uncommitted_marker_and_durable_source(self):
         observer, capture, _ = self.fixture()
-        observer.known["created"] = "File Browser Restore " + "0" * 16 + ":source"
+        observer.known["created"] = "iterm-enhancer Restore " + "0" * 16 + ":source"
         observer.queue("created", False)
         observer.poll = AsyncMock()
         capture.lifecycle = observer
@@ -205,7 +205,7 @@ class ClosureTest(unittest.IsolatedAsyncioTestCase):
     async def test_failed_owned_ssh_and_tmux_launch_remain_eligible_for_retry(self):
         for kind in ("ssh", "tmux"):
             observer, capture, watch = self.fixture()
-            marker = "File Browser Restore " + "0" * 16 + ":source"
+            marker = "iterm-enhancer Restore " + "0" * 16 + ":source"
             observer.remember(marker, {"id":"source", "connection":{"kind":kind}})
             observer.inventory.return_value = {"pane":session(marker=marker)}
             await self.poll(observer, 0)
@@ -226,7 +226,7 @@ class ClosureTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_restart_observes_ended_controlled_connection_as_unknown_failure_not_exit(self):
         observer, capture, _ = self.fixture()
-        marker = "File Browser Restore " + "0" * 16 + ":source"
+        marker = "iterm-enhancer Restore " + "0" * 16 + ":source"
         observer.remember(marker, {"id":"source", "connection":{"kind":"ssh"}})
         observer.inventory.return_value = {"pane":session(marker=marker)}
         with patch("fbbridge.recovery_lifecycle.session_state", AsyncMock(return_value="ended")):
@@ -237,7 +237,7 @@ class ClosureTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_successful_connection_exit_retires_and_closes_only_exact_owned_diagnostics(self):
         observer, capture, watch = self.fixture()
-        marker = "File Browser Restore " + "0" * 16 + ":source"
+        marker = "iterm-enhancer Restore " + "0" * 16 + ":source"
         s = session(marker=marker)
         s.async_close = AsyncMock()
         observer.remember(marker, {"id":"source", "connection":{"kind":"ssh"}})
@@ -275,8 +275,8 @@ class ClosureTest(unittest.IsolatedAsyncioTestCase):
     async def test_old_diagnostics_do_not_retire_live_replacement_even_before_new_journal_ack(self):
         for generations in (False, True):
             observer, capture, _ = self.fixture()
-            old_marker = "File Browser Restore " + "0" * 16 + ":original"
-            new_marker = "File Browser Restore " + "1" * 16 + ":old" if generations else old_marker
+            old_marker = "iterm-enhancer Restore " + "0" * 16 + ":original"
+            new_marker = "iterm-enhancer Restore " + "1" * 16 + ":old" if generations else old_marker
             observer.remember(old_marker, {"id":"original","connection":{"kind":"ssh"}})
             observer.remember(new_marker, {"id":"old" if generations else "original","connection":{"kind":"ssh"}})
             observer.known["old"] = old_marker
@@ -303,7 +303,7 @@ class ClosureTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_expired_source_marker_does_not_block_inventory_but_backend_outage_is_reported(self):
         observer, capture, _ = self.fixture()
-        marker = "File Browser Restore " + "0" * 16 + ":expired"
+        marker = "iterm-enhancer Restore " + "0" * 16 + ":expired"
         observer.inventory.return_value = {"pane":session(marker=marker)}
         capture.call.return_value = {"entries":[]}
         await self.poll(observer, 0)

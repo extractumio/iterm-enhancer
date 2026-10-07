@@ -23,8 +23,8 @@ REPO = Path(__file__).resolve().parents[1]
 def require_private_state():
     """Internal child modes refuse live state before importing/starting the backend."""
     value = os.environ.get("FB_APP_DIR")
-    root = Path(os.environ.get("FB_ROOT", Path.home() / ".iterm-filebrowser"))
-    live = {(root / "state").resolve(), (Path.home() / ".iterm-filebrowser/state").resolve()}
+    root = Path(os.environ.get("FB_ROOT", Path.home() / ".iterm-enhancer"))
+    live = {(root / "state").resolve(), (Path.home() / ".iterm-enhancer/state").resolve()}
     if not value or Path(value).resolve() in live:
         raise SystemExit("Integration child requires an isolated FB_APP_DIR; live state is refused")
 

@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-NAMESPACE = "iterm-filebrowser-release"
+NAMESPACE = "iterm-enhancer-release"
 KEY = Path(os.environ.get("FB_RELEASE_KEY") or Path.home() / ".config/iterm-filebrowser/release-key")
 
 

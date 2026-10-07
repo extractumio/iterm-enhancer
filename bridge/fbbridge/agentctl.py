@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 """Agents on remote hosts (AC-37, AC-38), shared by the bridge and the
-`iterm-filebrowser` command: the record of enabled hosts, copying an agent over ssh, and
+`iterm-enhancer` command: the record of enabled hosts, copying an agent over ssh, and
 the ssh process that carries a running agent and forwards its socket. A host is its ssh
 arguments (`target`, as iTerm2's tmux gateway ran them: ["devbox.example"], ["-p", "2222", "a@vm"]);
 its key is those arguments joined. Plain ssh with the user's own config; BatchMode, so a
@@ -21,7 +21,7 @@ from .common import APP_DIR
 from .sshargs import key as key_of
 
 RECORD = APP_DIR / "agents.json"
-HOME_DIR = ".iterm-filebrowser"                              # on the host: bin/, logs/ (AC-38)
+HOME_DIR = ".iterm-enhancer"                              # on the host: bin/, logs/ (AC-38)
 SSH = os.environ.get("FB_SSH", "ssh")                         # tests use a fake
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 # what `uname -sm` says → the agent's platform name (Rust's os-arch)
@@ -134,9 +134,9 @@ def probe(target):
 
 
 def install(target, binary, agent_id):
-    """Copy `binary` to ~/.iterm-filebrowser/bin/fbd-agent-<agent id> on the host through a
+    """Copy `binary` to ~/.iterm-enhancer/bin/fbd-agent-<agent id> on the host through a
     temporary name, point bin/fbd-agent at it, keep one older version, and check it answers
-    with `agent_id` (AC-38: a place the user finds; logs go to ~/.iterm-filebrowser/logs).
+    with `agent_id` (AC-38: a place the user finds; logs go to ~/.iterm-enhancer/logs).
     Never bin/fbd: a Mac host keeps its own install in the same folder (AC-40)."""
     if not re.fullmatch(r"[0-9a-f]{12}|dev", agent_id):  # it goes into a remote shell line
         raise AgentError(f"not an agent id: {agent_id!r}")
@@ -149,7 +149,6 @@ def install(target, binary, agent_id):
               f'mv -f "$tmp" "$d/bin/fbd-agent-{agent_id}"; '
               f'ln -s "fbd-agent-{agent_id}" "$link"; mv -f "$link" "$d/bin/fbd-agent"; '
               f'ls -1t "$d/bin" | grep "^fbd-agent-" | grep -v "^fbd-agent-{agent_id}$" | tail -n +2 | while read -r f; do rm -f "$d/bin/$f"; done; '
-              f'rm -rf "$HOME/.local/lib/iterm-filebrowser/agent"; '   # Stage 8's helper only (a Mac host keeps its own install)
               f'"$d/bin/fbd-agent-{agent_id}" --agent-id')
     got = ssh(target, script, stdin=Path(binary).read_bytes(), timeout=300).strip()
     if got != agent_id:

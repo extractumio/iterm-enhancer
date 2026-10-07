@@ -58,7 +58,7 @@ class Site:
         try:
             mtime = TOKEN_FILE.stat().st_mtime_ns
         except FileNotFoundError:
-            raise httpd.HttpError(502, "The file browser backend (fbd) has no token yet; is iTerm2 running?")
+            raise httpd.HttpError(502, "The iterm-enhancer backend (fbd) has no token yet; is iTerm2 running?")
         if self._token[0] != mtime:
             self._token = (mtime, TOKEN_FILE.read_text().strip())
         return self._token[1]

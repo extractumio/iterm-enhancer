@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-"""Build the Mac package (AC-40): one folder, iterm-filebrowser/, that installs itself.
+"""Build the Mac package (AC-40): one folder, iterm-enhancer/, that installs itself.
 
     BUILD, AGENT_ID                  which build this is; which fbd sources
     agents/<platform>/fbd            fbd for macOS arm64/x86_64 and Linux x86_64/arm64
     bridge/fb_bridge.py, fbbridge/   the iTerm2 AutoLaunch bridge
     scripts/                         the installer and the command's code
-    iterm-filebrowser                the command (install, upgrade, rollback, hosts …)
+    iterm-enhancer                the command (install, upgrade, rollback, hosts …)
 
 The Mac's own fbd is the macOS agent of its architecture (chosen at install). `--stage`
 leaves the folder for `make install`; without it a tarball and SHA256SUMS are written too,
@@ -27,10 +27,10 @@ import agents
 
 REPO = agents.REPO
 OUT = REPO / "dist/package"
-NAME = "iterm-filebrowser"
-TARBALL = "iterm-filebrowser-macos.tar.gz"
+NAME = "iterm-enhancer"
+TARBALL = "iterm-enhancer-macos.tar.gz"
 COPY = ["bridge/fb_bridge.py", "scripts/install.py", "scripts/install_launch.py", "scripts/cli.py",
-        "scripts/iterm-filebrowser", "release-signers", "LICENSE", "LICENSE-COMMERCIAL.md", "README.md"]
+        "scripts/iterm-enhancer", "release-signers", "LICENSE", "LICENSE-COMMERCIAL.md", "README.md"]
 
 
 def build_macos(build):
@@ -50,7 +50,7 @@ def stage(build):
     shutil.rmtree(pkg, ignore_errors=True)
     (pkg / "scripts").mkdir(parents=True)
     for rel in COPY:
-        dest = pkg / rel.replace("scripts/iterm-filebrowser", "iterm-filebrowser")
+        dest = pkg / rel.replace("scripts/iterm-enhancer", "iterm-enhancer")
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO / rel, dest)
     shutil.copytree(REPO / "bridge/fbbridge", pkg / "bridge/fbbridge", ignore=shutil.ignore_patterns("__pycache__"))
@@ -65,7 +65,7 @@ def stage(build):
         shutil.copy2(path, pkg / "agents" / platform / "fbd")
     (pkg / "BUILD").write_text(build + "\n")
     (pkg / "AGENT_ID").write_text(agents.agent_id() + "\n")
-    os.chmod(pkg / "iterm-filebrowser", 0o755)
+    os.chmod(pkg / "iterm-enhancer", 0o755)
     return pkg
 
 

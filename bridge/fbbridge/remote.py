@@ -171,7 +171,7 @@ class Remotes:
             try:
                 binary = hosts.binary_for(platform)
             except agentctl.AgentError as e:
-                raise agentctl.AgentError(f"helper outdated · iterm-filebrowser hosts enable {key}: {e}") from e
+                raise agentctl.AgentError(f"helper outdated · iterm-enhancer hosts enable {key}: {e}") from e
             with self._lifecycle(key):
                 if owner is not None and not self._owns(key, owner):
                     return t

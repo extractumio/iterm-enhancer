@@ -29,9 +29,9 @@ class IntegrationDirectoryTest(unittest.TestCase):
         guard = runpy.run_path(str(SCRIPTS / "e2e_isolated.py"))["require_private_state"]
         with tempfile.TemporaryDirectory() as root:
             home = Path(root) / "home"; home.mkdir()
-            live = home / ".iterm-filebrowser/state"; live.mkdir(parents=True)
+            live = home / ".iterm-enhancer/state"; live.mkdir(parents=True)
             alias = Path(root) / "alias"; alias.symlink_to(live, target_is_directory=True)
-            with mock.patch.object(Path, "home", return_value=home), mock.patch.dict(os.environ, {"FB_ROOT":str(home / ".iterm-filebrowser")}):
+            with mock.patch.object(Path, "home", return_value=home), mock.patch.dict(os.environ, {"FB_ROOT":str(home / ".iterm-enhancer")}):
                 for state in ("", str(live), str(alias)):
                     with mock.patch.dict(os.environ, {"FB_APP_DIR":state}), self.assertRaisesRegex(SystemExit, "isolated FB_APP_DIR"):
                         guard()
@@ -41,7 +41,7 @@ class IntegrationDirectoryTest(unittest.TestCase):
     def test_security_script_refuses_missing_live_and_symlinked_state(self):
         with tempfile.TemporaryDirectory() as root:
             home = Path(root) / "home"; home.mkdir()
-            live = home / ".iterm-filebrowser/state"; live.mkdir(parents=True)
+            live = home / ".iterm-enhancer/state"; live.mkdir(parents=True)
             alias = Path(root) / "alias"; alias.symlink_to(live, target_is_directory=True)
             for state in ("", str(live), str(alias)):
                 env = dict(os.environ, HOME=str(home), FB_APP_DIR=state)

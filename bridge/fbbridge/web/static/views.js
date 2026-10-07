@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-// Terminal, Files and File (the session list is the drawer). Files is the File Browser's panel
+// Terminal, Files and File (the session list is the drawer). Files is iterm-enhancer's panel
 // pinned to the shown session; File is its viewer and editor, where every file opened from Files
 // gets a tab. Below WIDE they are three views in the same place; at WIDE and up Files is docked
 // on the right and File is a window over the terminal, each closed with its own [x].

@@ -60,7 +60,7 @@ def child():
             commands = asyncio.Queue()
             backend.listen_commands(asyncio.get_running_loop(), commands)
             await asyncio.sleep(0.2)
-            source_window = await iterm2.Window.async_create(conn, profile_customizations=profile(APP_DIR, "File Browser Test connection source"))
+            source_window = await iterm2.Window.async_create(conn, profile_customizations=profile(APP_DIR, "iterm-enhancer Test connection source"))
             owned.add(source_window.window_id)
             capture = Capture(conn, app, type("Windows", (), {"viewer_id":None})(), backend, window_ids=owned)
             await Startup(capture, Runner(capture)).initialize()
@@ -69,7 +69,7 @@ def child():
             pane.update(connection={"kind":"ssh", "args":["devbox.example"]}, cwd=None, cwd_status="unknown")
             saved = await capture.call("POST", "/internal/recovery/capture", {"snapshot":snapshot,"force":True})
             selected = saved["id"]
-            marker = f"File Browser Restore {selected}:{pane['id']}"
+            marker = f"iterm-enhancer Restore {selected}:{pane['id']}"
             await source_window.async_close(force=True)  # simulate loss before attaching observer
             await app.async_refresh()
             observer = Lifecycle(capture)

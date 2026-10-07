@@ -1,6 +1,6 @@
 # Commercial license
 
-iTerm2 File Browser is dual-licensed:
+iterm-enhancer is dual-licensed:
 
 | License | Who it is for | Main terms |
 |---|---|---|

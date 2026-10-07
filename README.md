@@ -1,4 +1,4 @@
-# iTerm2 File Browser
+# iterm-enhancer
 
 An IDE-style **Files** panel in every iTerm2 window (View → Toolbelt → Files) that always shows
 the folder of the pane you work in, and an optional **web terminal** that brings your iTerm2
@@ -53,7 +53,7 @@ curl -fsSL https://github.com/extractumio/iterm-extension/releases/latest/downlo
 Then in iTerm2: **View → Toolbelt → Show Toolbelt** and check **Files**. Needs macOS 14+,
 iTerm2 3.5+ with **Settings → General → Magic → Enable Python API**, no build tools (tmux 3.2+
 for tmux panes). The installer checks the release's signature and installs into
-`~/.iterm-filebrowser/` plus the bridge in iTerm2's AutoLaunch. It also turns on iTerm2's
+`~/.iterm-enhancer/` plus the bridge in iTerm2's AutoLaunch. It also turns on iTerm2's
 session restoration and shell integration for shell and SSH profiles, and says which settings
 it changed (a changed restoration setting takes effect after restarting iTerm2).
 
@@ -63,9 +63,9 @@ Pane state lives 14 days without use (`FB_WORKSPACE_TTL_DAYS`); closed windows' 
 ## Upgrade
 
 ```bash
-~/.iterm-filebrowser/bin/iterm-filebrowser upgrade              # the latest signed release
-~/.iterm-filebrowser/bin/iterm-filebrowser upgrade --to v0.18.0 # a given one
-~/.iterm-filebrowser/bin/iterm-filebrowser status               # running build, bridge, panels, hosts, web
+~/.iterm-enhancer/bin/iterm-enhancer upgrade              # the latest signed release
+~/.iterm-enhancer/bin/iterm-enhancer upgrade --to v0.18.0 # a given one
+~/.iterm-enhancer/bin/iterm-enhancer status               # running build, bridge, panels, hosts, web
 ```
 
 The bridge restarts by itself and open panels reload (after saving unsaved edits). `panels`
@@ -75,7 +75,7 @@ iTerm2 keeps the old ones hidden until it quits.
 About once a day the bridge asks GitHub for the latest release (nothing of yours is sent).
 A newer one shows a chip such as `↑ v0.21.0` in the panel header: **Copy upgrade command**,
 **Skip** it, or **Don't check for updates** (undo: delete
-`~/.iterm-filebrowser/state/no-update-check`). Only releases signed by the maintainer's key
+`~/.iterm-enhancer/state/no-update-check`). Only releases signed by the maintainer's key
 install; its fingerprint is in every release's notes.
 
 ## Save and restore terminals
@@ -96,38 +96,38 @@ are still alive (no need to start tmux first).
   remote folder from shell integration). **tmux** servers that survived keep their jobs; lost
   local ones come back with shells; lost remote ones need manual recovery.
 - **Not restored**: running programs (Claude, Codex, …; recorded by name), output, history,
-  environment, exact Spaces placement. Checkpoints live in `~/.iterm-filebrowser/state/recovery`
+  environment, exact Spaces placement. Checkpoints live in `~/.iterm-enhancer/state/recovery`
   (at most 64 or 128 MiB).
 
 Real reboots, interactive SSH and tmux -CC recovery still need owner validation; details and
-limits are in the [spec](docs/specs/iterm-file-browser.md).
+limits are in the [spec](docs/specs/iterm-enhancer.md).
 
 ## Uninstall
 
 ```bash
-~/.iterm-filebrowser/bin/iterm-filebrowser hosts remove devbox.example   # first, per remote host (optional)
-~/.iterm-filebrowser/bin/iterm-filebrowser uninstall
+~/.iterm-enhancer/bin/iterm-enhancer hosts remove devbox.example   # first, per remote host (optional)
+~/.iterm-enhancer/bin/iterm-enhancer uninstall
 ```
 
 This stops the bridge and fbd and removes the builds, the command and the AutoLaunch entry;
-your settings and logs stay in `~/.iterm-filebrowser` (delete it to remove them). To take
+your settings and logs stay in `~/.iterm-enhancer` (delete it to remove them). To take
 **Files** out of the Toolbelt menu, quit iTerm2 and run `make clean-registrations` in a checkout.
 
 ## Installed layout and commands
 
 ```text
-~/.iterm-filebrowser/
-  bin/      iterm-filebrowser (add this folder to your PATH), fbd
+~/.iterm-enhancer/
+  bin/      iterm-enhancer (add this folder to your PATH), fbd
   builds/   one folder per build; current, previous
   logs/     bridge.log, fbd.log
   state/    token, workspaces.json, agents.json (remote hosts), web.json (web access; password as a hash)
 ```
 
 ```bash
-iterm-filebrowser                       # status
-iterm-filebrowser upgrade | rollback | uninstall
-iterm-filebrowser hosts [enable <ssh args> | remove <host>]
-iterm-filebrowser web [on [--port N] [--host A] | off | password]
+iterm-enhancer                       # status
+iterm-enhancer upgrade | rollback | uninstall
+iterm-enhancer hosts [enable <ssh args> | remove <host>]
+iterm-enhancer web [on [--port N] [--host A] | off | password]
 ```
 
 From a checkout: `make install` (and `make toolchain` once for the Linux helpers), `make
@@ -142,11 +142,11 @@ work"`) can show that machine's files. The first time you focus it, the panel as
 hand, no password. The panel then shows `devbox:/path` and works as for local files: open,
 edit, save, create, rename, Trash, live refresh.
 
-- The helper (`~/.iterm-filebrowser/bin/fbd-agent` on the host) runs only while your Mac is
+- The helper (`~/.iterm-enhancer/bin/fbd-agent` on the host) runs only while your Mac is
   connected, as your user, writes only under your home and /tmp, and opens no network port.
 - Upgrades on the Mac update every host's helper by themselves.
 - **Not now** hides the question until iTerm2 restarts; the context menu has **Browse Files
-  of devbox…** and **Remove Helper from devbox…**; from the command line: `iterm-filebrowser
+  of devbox…** and **Remove Helper from devbox…**; from the command line: `iterm-enhancer
   hosts`, `hosts enable devbox.example` (any ssh options), `hosts remove devbox.example`.
 - Helpers exist for macOS (arm64, x86_64) and Linux (x86_64, arm64); plain ssh panes and mosh
   stay frozen as `REMOTE`.
@@ -157,10 +157,10 @@ Your iTerm2 sessions and their files in a browser on another device. Off until y
 on, in a terminal or with the globe button in the Files header:
 
 ```bash
-iterm-filebrowser web on        # asks for a password (8+ characters) the first time
-iterm-filebrowser web           # on or off, its addresses, and any error
-iterm-filebrowser web off
-iterm-filebrowser web password  # change it (or FB_WEB_PASSWORD for a script)
+iterm-enhancer web on        # asks for a password (8+ characters) the first time
+iterm-enhancer web           # on or off, its addresses, and any error
+iterm-enhancer web off
+iterm-enhancer web password  # change it (or FB_WEB_PASSWORD for a script)
 ```
 
 Open one of the addresses (default port 8765, every network of this Mac; `--port`, `--host`)
@@ -197,7 +197,7 @@ iTerm2 ──Python API──▶ fb_bridge.py ──POST /internal/state──�
 | Bridge | `bridge/fb_bridge.py` + `bridge/fbbridge/` | iTerm2 AutoLaunch script: starts `fbd`, registers the tool, follows the focused pane's cwd and theme, opens viewer windows, types into the terminal on request, serves web access when it is on (`fbbridge/web/`) |
 | Backend | `fbd/` | Rust (axum): listings, file operations, per-pane workspaces, FSEvents watcher, events over a WebSocket; serves the embedded UI; stays on loopback |
 | UI | `ui/` | TypeScript: virtual tree, CodeMirror 6 viewer/editor, markdown-it rendering |
-| Spec | `docs/specs/iterm-file-browser.md` | Behavior as BDD scenarios, design, limits, test evidence |
+| Spec | `docs/specs/iterm-enhancer.md` | Behavior as BDD scenarios, design, limits, test evidence |
 
 ## Keys
 
@@ -229,19 +229,19 @@ Environment of `fbd` (the bridge passes its own environment through):
 | `FB_LIST_CACHE_MB` | `128` | memory for cached listings |
 | `FB_TEXT_MAX_BYTES` | `10485760` | larger files open read-only, first 1 MB |
 | `FB_WORKSPACE_TTL_DAYS` | `14` | idle pane state is dropped after this |
-| `FB_APP_DIR` | `~/.iterm-filebrowser/state` | token and workspace folder (tests use their own) |
+| `FB_APP_DIR` | `~/.iterm-enhancer/state` | token and workspace folder (tests use their own) |
 | `FB_LOG` | `info` | log level |
 | `FB_BIN` | its build's `fbd` | the bridge starts this fbd binary instead |
 | `FB_AUTO_TOOLBELT` | `1` | `0` stops showing the Toolbelt in new windows |
 | `FB_BUILD_ID` | the compiled build | lets a test play another build (AC-34) |
 
-Logs: `~/.iterm-filebrowser/logs/{fbd,bridge}.log`.
+Logs: `~/.iterm-enhancer/logs/{fbd,bridge}.log`.
 
 ## Troubleshooting
 
 | The panel says | Why | Fix |
 |---|---|---|
-| **Backend not running** | `fbd` is not up: the bridge is stopped or iTerm2's Python API is off | Enable the Python API; `make restart`; see `~/.iterm-filebrowser/logs/` |
+| **Backend not running** | `fbd` is not up: the bridge is stopped or iTerm2's Python API is off | Enable the Python API; `make restart`; see `~/.iterm-enhancer/logs/` |
 | **Not following iTerm2** | `fbd` runs but no bridge reports the focused pane (the bridge was stopped or hangs); the tree still works but no longer follows `cd` | `make restart` or Scripts → AutoLaunch → fb_bridge.py; see `bridge.log`. A bridge exits with its iTerm2 and a new one replaces a leftover one |
 | **Viewer window failed: … did not load as a browser** | iTerm2 could not load the "Files Viewer" profile as a browser profile, even after the bridge reloaded it | Install iTerm2's browser plugin (see iTerm2's web browser documentation), then ⌘-click again; `bridge.log` has the details |
 | **Install of … failed** / **Upgrade to … failed; rolled back** | the new build did not report healthy within 10 s | see `bridge.log` and `fbd.log`; the build before keeps running |

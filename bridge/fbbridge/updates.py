@@ -33,7 +33,7 @@ def newer(latest, current):
 
 def latest_tag(releases=RELEASES, timeout=5):
     """The tag `<releases>/latest` redirects to, or None; only a well-formed tag counts."""
-    request = urllib.request.Request(f"{releases}/latest", method="HEAD", headers={"User-Agent": "iterm-filebrowser-update-check"})
+    request = urllib.request.Request(f"{releases}/latest", method="HEAD", headers={"User-Agent": "iterm-enhancer-update-check"})
     context = ssl.create_default_context(cafile=SYSTEM_CA if os.path.isfile(SYSTEM_CA) else None)  # still verified
     with urllib.request.urlopen(request, timeout=timeout, context=context) as r:
         tag = r.geturl().rstrip("/").rsplit("/", 1)[-1]

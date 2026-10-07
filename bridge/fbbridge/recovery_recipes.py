@@ -100,7 +100,7 @@ def capture_ssh_recipe(argv):
 def directory_bootstrap(cwd, command):
     """The cwd may disappear after preflight; retain an interactive shell and diagnostic."""
     return (f"if ! cd -- {shlex.quote(cwd)}; then "
-            "printf '%s\\n' 'File Browser: recorded directory unavailable; opening shell in home or filesystem root' >&2; "
+            "printf '%s\\n' 'iterm-enhancer: recorded directory unavailable; opening shell in home or filesystem root' >&2; "
             'cd -- "$HOME" || cd / || exit 1; fi; exec ' + command)
 
 

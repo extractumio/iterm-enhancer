@@ -57,7 +57,7 @@ class FetchTest(unittest.TestCase):
         Releases.tag = "v0.19.0"
         self.assertEqual(updates.latest_tag(self.url), "v0.19.0")
         self.assertEqual([h[0] for h in Releases.hits], ["/rel/latest", "/rel/tag/v0.19.0"])
-        self.assertTrue(all(h[1] == "iterm-filebrowser-update-check" and h[2] is None for h in Releases.hits))
+        self.assertTrue(all(h[1] == "iterm-enhancer-update-check" and h[2] is None for h in Releases.hits))
 
     def test_a_tag_that_is_not_a_release_is_dropped(self):
         for tag in ("nightly", "v1.2.3-rc1", "v1.2.3%3Cb%3E"):

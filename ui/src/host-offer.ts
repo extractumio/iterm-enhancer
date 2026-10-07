@@ -28,7 +28,7 @@ export function renderOffer(el: HTMLElement, r?: Remote) {
   el.dataset.at = at;
   const busy = r.state === "enabling";
   el.innerHTML = `<b>${esc(r.name)} is a remote host.</b>Browse its files here? This copies a small helper ` +
-    `(about 6 MB) to ~/.iterm-filebrowser on ${esc(r.name)} over your ssh connection; it runs only while you use it.` +
+    `(about 6 MB) to ~/.iterm-enhancer on ${esc(r.name)} over your ssh connection; it runs only while you use it.` +
     `<div class="actions"><button class="btn sm primary" data-a="enable"${busy ? " disabled" : ""}>${busy ? "Setting up…" : "Enable"}</button>` +
     `<button class="btn sm" data-a="dismiss"${busy ? " disabled" : ""}>Not now</button></div>`;
   el.onclick = (e) => {
@@ -48,7 +48,7 @@ export function hostEntries(r?: Remote): MenuEntry[] {
 export async function hostMenu(id: string, r: Remote) {
   if (id === "host-enable") return void act("enable", r.key);
   const choice = await ask(`Remove the helper from ${r.name}?`,
-    `This closes the connection and deletes ~/.iterm-filebrowser on ${r.name}. Browse its files again any time from this menu.`,
+    `This closes the connection and deletes ~/.iterm-enhancer on ${r.name}. Browse its files again any time from this menu.`,
     [{ id: "remove", label: "Remove", danger: true }, { id: "cancel", label: "Cancel", primary: true }]);
   if (choice === "remove") void act("remove", r.key);
 }

@@ -31,7 +31,7 @@ ZIG = "0.15.2"            # the ziglang wheel (zig as linker for the Linux targe
 ZIGBUILD = "0.23.4"       # cargo-zigbuild
 TARGETS = {"macos-aarch64": "aarch64-apple-darwin", "macos-x86_64": "x86_64-apple-darwin",
            "linux-x86_64": "x86_64-unknown-linux-musl", "linux-aarch64": "aarch64-unknown-linux-musl"}
-APP_DIR = Path(os.environ.get("FB_APP_DIR") or Path.home() / ".iterm-filebrowser/state")
+APP_DIR = Path(os.environ.get("FB_APP_DIR") or Path.home() / ".iterm-enhancer/state")
 
 
 class Failed(Exception):

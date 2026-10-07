@@ -69,7 +69,7 @@ pub fn start(socket: &Path) -> Setup {
 
 /// After "ready" nobody reads stdout or stderr, and ssh closes them when the Mac goes away
 /// (a log line written then would fail and panic the exit path, leaving the agent running):
-/// from here on they go to `--log <file>` (AC-38: ~/.iterm-filebrowser/logs/agent.log on
+/// from here on they go to `--log <file>` (AC-38: ~/.iterm-enhancer/logs/agent.log on
 /// the host; at 1 MB the file becomes <file>.1), else to /dev/null.
 fn quiet() {
     let args: Vec<String> = std::env::args().collect();

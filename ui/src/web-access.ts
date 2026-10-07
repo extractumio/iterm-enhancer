@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Web access (AC-52): a globe in the header says whether the sessions and files are served to a
 // browser on the network, switches it on or off, and gives its addresses. The password is set
-// in a terminal (`iterm-filebrowser web password`), never in a panel.
+// in a terminal (`iterm-enhancer web password`), never in a panel.
 
 import { apiOrToast, copyText, type TermState } from "./api";
 import { menu, type MenuEntry } from "./dialogs";
 
 const button = document.getElementById("web-access")!;
-const PASSWORD_COMMAND = "iterm-filebrowser web password";
+const PASSWORD_COMMAND = "iterm-enhancer web password";
 let web: TermState["web"];
 
 export function renderWeb(value: TermState["web"]) {

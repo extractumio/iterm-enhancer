@@ -105,7 +105,7 @@ class AgentsTest(unittest.TestCase):
 
     def test_install_and_remove_leave_a_mac_hosts_own_install(self):
         home = self.root / "home" / self.ctl.HOME_DIR
-        for rel in ("bin/fbd", "bin/iterm-filebrowser", "logs/fbd.log", "state/token"):
+        for rel in ("bin/fbd", "bin/iterm-enhancer", "logs/fbd.log", "state/token"):
             (home / rel).parent.mkdir(parents=True, exist_ok=True)
             (home / rel).write_text("mine")
         aid = "aaaaaaaaaaaa"
@@ -114,7 +114,7 @@ class AgentsTest(unittest.TestCase):
         (home / "logs/agent.log").write_text("x")
         self.ctl.remove(["mac"])
         self.assertEqual(sorted(str(p.relative_to(home)) for p in home.rglob("*") if p.is_file()),
-                         ["bin/fbd", "bin/iterm-filebrowser", "logs/fbd.log", "state/token"])
+                         ["bin/fbd", "bin/iterm-enhancer", "logs/fbd.log", "state/token"])
 
     def test_tunnel_reports_why_it_failed(self):
         with mock.patch.dict(os.environ, {"FAKE_SSH_FAIL": "connect to host vm port 22: Connection refused"}):
@@ -125,7 +125,7 @@ class AgentsTest(unittest.TestCase):
         self.assertIn("Connection refused", str(cm.exception))
 
     def test_two_macs_on_one_host_each_run_their_own_helper(self):
-        b = self.root / "home/.iterm-filebrowser/bin"
+        b = self.root / "home/.iterm-enhancer/bin"
         b.mkdir(parents=True)
         for aid in ("aaaaaaaaaaaa", "bbbbbbbbbbbb"):
             f = b / f"fbd-agent-{aid}"
@@ -339,7 +339,7 @@ class AgentsTest(unittest.TestCase):
                 mock.patch.object(self.remote.agentctl, "Tunnel", FakeTunnel), \
                 self.assertRaises(self.ctl.AgentError) as cm:
             self.remote.Remotes(lambda p, b: None)._connect("vm", ["vm"])
-        self.assertIn("iterm-filebrowser hosts enable vm", str(cm.exception))
+        self.assertIn("iterm-enhancer hosts enable vm", str(cm.exception))
 
 if __name__ == "__main__":
     unittest.main()

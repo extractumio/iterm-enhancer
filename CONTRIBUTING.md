@@ -29,5 +29,5 @@ make test                         # cargo test, typecheck, UI unit tests
 cd ui && node test/e2e_panel.mjs  # browser checks (once: npx playwright-core install chromium-headless-shell)
 ```
 
-Changes to behavior update `docs/specs/iterm-file-browser.md` (scenarios first) in the same
+Changes to behavior update `docs/specs/iterm-enhancer.md` (scenarios first) in the same
 pull request.

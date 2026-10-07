@@ -1,5 +1,5 @@
-# iTerm2 File Browser — build and install from a checkout (users install the package:
-# curl … install.sh | sh, then the iterm-filebrowser command; README).
+# iterm-enhancer — build and install from a checkout (users install the package:
+# curl … install.sh | sh, then the iterm-enhancer command; README).
 #   make install    build the package from this checkout and install it (first install or
 #                   upgrade; a build that does not come up healthy is rolled back)
 #   make upgrade    the same
@@ -44,7 +44,7 @@ test: ui
 
 install: ui
 	python3 scripts/package.py --stage
-	dist/package/iterm-filebrowser/iterm-filebrowser install
+	dist/package/iterm-enhancer/iterm-enhancer install
 
 # Remote hosts (AC-37 … AC-40): the pinned cross toolchain once, then the package carries
 # the helpers for macOS arm64/x86_64 and Linux x86_64/arm64

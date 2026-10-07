@@ -16,7 +16,7 @@ def find_fbd():
     """fbd of this bridge's own build first, so a bridge never starts another build's
     backend after `current` was switched (AC-33)."""
     # never any `fbd` on PATH: an unrelated program of that name would get the bridge secret
-    for cand in (os.environ.get("FB_BIN"), str(BUILD_DIR / "fbd"), str(Path.home() / ".iterm-filebrowser/bin/fbd")):
+    for cand in (os.environ.get("FB_BIN"), str(BUILD_DIR / "fbd"), str(Path.home() / ".iterm-enhancer/bin/fbd")):
         if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
             return cand
     raise SystemExit("fbd binary not found: run `make install`")

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-"""Web access inside the bridge (AC-52). Off unless switched on (CLI `iterm-filebrowser web on`,
+"""Web access inside the bridge (AC-52). Off unless switched on (CLI `iterm-enhancer web on`,
 or the panel's menu): the bridge follows web.json, starts or stops the server, and tells fbd
 the state so panels can show it. fbd itself stays on 127.0.0.1; the web server reaches it as a
 proxy that adds its token and lets only file work through (AC-53)."""
@@ -38,7 +38,7 @@ class WebAccess:
             await asyncio.sleep(FOLLOW_EVERY)
 
     async def switch(self, on):
-        """The panel's menu: switch on or off, as `iterm-filebrowser web on|off` does."""
+        """The panel's menu: switch on or off, as `iterm-enhancer web on|off` does."""
         await asyncio.get_running_loop().run_in_executor(None, lambda: config.update(enabled=on))
         await self.apply()
 
@@ -56,14 +56,14 @@ class WebAccess:
             if want:
                 await self.start(cfg, settings)
         if cfg and cfg["enabled"] and not cfg["password"]:
-            self.error = "Set a password first: iterm-filebrowser web password"
+            self.error = "Set a password first: iterm-enhancer web password"
         await self.report()
 
     async def start(self, cfg, settings):
         try:
             verify = config.verifier(cfg["password"])
         except (ValueError, TypeError) as e:
-            self.error = f"web.json holds a broken password; set it again: iterm-filebrowser web password ({e})"
+            self.error = f"web.json holds a broken password; set it again: iterm-enhancer web password ({e})"
             log(f"web: {self.error}")
             return
         addresses = await asyncio.get_running_loop().run_in_executor(None, lan_addresses)
@@ -71,7 +71,7 @@ class WebAccess:
         try:
             self.server = await httpd.serve(site.handle, cfg["host"], cfg["port"], site.body_limit)
         except OSError as e:
-            self.error = f"Port {cfg['port']} is not available ({e.strerror}); choose another: iterm-filebrowser web on --port N"
+            self.error = f"Port {cfg['port']} is not available ({e.strerror}); choose another: iterm-enhancer web on --port N"
             log(f"web: {self.error}")
             return
         self.site, self.running = site, settings
@@ -102,7 +102,7 @@ class WebAccess:
         r = await resolve(self.conn, session)
         place = self.remotes.place(r)
         if place["remote"] and not place["host"]:
-            return {"error": f"Files on {place['remote']['name']} need the File Browser's helper there: "
+            return {"error": f"Files on {place['remote']['name']} need iterm-enhancer's helper there: "
                              f"enable the host in the Files panel on the Mac."}
         if not place["cwd"]:
             return {"error": f"This session's folder is not known yet ({r.get('note') or r.get('mode')})."}
