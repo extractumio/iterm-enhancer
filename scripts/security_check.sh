@@ -35,6 +35,9 @@ check "restore w/o token" 401 "$(curl -s -o /dev/null -w '%{http_code}' -X POST 
 check "socket: recovery w/o secret" 401 "$(sock http://fbd/internal/recovery)"
 check "socket: capture w/o secret" 401 "$(sock -X POST -H 'Content-Type: application/json' -d '{}' http://fbd/internal/recovery/capture)"
 check "recovery over TCP" 404 "$(curl -s -o /dev/null -w '%{http_code}' -H "X-FB-Token: $tok" "$b/internal/recovery")"
+check "web switch w/o token" 401 "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"action":"on"}' "$b/api/web")"
+check "socket: web status w/o secret" 401 "$(sock -X POST -H 'Content-Type: application/json' -d '{}' http://fbd/internal/web)"
+check "web status over TCP" 404 "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "X-FB-Token: $tok" -d '{}' "$b/internal/web")"
 for action in startup startup/begin startup/finish lifecycle exit; do
   check "socket: $action w/o secret" 401 "$(sock -X POST -H 'Content-Type: application/json' -d '{}' "http://fbd/internal/recovery/$action")"
   check "$action over TCP" 404 "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "X-FB-Token: $tok" -d '{}' "$b/internal/recovery/$action")"

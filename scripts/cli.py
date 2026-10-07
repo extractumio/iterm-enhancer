@@ -9,8 +9,14 @@
     iterm-filebrowser hosts                     the remote hosts whose files you browse
     iterm-filebrowser hosts enable <ssh destination and options>
     iterm-filebrowser hosts remove <host>
+    iterm-filebrowser web                       web access: on or off, and its addresses
+    iterm-filebrowser web on [--port N] [--host ADDRESS]
+                                                serve the sessions and files to a browser
+    iterm-filebrowser web off
+    iterm-filebrowser web password              set or change its password (FB_WEB_PASSWORD, or asked)
 """
 import argparse
+import getpass
 import hashlib
 import os
 import re
@@ -45,6 +51,7 @@ def status():
     if h and h.get("windows") is not None:
         print(panels_line(h["ws_clients"], h["windows"]))
     hosts_list()
+    web_status(h)
 
 
 def panels_line(panels, windows):
@@ -166,6 +173,61 @@ def hosts_remove(key):
     print(f"removed the helper from {key}")
 
 
+def web_status(health=None):
+    """What the bridge reports (it knows the real addresses and errors); the settings when
+    iTerm2 is not running."""
+    from fbbridge.web import config, net
+    try:
+        cfg = config.load()
+    except ValueError as e:
+        return print(f"web:      {e}")
+    reported = (health or live.health(install.legacy(install.target("current"))) or {}).get("web")
+    if not cfg["enabled"]:
+        return print("web:      off (iterm-filebrowser web on)")
+    if not cfg["password"]:
+        return print("web:      on, but no password yet (iterm-filebrowser web password)")
+    if not reported:
+        return print(f"web:      on, port {cfg['port']}; served once iTerm2 runs")
+    print(f"web:      {'on' if reported['enabled'] else 'not serving'}, port {cfg['port']}"
+          + (f" — {reported['error']}" if reported.get("error") else ""))
+    for u in reported.get("urls", []):
+        print(f"          {u}")
+    if reported["enabled"] and cfg["host"] != "127.0.0.1" and net.firewall_on():
+        print("          macOS Firewall is on: if other devices get no answer, allow incoming connections for\n"
+              "          iTerm2's Python (macOS asks once; else System Settings → Network → Firewall → Options)")
+
+
+def ask_password():
+    pw = os.environ.get("FB_WEB_PASSWORD")
+    if pw is None:
+        pw = getpass.getpass("Web access password: ")
+        if getpass.getpass("Again: ") != pw:
+            sys.exit("The two passwords differ; nothing changed.")
+    return pw
+
+
+def web(cmd, port=None, host=None):
+    from fbbridge.web import config
+    try:
+        cfg = config.load()
+        changes = {k: v for k, v in (("port", port), ("host", host)) if v}
+        if cmd == "password" or (cmd == "on" and not cfg["password"]):
+            changes["password"] = config.hash_password(ask_password())
+        if cmd in ("on", "off"):
+            changes["enabled"] = cmd == "on"
+        cfg = config.update(**changes)
+    except ValueError as e:
+        sys.exit(f"Not changed: {e}")
+    if cmd == "off":
+        return print("web:      off; the bridge closes it within a few seconds")
+    if cmd == "password":
+        print("web:      password changed; browsers signed in before must sign in again")
+    if cfg["enabled"]:
+        print("web:      on; the bridge serves it within a few seconds" + ("" if cfg["host"] == "127.0.0.1" else
+              ".\n          Plain HTTP: on a network you do not trust, use HTTPS instead: tailscale serve --bg "
+              + str(cfg["port"])))
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="iterm-filebrowser", description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 1)[1])
@@ -180,6 +242,13 @@ def main(argv=None):
     e.add_argument("target", nargs=argparse.REMAINDER, help="as you would give them to ssh, e.g. devbox.example or -p 2222 alex@devbox.example")
     r = hs.add_parser("remove")
     r.add_argument("host")
+    w = sub.add_parser("web")
+    ws = w.add_subparsers(dest="wcmd")
+    on = ws.add_parser("on")
+    on.add_argument("--port", type=int, help="default 8765")
+    on.add_argument("--host", help="the address to listen on (default 0.0.0.0: every network of this Mac)")
+    ws.add_parser("off")
+    ws.add_parser("password")
     a = p.parse_args(argv)
     if a.cmd in (None, "status"):
         return status()
@@ -193,6 +262,10 @@ def main(argv=None):
         if a.hcmd == "remove":
             return hosts_remove(a.host)
         return hosts_list()
+    if a.cmd == "web":
+        if a.wcmd is None:
+            return web_status()
+        return web(a.wcmd, getattr(a, "port", None), getattr(a, "host", None))
     return install.main([a.cmd] + (["--from", str(HERE.parent)] if a.cmd == "install" else []))
 
 
