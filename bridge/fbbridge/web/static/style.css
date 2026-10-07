@@ -9,7 +9,7 @@
   --line: color-mix(in srgb, var(--t-fg) 16%, var(--t-bg));
   --muted: color-mix(in srgb, var(--t-fg) 58%, var(--t-bg));
   --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
-  --nav-w: 300px;
+  --nav-w: 300px; --side-w: 380px;
   --local: #4f9dff; --remote: #a98bff;     /* where a session runs: this Mac or another host */
   color-scheme: dark light;
 }
@@ -24,7 +24,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
 svg circle { fill: currentColor; stroke: none; }
 /* Only terminal text is selectable: a long press on a button or label must not select it. */
-#bar, #nav, #hotkeys, #menu, #bottom, #paused, #toast, button { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+#bar, #nav, #hotkeys, #menu, #bottom, #paused, #toast, .winhead, button { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 
 /* --app-h is the visible height (it shrinks while the iOS keyboard is up); see app.js. */
 #app { display: grid; grid-template-columns: var(--nav-w) 1fr; grid-template-rows: minmax(0, 1fr); height: var(--app-h, 100dvh); }
@@ -39,7 +39,13 @@ svg circle { fill: currentColor; stroke: none; }
   border-radius: 8px; padding: 7px 10px; }
 #filter::placeholder { color: var(--muted); }
 #sessions { overflow-y: auto; flex: 1; padding: 0 6px 16px; overscroll-behavior: contain; }
-.grp h2 { display: flex; align-items: baseline; gap: 6px; margin: 14px 8px 4px; font-size: 12px; font-weight: 600; }
+.grp h2 { margin: 10px 0 2px; font-size: 12px; font-weight: 600; }
+.grp h2 .toggle { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 4px 8px 4px 2px; border-radius: 6px;
+  text-align: left; font-weight: inherit; }
+.grp h2 .toggle:hover { background: var(--chrome-2); }
+.grp h2 .toggle svg { width: 14px; height: 14px; flex: 0 0 auto; align-self: center; color: var(--muted); transition: transform .15s; }
+.grp h2 .toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.grp h2 .count.on { color: var(--accent); font-weight: 600; }
 .grp h2 .where { color: var(--muted); font-weight: 400; }
 .host { color: var(--remote); font-weight: 500; }
 .grp h2 .host { font-size: 11px; }
@@ -121,9 +127,25 @@ svg circle { fill: currentColor; stroke: none; }
 #paused { position: absolute; top: calc(56px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
   z-index: 5; margin: 0; padding: 5px 12px; border-radius: 999px; font-size: 12px; white-space: nowrap;
   background: var(--chrome-2); border: 1px solid var(--line); color: var(--t-fg); }
-#bottom { position: absolute; right: 16px; bottom: 16px; width: 40px; height: 40px; border-radius: 50%;
-  display: grid; place-items: center; background: var(--chrome-2); border: 1px solid var(--line); }
-#main:has(#hotkeys:not([hidden])) #bottom { bottom: calc(16px + var(--keys-h, 104px)); }
+#bottom { position: absolute; right: 16px; bottom: calc(16px + var(--keys-h, 0px)); width: 40px; height: 40px;
+  border-radius: 50%; display: grid; place-items: center; background: var(--chrome-2); border: 1px solid var(--line); }
+
+/* ---------- floating keyboard and hot keys buttons (touch screens and narrow windows) ---------- */
+#fabs { display: none; position: absolute; right: 12px; z-index: 6; gap: 10px;
+  bottom: calc(12px + max(var(--keys-h, 0px), env(safe-area-inset-bottom))); }
+#fabs button { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--chrome-2) 85%, transparent); border: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  box-shadow: 0 4px 14px color-mix(in srgb, #000 35%, transparent); }
+#fabs button[aria-pressed="true"] { background: var(--accent); color: var(--t-bg); }
+@media (hover: none), (max-width: 860px) {
+  #fabs { display: flex; }
+  #keysbtn { display: none !important; }
+  #bottom { right: 14px; bottom: calc(66px + max(var(--keys-h, 0px), env(safe-area-inset-bottom))); }
+  #term { padding-bottom: 60px; }      /* the last line scrolls clear of the buttons */
+}
+/* A mouse and a hardware keyboard need no keyboard button. */
+@media (hover: hover) { #fabs #kbdbtn { display: none; } }
 
 /* ---------- hot keys panel ---------- */
 #hotkeys { background: var(--chrome); border-top: 1px solid var(--line);
@@ -185,10 +207,11 @@ svg circle { fill: currentColor; stroke: none; }
   .narrow-only { display: flex !important; }
   .item { padding-top: 10px; padding-bottom: 10px; }
 }
-@media (prefers-reduced-motion: reduce) { #nav { transition: none; } }
+@media (prefers-reduced-motion: reduce) { #nav, .grp h2 .toggle svg { transition: none; } }
 
 /* ---------- views: Terminal, Files, File ---------- */
-#main > iframe.view { flex: 1; width: 100%; min-height: 0; border: 0; background: var(--t-bg); }
+#main > iframe.view, #filewin > iframe { flex: 1; width: 100%; min-height: 0; border: 0; background: var(--t-bg); }
+#filewin { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #viewnote { flex: 1; margin: 0; padding: 24px 16px; color: var(--muted); }
 body:not([data-shown="term"]) .term-only, body:not([data-shown="term"]) #hotkeys,
 body:not([data-shown="term"]) #bottom, body:not([data-shown="term"]) #paused { display: none !important; }
@@ -196,3 +219,22 @@ body:not([data-shown="term"]) #bottom, body:not([data-shown="term"]) #paused { d
 #views svg { width: 18px; height: 18px; }
 #views button[aria-selected="true"] { background: var(--t-bg); color: var(--t-fg); }
 #views button:disabled { opacity: .35; cursor: default; }
+
+/* ---------- 1400px and wider: Files docked on the right, File a window over the terminal ---------- */
+.winhead { display: none; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 4px 14px;
+  background: var(--chrome); border-bottom: 1px solid var(--line); font-weight: 600; }
+body.wide #main { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+body.wide #main > * { grid-column: 1 / 2; }   /* both lines: an absolute child's auto end is the edge */
+body.wide #bar { grid-row: 1; }
+body.wide #status { grid-row: 2; }
+body.wide #term { grid-row: 3; }
+body.wide #hotkeys { grid-row: 4; }
+/* Positioned children are placed in the terminal's column, not over the docked Files. */
+body.wide #toast, body.wide #paused, body.wide #bottom, body.wide #fabs { grid-row: 1 / -1; }
+body.docked #sidehead { display: flex; grid-column: 2; grid-row: 1; min-height: 48px; border-left: 1px solid var(--line); }
+body.docked #files, body.docked #viewnote { grid-column: 2; grid-row: 2 / -1; width: var(--side-w);
+  height: auto; align-self: stretch; border-left: 1px solid var(--line); }
+body.wide #filewin { position: absolute; grid-row: 3; z-index: 7; top: 12px; right: 16px; bottom: 16px;
+  width: min(820px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  background: var(--chrome); box-shadow: 0 16px 40px color-mix(in srgb, #000 50%, transparent); }
+body.wide #filewin .winhead { display: flex; }

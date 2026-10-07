@@ -4,8 +4,8 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.23.0 |
-| Date | 2026-10-06 |
+| Version | 0.24.0 |
+| Date | 2026-10-07 |
 | Status | draft |
 | Author | Project maintainers |
 
@@ -13,6 +13,7 @@ Change log:
 
 | Version | Date | Change |
 |---|---|---|
+| 0.24.0 | 2026-10-07 | AC-52 and AC-53, from the owner: on touch screens and narrow windows the hot keys panel is hidden until asked and two floating buttons open and close the keyboard and the panel; hot keys ⇧Tab, ⇧← and ⇧↩; Shift+Enter (and Ctrl+Enter) are sent as their own key (CSI u `ESC[13;2u`), not as Enter; at 1400 px and wider Files is docked on the right like the session list, with × to close, and File is a window over the terminal; session groups collapse; fixed: Files and File wore the focused pane's colors instead of the shown pane's; Wrap/Grid/Fit is remembered per session and the last choice is the default for new session ids (they change when iTerm2 restarts or tmux -CC attaches again). Install: the PATH tip is cornflower blue (gray was unreadable). Choices: CSI u is how iTerm2 reports Shift+Enter to apps that ask for it (Claude Code, Codex, editors); a plain shell shows it as text, as in iTerm2 with that mode on |
 | 0.23.0 | 2026-10-06 | AC-52 and AC-53 (P1), from the owner: work with the iTerm2 sessions and their files from a browser on another device (iPhone, iPad) on the local network or over Tailscale: every window, tab and pane, the profile's look, typing, scrollback, selection, and the Files panel with its viewer and editor, "links opening". Owner decisions: listen on every address (0.0.0.0, plain HTTP; HTTPS through `tailscale serve`), a password given in the command line now, a setting later; switched on and off from the panel's menu or the CLI. Reviews (pragmatic): accepted: the browser never holds fbd's token (the proxy adds it and passes only file work), the proxy repeats fbd's Origin check before it rewrites Host and Origin, the web panel keeps a workspace of its own (`web:`), per-address sign-in brake, sign-in as an HttpOnly cookie, fbd's CSP kept (only the panel page's framing and connections change), a hidden page pauses its stream; rejected: a web listener inside fbd (fbd stays loopback-only; one language for the web side), a second fbd access tier with per-route policy (the proxy allowlist is the boundary now), web-panel liveness by connection instead of a 15-minute window (later). Second /simplify pass: one pane-location rule for the bridge and the web (`Remotes.place`), the proxy proves fbd (`/api/hello`) before its token goes out, the CLI shows the bridge's real web status (`/health`), one clipboard helper, one at-the-Mac flag in the context menu; skipped: one screen stream per session for several browsers, fbd-owned web keys, the bridge pushing the web pane's folder, shared bridge-status helpers in fbd |
 | 0.22.0 | 2026-10-06 | From the owner: (1) panel memory: iTerm2's WebKit processes holding Files panels showed 160–260 MB each; measured in Chromium against a private fbd: 3,000 state, recovery and file events and 300 open/close cycles of tabs, the dialog and the context menu leave the DOM flat (484 nodes) and the JS heap within 1.6 MB of the start (about 0.6 KB per tab cycle, CodeMirror's caches); a first count that grew was the test's own unreleased element handles; hours later the same WebKit processes held 40–90 MB without any action (reclaimable caches): no leak in the panel; the real cost is the hidden panels of earlier registrations (AC-41), counted by `status` (`panels:`). (2) Header: the mode badge moved to the second line, left of the path; the bridge's note on the pane moved to a footer. (3) Recovery dialog (AC-50): titled "Session Window Recovery" with an × button; "Automatic saving" and "Restore" are separate parts ("Save a new checkpoint now", "Restore selected"); the list hides unstable intermediates (stable ones, the newest of each run and the startup and job sources stay), groups by iTerm2 run and selects the newest checkpoint with a window, unless startup recovery is pending or a restore job is unfinished; it used fbd's `recommended`, which prefers the previous run's last stable checkpoint (crash recovery) and showed an old one. Pragmatic review: keep the crash's unstable last checkpoint and the job's, skip an empty newest one, keep seconds in labels and plurals right, no retention change at the source in this step |
 | 0.21.0 | 2026-10-05 | AC-51 (P1), from the owner: how do users learn that a new version exists? The bridge asks GitHub once a day (one `HEAD` of `<releases>/latest`, the tag read from the redirect) and tells fbd when that tag is newer than the running release; panels show a small chip with a menu to copy the upgrade command, skip that version or stop checking. Implementation review: spec section order, wall-clock daily check, certificate failures logged and the system CA bundle, a lost post retried, an accessible chip. Pragmatic review: the bridge, not fbd, makes the request (fbd would need an HTTP/TLS client, CLAUDE.md §4) and the panel's CSP stays closed; the panel never installs or types the command (a click on the loopback page must not become code execution; the signature check stays in the CLI); only the tag, shown as text, reaches the panel (no URL from the network); a persistent opt-out, because the bridge's environment is iTerm2's, not the shell's; checked daily rather than every 12 h; cut: a settings toggle, a link to GitHub, a fixed key in prefs |
@@ -1975,19 +1976,23 @@ Scenario: AC-52 happy path — switch on and sign in
 Scenario: AC-52 happy path — sessions
   Then the session list groups panes by iTerm2 window; a tmux -CC window shows as "tmux <session>" with its host
   And each row shows the title the user set, else the program's title, then program and folder; a blue laptop marks this Mac's panes, a violet server a remote host's, with its name
+  And a group's header collapses and expands it, remembered per browser; a collapsed group holding the shown pane marks its count, and a filter shows the matches of collapsed groups
   When the user opens a pane
   Then its screen appears in its profile's colors and font within 1 s, with the last 1000 lines of scrollback; scrolling up loads up to 10000
   And on a phone lines re-flow to the screen ("Wrap"); "Grid" keeps iTerm2's layout, "Fit" scales it to the width, and "Resize iTerm to this screen" (menu) changes the Mac's window until restored or the browser leaves
+  And the browser remembers the mode chosen for each pane (the last 100) and applies it when the page opens; a pane it has no choice for gets the mode chosen last
 
 Scenario: AC-52 happy path — typing
-  When the user types, uses the hot keys panel (keyboard, Copy, Paste, Tab, ^C, Esc, Ctrl, Alt, arrows, Home, End, PgUp, PgDn), or pastes
+  When the user types, uses the hot keys panel (Copy, Paste, Tab, ⇧Tab, ^C, ^D, Esc, Ctrl, Alt, ⇧←, ⇧↩, arrows, Home, End, PgUp, PgDn, ^Z, ^L, ^R), or pastes
   Then the bytes reach the pane as iTerm2 would send them, and the echo shows within 100 ms on this Mac's network
+  And Shift+Enter and Ctrl+Enter (and ⇧↩) send their own key, ESC[13;2u and ESC[13;5u, never Enter's CR
   And with "Show this session in iTerm" on, the pane's tab is selected in its window (not raised), because iTerm2 refreshes hidden tabs only a few times a second
 
 Scenario: AC-52 edge — selection and phones
   When the user selects text (or a finger is down) while the screen keeps changing
   Then updates pause with "Paused while you select" and catch up when the selection is cleared
   And a short tap opens the iOS keyboard, a long press selects, and the page shrinks above the keyboard and grows back when it closes
+  And on a touch screen or a window narrower than 861 px two floating buttons at the bottom right open and close the keyboard and the hot keys panel, which is hidden until asked (remembered per browser); they stay above the panel and the keyboard
   And a hidden page (another app, a locked phone) pauses its stream
 
 Scenario: AC-52 failure — wrong passwords, other sites, other names
@@ -2011,10 +2016,18 @@ Scenario: AC-52 edge — switch off, port in use, broken settings
 Scenario: AC-53 happy path — browse, view, edit
   Given a signed-in browser shows a pane of this Mac, or of a host whose helper is enabled (AC-37)
   When the user switches the view to "Files"
-  Then the Files panel shows that pane's folder (not the focused pane's), under a workspace of its own ("web:" + JSON [host, key]) that the Mac's panel for the same pane does not share
+  Then the Files panel shows that pane's folder (not the focused pane's), in that pane's profile colors and font (the page sends them; fbd's theme is the focused pane's), under a workspace of its own ("web:" + JSON [host, key]) that the Mac's panel for the same pane does not share
   When the user opens a file
   Then the view switches to "File": the viewer and editor, where every opened file is a tab; Save writes it as the Mac's panel would (AC-08)
   And the pane's folder changes follow when the user returns to Files; the folders shown are watched while the web panel is in use
+
+Scenario: AC-53 happy path — wide screens
+  Given the browser window is at least 1400 px wide
+  Then Files is docked on the right, full height, beside the terminal, until its × closes it (remembered per browser); the Files button opens and closes it
+  When the user opens a file
+  Then File is a window over the terminal, closed by its × or the File button; the terminal keeps its place and keyboard
+  And when the window narrows below 1400 px they return to views: an open File window becomes the File view, else the terminal is shown; widening docks Files again
+  And docked Files asks for the pane's folder again 0.7 s after each command line sent, so it follows a "cd"
 
 Scenario: AC-53 happy path — links and reveal
   When the user clicks a web link in a document

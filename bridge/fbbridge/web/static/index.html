@@ -59,14 +59,32 @@
     <div id="status" role="status" hidden></div>
     <!-- No whitespace inside: the terminal uses white-space: pre. -->
     <main id="term" class="wrap view"><p id="note" hidden>Older lines are not loaded. The browser keeps the most recent part of long histories to stay fast.</p><div id="hist"></div><div id="screen"></div></main>
+    <!-- At 1400px and wider Files is docked on the right and File floats over the terminal. -->
+    <div id="sidehead" class="winhead"><span>Files</span>
+      <button id="sideclose" class="icon" type="button" aria-label="Close the Files panel"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"/></svg></button>
+    </div>
     <iframe id="files" class="view" title="Files" hidden></iframe>
-    <iframe id="file" class="view" title="File" hidden></iframe>
+    <div id="filewin" class="view" hidden>
+      <div class="winhead"><span>File</span>
+        <button id="fileclose" class="icon" type="button" aria-label="Close the file window"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"/></svg></button>
+      </div>
+      <iframe id="file" title="File"></iframe>
+    </div>
     <p id="viewnote" class="view" hidden></p>
     <p id="toast" role="status" hidden></p>
     <p id="paused" role="status" hidden>Paused while you select. Clear the selection to catch up.</p>
     <button id="bottom" type="button" hidden aria-label="Scroll to the bottom">
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v11M5 10l5 5 5-5"/></svg>
     </button>
+    <!-- Touch screens and narrow windows: the keyboard and the hot keys are floating buttons. -->
+    <div id="fabs" class="term-only">
+      <button id="keysfab" type="button" aria-pressed="false" aria-controls="hotkeys" aria-label="Show or hide the hot keys">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3" width="6" height="6" rx="1.5"/><rect x="11.5" y="3" width="6" height="6" rx="1.5"/><rect x="2.5" y="11" width="6" height="6" rx="1.5"/><rect x="11.5" y="11" width="6" height="6" rx="1.5"/></svg>
+      </button>
+      <button id="kbdbtn" type="button" aria-pressed="false" aria-label="Show or hide the keyboard">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="5" width="16" height="10" rx="2"/><path d="M5 8h1M8 8h1M11 8h1M14 8h1M6 12h8"/></svg>
+      </button>
+    </div>
     <section id="hotkeys" aria-label="Hot keys" hidden>
       <div class="keys"></div>
     </section>
@@ -90,7 +108,6 @@
       </div>
     </div>
     <button id="resize" class="row" type="button"><span><span class="label">Resize iTerm to this screen</span><small>Changes the window on the Mac until you restore it</small></span></button>
-    <label class="row narrow-only"><span>Hot keys panel</span><input id="keysswitch" type="checkbox" role="switch"></label>
     <label class="row"><span>Show this session in iTerm<small>Selects its tab on the Mac when you open it or type. iTerm updates hidden tabs only a few times a second</small></span><input id="showiterm" type="checkbox" role="switch"></label>
     <label class="row"><span>Application cursor keys<small>For apps that ignore the arrow keys</small></span><input id="appcur" type="checkbox" role="switch"></label>
     <label class="row"><span>Bracketed paste<small>Turn off if pasted text shows extra characters</small></span><input id="bracket" type="checkbox" role="switch"></label>

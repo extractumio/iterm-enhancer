@@ -17,16 +17,17 @@ const store = {
 const st = {
   ws: null, groups: [], sid: store.get("sid", null),
   mode: store.get("mode", {}), size: store.get("size", null), resized: false,
+  collapsed: new Set(store.get("collapsed", [])),   // session groups closed in the list
   appCursor: false, bracketed: store.get("bracketed", true), showInIterm: store.get("showInIterm", true),
 };
 
 const view = new TermView({ term: $("term"), hist: $("hist"), screen: $("screen"), note: $("note"),
   bottomBtn: $("bottom"), paused: $("paused"), send });
-const input = new Input({ kbd: $("kbd"), term: $("term"), panel: $("hotkeys"), pasteDialog: $("pastebox"),
-  send: (data) => send({ t: "in", data }),
+const input = new Input({ kbd: $("kbd"), kbdButton: $("kbdbtn"), term: $("term"), panel: $("hotkeys"), pasteDialog: $("pastebox"),
+  send: (data) => { send({ t: "in", data }); if (data.includes("\r")) views.commandSent(); },
   options: { appCursor: () => st.appCursor, bracketed: () => st.bracketed, onTyped: () => view.toBottom(), status: toast } });
 
-const views = new Views({ send, onShow: () => view.keepBottom(applyFit) });
+const views = new Views({ send, store, onShow: () => view.keepBottom(applyFit) });
 
 let toastTimer = 0;
 function toast(text) {
@@ -98,7 +99,7 @@ function onMessage(m) {
 // ---------- navigation ----------
 
 function drawNav() {
-  renderNav($("sessions"), st.groups, st.sid, $("filter").value, (id) => { select(id); closeDrawer(); });
+  renderNav($("sessions"), st.groups, st.sid, $("filter").value, (id) => { select(id); closeDrawer(); }, st.collapsed, toggleGroup);
   const found = st.sid && findItem(st.groups, st.sid);
   if (!found) {
     const first = st.groups.flatMap((g) => g.items)[0];
@@ -108,6 +109,12 @@ function drawNav() {
     return;
   }
   showCurrent(found);
+}
+
+function toggleGroup(key) {
+  if (!st.collapsed.delete(key)) st.collapsed.add(key);
+  store.set("collapsed", [...st.collapsed]);
+  drawNav();
 }
 
 function showCurrent(found) {
@@ -126,8 +133,8 @@ function select(id, force = false) {
   if (id === st.sid && !force && view.screen.length) return;
   st.sid = id; store.set("sid", id);
   view.reset();
+  send({ t: "sub", id });                          // first: the server answers "files" for the subscribed pane
   views.sessionChanged();
-  send({ t: "sub", id });
   drawNav(); syncControls();
 }
 
@@ -163,6 +170,7 @@ function applyTheme(theme) {
   const key = JSON.stringify(theme);
   if (key === shownTheme) return;
   shownTheme = key;
+  views.setTheme(theme);
   const r = document.documentElement.style;
   r.setProperty("--t-bg", theme.bg); r.setProperty("--t-fg", theme.fg);
   r.setProperty("--accent", theme.cursor || theme.fg);
@@ -190,9 +198,17 @@ function setSize(px, save = true) {
 // Fit: iTerm's exact layout scaled down so a whole line fits the screen width; iTerm itself is
 // not touched. (Resizing iTerm to the screen is a separate menu action, as it changes the Mac.)
 
-function mode() { return st.mode[st.sid] ?? (touch.matches ? "wrap" : "grid"); }
-function setMode(m) {
-  st.mode[st.sid] = m; store.set("mode", st.mode);
+// The mode is remembered per session, and the one chosen last is the default for every other:
+// session ids change when iTerm2 restarts or tmux -CC attaches again.
+const MODES_KEPT = 100;
+function mode() { return st.mode[st.sid] ?? store.get("modeDefault", touch.matches ? "wrap" : "grid"); }
+function setMode(m, chosen = true) {
+  delete st.mode[st.sid];                          // re-added last: the oldest choices go first
+  st.mode[st.sid] = m;
+  const ids = Object.keys(st.mode);
+  for (const id of ids.slice(0, Math.max(0, ids.length - MODES_KEPT))) delete st.mode[id];
+  store.set("mode", st.mode);
+  if (chosen) store.set("modeDefault", m);
   view.keepBottom(syncControls);
 }
 
@@ -216,7 +232,7 @@ function syncControls() {
   $("showiterm").checked = st.showInIterm;
   const keysOn = !$("hotkeys").hidden;
   $("keysbtn").setAttribute("aria-pressed", String(keysOn));
-  $("keysswitch").checked = keysOn;
+  $("keysfab").setAttribute("aria-pressed", String(keysOn));
   document.documentElement.style.setProperty("--keys-h", `${$("hotkeys").offsetHeight}px`);
   applyFit();
 }
@@ -233,7 +249,7 @@ $("showiterm").onchange = (e) => {
 $("resize").onclick = () => {
   closeMenu();
   if (st.resized) return send({ t: "unfit" });
-  if (mode() === "wrap") setMode("grid");          // a resized session is shown as its exact grid
+  if (mode() === "wrap") setMode("grid", false);   // a resized session is shown as its exact grid
   $("term").style.fontSize = "";
   send({ t: "fit", ...view.gridFit() });
 };
@@ -261,7 +277,8 @@ function showKeys(on) {
   view.keepBottom(syncControls);
 }
 $("keysbtn").onclick = () => showKeys($("hotkeys").hidden);
-$("keysswitch").onchange = (e) => showKeys(e.target.checked);
+$("keysfab").onclick = () => showKeys($("hotkeys").hidden);
+$("keysfab").onmousedown = (e) => e.preventDefault();      // the iOS keyboard stays up
 $("signout").onclick = async () => {
   closeMenu();
   const ws = st.ws; st.ws = null; ws?.close();
@@ -278,7 +295,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeMen
 // Toolbar buttons never take focus from the terminal: Enter must keep going to the shell.
 $("bar").addEventListener("mousedown", (e) => { if (e.target.closest("#tools button")) e.preventDefault(); });
 
-$("hotkeys").hidden = !store.get("keys", touch.matches);
+$("hotkeys").hidden = !store.get("keys", false);
 if (st.size) setSize(st.size, false);
 syncControls();
 connect();

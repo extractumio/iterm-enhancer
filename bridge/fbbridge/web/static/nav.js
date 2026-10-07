@@ -16,17 +16,24 @@ export function kindIcon(host) {
   const wrap = document.createElement("span");
   wrap.className = `kind ${kind}`;
   wrap.title = host ? `On ${host}` : "On this Mac";
+  wrap.append(icon(SHAPES[kind]));
+  return wrap;
+}
+
+function icon(paths) {
   const svg = document.createElementNS(SVG, "svg");
   svg.setAttribute("viewBox", "0 0 20 20");
   svg.setAttribute("aria-hidden", "true");
-  for (const d of SHAPES[kind]) {
+  for (const d of paths) {
     const p = document.createElementNS(SVG, "path");
     p.setAttribute("d", d);
     svg.append(p);
   }
-  wrap.append(svg);
-  return wrap;
+  return svg;
 }
+
+/** The key a group's collapsed state is remembered by: its window or tmux session, and host. */
+const groupKey = (g) => `${g.kind}\n${g.label}\n${g.host ?? ""}`;
 
 function matches(item, q) {
   if (!q) return true;
@@ -69,7 +76,8 @@ function row(item, current, onPick) {
   return li;
 }
 
-export function renderNav(list, groups, current, query, onPick) {
+// A group's header collapses and expands it; while a filter is typed every match is shown.
+export function renderNav(list, groups, current, query, onPick, collapsed, onToggle) {
   const q = query.trim().toLowerCase();
   const frag = document.createDocumentFragment();
   let shown = 0;
@@ -77,17 +85,28 @@ export function renderNav(list, groups, current, query, onPick) {
     const items = g.items.filter((it) => matches(it, q));
     if (!items.length) continue;
     shown += items.length;
+    const key = groupKey(g);
+    const closed = !q && collapsed.has(key);
     const sec = el("section", `grp ${g.kind}`);
     const h = el("h2");
-    h.append(el("span", "label", g.label));
-    if (g.host) h.append(el("span", "host", g.host));
-    else if (g.where) h.append(el("span", "where", g.where));
+    const t = el("button", "toggle");
+    t.type = "button";
+    t.setAttribute("aria-expanded", String(!closed));
+    t.addEventListener("click", () => onToggle(key));
+    t.append(icon(["M7 8l3 3 3-3"]), el("span", "label", g.label));
+    if (g.host) t.append(el("span", "host", g.host));
+    else if (g.where) t.append(el("span", "where", g.where));
     const count = el("span", "count", String(g.items.length));
     count.title = `${g.items.length} session${g.items.length === 1 ? "" : "s"}`;
-    h.append(count);
-    const ul = el("ul");
-    for (const it of items) ul.append(row(it, current, onPick));
-    sec.append(h, ul);
+    if (closed && items.some((it) => it.id === current)) count.classList.add("on");   // the shown session is inside
+    t.append(count);
+    h.append(t);
+    sec.append(h);
+    if (!closed) {
+      const ul = el("ul");
+      for (const it of items) ul.append(row(it, current, onPick));
+      sec.append(ul);
+    }
     frag.append(sec);
   }
   if (!shown) {

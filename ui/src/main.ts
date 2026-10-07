@@ -11,7 +11,7 @@ import {
 import { Binding } from "./binding";
 import { renderOffer } from "./host-offer";
 import { contextMenu } from "./context-menu";
-import { acceptFromPage, openOutside, PIN, PIN_CWD, PIN_HOST, pinKey, revealOutside } from "./embed";
+import { acceptFromPage, openOutside, PIN, PIN_CWD, PIN_HOST, pinKey, revealOutside, THEMED_BY_PAGE } from "./embed";
 import { applyTheme } from "./theme";
 import { Tree, type EditMode } from "./tree";
 import { Viewer } from "./viewer";
@@ -180,7 +180,7 @@ function confirmWindow() {
 async function onState(s: TermState) {
   renderSetupNotice(s.setup_notice); renderUpdate(s.update); renderWeb(s.web);
   upgrade.build(s.build);
-  if (PIN) { term = { ...term, bridge: s.bridge }; if (applyTheme(s.theme)) tree.themeChanged(); return renderHeader(term); }
+  if (PIN) { term = { ...term, bridge: s.bridge }; if (!THEMED_BY_PAGE && applyTheme(s.theme)) tree.themeChanged(); return renderHeader(term); }
   if (!VIEW && !binding.accepts(s)) { // another window's pane (AC-36): only the bridge status counts here
     const foreign = binding.foreign(s);
     if (s.bridge === term.bridge && foreign === unlinked) return;
@@ -193,7 +193,7 @@ async function onState(s: TermState) {
   unseen = false;
   unlinked = false;
   binding.shown(s);
-  const restyled = applyTheme(s.theme);
+  const restyled = !THEMED_BY_PAGE && applyTheme(s.theme);
   if (VIEW) return; // the viewer window only takes the theme
   if (restyled) tree.themeChanged(); // row height follows the font size
   renderHeader(s);
@@ -446,7 +446,7 @@ async function startViewer(path: string) {
   viewer.open(path, "auto");
 }
 
-acceptFromPage({ open: (p) => viewer.open(p), reveal: revealInTree });
+acceptFromPage({ open: (p) => viewer.open(p), reveal: revealInTree, theme: (t) => { if (applyTheme(t) && !VIEW) tree.themeChanged(); } });
 
 (async () => {
   if (VIEW) return startViewer(VIEW);

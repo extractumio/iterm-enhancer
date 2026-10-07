@@ -1,53 +1,111 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-// Terminal, Files and File: three views in the same place (the session list is the drawer).
-// Files is the File Browser's panel pinned to the shown session; File is its viewer and
-// editor, where every file opened from Files gets a tab.
+// Terminal, Files and File (the session list is the drawer). Files is the File Browser's panel
+// pinned to the shown session; File is its viewer and editor, where every file opened from Files
+// gets a tab. Below WIDE they are three views in the same place; at WIDE and up Files is docked
+// on the right and File is a window over the terminal, each closed with its own [x].
 
 const $ = (id) => document.getElementById(id);
 const NAMES = ["term", "files", "file"];
+const WIDE = matchMedia("(min-width: 1400px)");
 
 export class Views {
-  constructor({ send, onShow }) {
-    this.send = send;
-    this.onShow = onShow;          // the terminal view came back: it may need a redraw
-    this.current = "term";
+  constructor({ send, store, onShow }) {
+    Object.assign(this, { send, store });
+    this.onShow = onShow;          // the terminal was shown or changed width: it may need a redraw
+    this.current = "term";         // the view in the main column below WIDE
+    this.docked = store.get("filesDocked", true);   // Files is open on the right at WIDE
+    this.floating = false;         // File is open over the terminal at WIDE
     this.filesSrc = "";            // what the Files frame shows: its pane, folder and host
+    this.filesError = null;        // why the pane has no Files
+    this.filesShown = false;
     this.fileHost = null;          // the host the File frame's files are on
-    for (const b of document.querySelectorAll("button[data-view]")) b.addEventListener("click", () => this.show(b.dataset.view));
+    this.theme = null;             // the shown pane's, for both frames (fbd's is the focused pane's)
+    for (const f of ["files", "file"]) $(f).addEventListener("load", () => this.tellTheme($(f)));
+    for (const b of document.querySelectorAll("button[data-view]")) b.addEventListener("click", () => this.show(b.dataset.view, true));
+    $("sideclose").addEventListener("click", () => this.setDocked(false));
+    $("fileclose").addEventListener("click", () => { this.floating = false; this.layout(); });
+    WIDE.addEventListener("change", () => {
+      // The open view moves between the main column and its wide place.
+      if (WIDE.matches && this.current === "file") this.floating = true;
+      if (WIDE.matches && this.current === "files") this.setDocked(true);
+      if (!WIDE.matches) this.current = this.floating ? "file" : "term";   // docked Files was beside it
+      if (WIDE.matches) this.current = "term";
+      else this.floating = false;
+      this.layout();
+    });
     addEventListener("message", (e) => this.onMessage(e));
+    this.layout();
   }
 
-  show(name) {
-    this.current = name;
-    for (const n of NAMES) {
-      document.querySelector(`button[data-view="${n}"]`).setAttribute("aria-selected", String(n === name));
-      $(n).hidden = n !== name;
-    }
-    $("viewnote").hidden = true;
-    document.body.dataset.shown = name;
-    if (name === "files") this.send({ t: "files" });   // the pane may have changed folder since
-    if (name === "term") this.onShow();
+  /** Shows a view; a click on a view button at WIDE opens or closes Files or File instead. */
+  show(name, clicked = false) {
+    if (!WIDE.matches) this.current = name;
+    else if (name === "files") return this.setDocked(clicked ? !this.docked : true);
+    else if (name === "file") this.floating = clicked ? !this.floating : true;
+    else this.floating = false;
+    this.layout();
+  }
+
+  setDocked(on) {
+    this.docked = on;
+    this.store.set("filesDocked", on);
+    this.layout();
+  }
+
+  layout() {
+    const wide = WIDE.matches;
+    const shown = {
+      term: wide || this.current === "term",
+      files: wide ? this.docked : this.current === "files",
+      file: wide ? this.floating : this.current === "file",
+    };
+    document.body.classList.toggle("wide", wide);
+    document.body.classList.toggle("docked", wide && this.docked);
+    for (const n of NAMES) document.querySelector(`button[data-view="${n}"]`).setAttribute("aria-selected", String(shown[n]));
+    $("term").hidden = !shown.term;
+    $("files").hidden = !shown.files || !!this.filesError;
+    $("viewnote").hidden = !shown.files || !this.filesError;
+    $("viewnote").textContent = this.filesError ?? "";
+    $("filewin").hidden = !shown.file;
+    document.body.dataset.shown = wide ? "term" : this.current;
+    if (shown.files && !this.filesShown) this.send({ t: "files" });   // the pane may have changed folder since
+    this.filesShown = shown.files;
+    if (shown.term) this.onShow();
   }
 
   /** Another session is shown: its Files are another folder. */
   sessionChanged() {
     this.filesSrc = "";
+    this.filesError = null;
     $("files").removeAttribute("src");
-    if (this.current === "files") this.send({ t: "files" });
+    if (this.filesShown) this.send({ t: "files" });
+  }
+
+  setTheme(theme) {
+    this.theme = theme;
+    for (const f of ["files", "file"]) this.tellTheme($(f));
+  }
+
+  tellTheme(frame) {
+    if (this.theme && frame.getAttribute("src")) frame.contentWindow?.postMessage({ type: "fb-theme", theme: this.theme }, location.origin);
+  }
+
+  /** A command line was sent: docked Files follows the folder it may have changed to. */
+  commandSent() {
+    clearTimeout(this.refresh);
+    this.refresh = setTimeout(() => { if (this.filesShown) this.send({ t: "files" }); }, 700);
   }
 
   /** The server's answer to "files": the pane's key, folder and host, or why there are none. */
   onFiles(m) {
-    if (m.error) {
-      $("files").hidden = true;
-      $("viewnote").textContent = m.error;
-      $("viewnote").hidden = this.current !== "files";
-      return;
+    this.filesError = m.error ?? null;
+    if (!m.error) {
+      const q = new URLSearchParams({ key: m.key, cwd: m.cwd ?? "" });
+      if (m.host) q.set("host", m.host);
+      const src = `/fb/?${q}`;
+      if (src !== this.filesSrc) $("files").src = this.filesSrc = src;   // reloaded only when it moved
     }
-    const q = new URLSearchParams({ key: m.key, cwd: m.cwd ?? "" });
-    if (m.host) q.set("host", m.host);
-    const src = `/fb/?${q}`;
-    if (src !== this.filesSrc) $("files").src = this.filesSrc = src;   // reloaded only when it moved
+    this.layout();
   }
 
   /** A file chosen in Files opens as a tab of File. */

@@ -3,7 +3,7 @@
 // to the pane the web page shows (not the focused one) and keeps a workspace of its own;
 // files open in the page's File view, which receives them as messages.
 
-import { PROXIED } from "./api";
+import { PROXIED, type Theme } from "./api";
 
 const params = new URLSearchParams(location.search);
 
@@ -17,6 +17,9 @@ export const PIN_HOST = params.get("host");
 export const pinKey = (key: string, host: string | null) => `web:${JSON.stringify([host ?? "", key])}`;
 
 const around = PROXIED && window.parent !== window ? window.parent : null;
+/** The page around takes its colors from the pane it shows, so it sends them; fbd's theme is the
+ *  focused pane's, another one. */
+export const THEMED_BY_PAGE = !!around;
 
 // Header buttons that act on the Mac's iTerm2 (recovery, finding a session, the update chip)
 // are hidden in the web app; the proxy refuses what they would ask anyway.
@@ -33,12 +36,15 @@ export const openOutside = (path: string, host: string | null) => tell({ type: "
 /** "Reveal in tree" in the File view shows the file in the page's Files view. */
 export const revealOutside = (path: string) => tell({ type: "fb-reveal", path });
 
-/** Take what the page around sends (files to open or reveal), and nothing from anywhere else. */
-export function acceptFromPage(handlers: { open: (path: string) => void; reveal: (path: string) => void }) {
+/** Take what the page around sends (files to open or reveal, its theme), and nothing from anywhere else. */
+export function acceptFromPage(handlers: { open: (path: string) => void; reveal: (path: string) => void; theme: (t: Theme) => void }) {
   if (!around) return;
   addEventListener("message", (e) => {
-    if (e.source !== around || e.origin !== location.origin || typeof e.data?.path !== "string") return;
-    if (e.data.type === "fb-open") handlers.open(e.data.path);
-    if (e.data.type === "fb-reveal") handlers.reveal(e.data.path);
+    if (e.source !== around || e.origin !== location.origin) return;
+    const d = e.data;
+    if (d?.type === "fb-theme" && d.theme && typeof d.theme === "object") return handlers.theme(d.theme);
+    if (typeof d?.path !== "string") return;
+    if (d.type === "fb-open") handlers.open(d.path);
+    if (d.type === "fb-reveal") handlers.reveal(d.path);
   });
 }

@@ -168,11 +168,13 @@ and sign in:
 
 - **Sessions**: every window, tab and pane by title and host (blue laptop: this Mac; violet
   server: a remote host).
-- **Terminal**: the pane in its profile's colors and font, typing, a hot keys panel (keyboard,
-  Copy, Paste, Tab, ^C, Esc, Ctrl, Alt, arrows…), scrollback, selection. On a phone lines
+- **Terminal**: the pane in its profile's colors and font, typing, a hot keys panel (Copy,
+  Paste, Tab, ⇧Tab, ^C, Esc, Ctrl, Alt, ⇧←, ⇧↩, arrows…), scrollback, selection. On a phone
+  two floating buttons open the keyboard and the hot keys. On a phone lines
   re-flow to the screen (**Wrap**); **Grid** keeps iTerm2's layout, **Fit** scales it to the
   width, **Resize iTerm to this screen** (⋯) changes the Mac's window until you restore it.
-- **Files** and **File**: this panel for the pane's folder (remote hosts too) and its editor;
+- **Files** and **File**: this panel for the pane's folder (remote hosts too) and its editor
+  (at 1400 px and wider, Files docked on the right and File a window over the terminal);
   web links open in your browser; Finder, apps and typing into a terminal are not offered.
 
 It is plain HTTP: on a network you do not trust, use HTTPS through Tailscale —

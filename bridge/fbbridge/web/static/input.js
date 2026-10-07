@@ -2,21 +2,20 @@
 // Keyboard, paste and the hot keys panel. Everything typed ends up in send(bytes).
 import { ctrlChar, encodeKey } from "./keys.js";
 
-// Three rows of equal keys, most used first. A label of null draws the keyboard icon.
+// Three rows of equal keys, most used first. The keyboard has its own floating button.
 const HOTKEYS = [
-  [[null, "keyboard", "Show or hide the keyboard"], ["Copy", "copy", "Copy the selected text"],
-    ["Paste", "paste"], ["Tab", "\t"], ["^C", "\x03", "Interrupt"], ["^D", "\x04", "End of input"]],
-  [["Esc", "\x1b"], ["Ctrl", "mod:ctrl"], ["Alt", "mod:alt"],
+  [["Copy", "copy", "Copy the selected text"], ["Paste", "paste"], ["Tab", "\t"], ["⇧Tab", "\x1b[Z", "Shift+Tab"],
+    ["^C", "\x03", "Interrupt"], ["^D", "\x04", "End of input"], ["Esc", "\x1b"]],
+  [["Ctrl", "mod:ctrl"], ["Alt", "mod:alt"], ["⇧←", "\x1b[1;2D", "Shift+Left"],
+    ["⇧↩", "\x1b[13;2u", "Shift+Enter: a new line in apps that tell it from Enter"],
     ["←", "arrow:D"], ["↑", "arrow:A"], ["↓", "arrow:B"], ["→", "arrow:C"]],
   [["Home", "\x1b[H"], ["End", "\x1b[F"], ["PgUp", "\x1b[5~"], ["PgDn", "\x1b[6~"],
     ["^Z", "\x1a", "Suspend"], ["^L", "\x0c", "Redraw"], ["^R", "\x12", "Search history"]],
 ];
-const KEYBOARD_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="5" width="16" height="10" rx="2"/>'
-  + '<path d="M5 8h1M8 8h1M11 8h1M14 8h1M6 12h8"/></svg>';
 
 export class Input {
-  constructor({ kbd, term, panel, pasteDialog, send, options }) {
-    Object.assign(this, { kbd, term, panel, pasteDialog, send, options });
+  constructor({ kbd, kbdButton, term, panel, pasteDialog, send, options }) {
+    Object.assign(this, { kbd, kbdButton, term, panel, pasteDialog, send, options });
     this.mods = { ctrl: false, alt: false };
     this.buildPanel();
     this.bind();
@@ -48,10 +47,13 @@ export class Input {
     k.addEventListener("compositionend", () => { this.type(k.value); k.value = ""; });
     const typing = (on) => {
       this.term.classList.toggle("focused", on);
-      this.panel.querySelector('[data-action="keyboard"]')?.setAttribute("aria-pressed", String(on));
+      this.kbdButton.setAttribute("aria-pressed", String(on));
     };
     k.addEventListener("focus", () => typing(true));
     k.addEventListener("blur", () => typing(false));
+    // The button never takes focus itself; iOS opens the keyboard for a focus() made in its click.
+    this.kbdButton.addEventListener("mousedown", (e) => e.preventDefault());
+    this.kbdButton.addEventListener("click", () => (document.activeElement === k ? k.blur() : this.focus()));
     document.addEventListener("paste", (e) => {
       if (e.target.closest?.("input, textarea:not(#kbd)")) return;   // let fields paste normally
       e.preventDefault();
@@ -130,8 +132,7 @@ export class Input {
         const b = document.createElement("button");
         b.type = "button";
         b.className = "key";
-        if (label === null) { b.innerHTML = KEYBOARD_ICON; b.setAttribute("aria-label", hint); }  // static markup
-        else b.textContent = label;
+        b.textContent = label;
         b.dataset.action = action;
         if (hint) b.title = hint;
         if (action.startsWith("mod:")) b.setAttribute("aria-pressed", "false");
@@ -149,7 +150,6 @@ export class Input {
       if (a.startsWith("mod:")) { const m = a.slice(4); this.mods[m] = !this.mods[m]; this.syncMods(); return; }
       if (a === "paste") return this.pasteFromClipboard();
       if (a === "copy") return this.copySelection();
-      if (a === "keyboard") return document.activeElement === this.kbd ? this.kbd.blur() : this.focus();
       let seq = a;
       if (a.startsWith("arrow:")) seq = (this.options.appCursor() ? "\x1bO" : "\x1b[") + a.slice(6);
       this.type(this.withMods(seq));

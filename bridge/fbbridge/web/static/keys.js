@@ -39,7 +39,9 @@ export function encodeKey(e, appCursor) {
   if (k in TILDE) return m > 1 ? `${ESC}[${TILDE[k]};${m}~` : `${ESC}[${TILDE[k]}~`;
   if (k in SS3) return m > 1 ? `${ESC}[1;${m}${SS3[k]}` : `${ESC}O${SS3[k]}`;
   switch (k) {
-    case "Enter": return e.altKey ? ESC + "\r" : "\r";
+    // Shift or Ctrl with Enter is its own key (CSI u, as iTerm2 reports it to apps that ask), so
+    // a TUI can tell it from Enter, e.g. to start a new line instead of sending.
+    case "Enter": return e.shiftKey || e.ctrlKey ? `${ESC}[13;${m}u` : (e.altKey ? ESC + "\r" : "\r");
     case "Backspace": return e.ctrlKey ? "\x08" : (e.altKey ? ESC + "\x7f" : "\x7f");
     case "Tab": return e.shiftKey ? `${ESC}[Z` : "\t";
     case "Escape": return ESC;
