@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Native iTerm2 controls and installation notices; these always address this Mac.
-import { api, apiOrToast, toast, type TermState } from "./api";
+import { api, apiOrToast, copyText, toast, type TermState } from "./api";
 import { menu } from "./dialogs";
 
 const navigation = document.getElementById("find-session")!;
@@ -57,8 +57,7 @@ chip.addEventListener("click", async () => {
   ]);
   chip.ariaExpanded = "false";
   if (choice === "copy") {
-    try { await navigator.clipboard.writeText(UPGRADE); toast("Copied: run it in a terminal"); }
-    catch { toast(`Run in a terminal: ${UPGRADE}`); }
+    void copyText(UPGRADE, "Copied: run it in a terminal");
   } else if (choice === "skip" || choice === "off") {
     void apiOrToast("POST", "/api/update", { body: { action: choice, version: tag }, host: null });
   }

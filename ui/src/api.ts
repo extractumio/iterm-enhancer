@@ -11,6 +11,12 @@ export const session = {
   },
 };
 
+/** Served by fbd the page lives at "/". In the web app (AC-52) it lives under /fb/ behind the
+ *  web server, which checks the web sign-in and adds fbd's token itself: the page holds no
+ *  token there, and proves nothing (the sign-in proved the server). */
+export const BASE = typeof location === "undefined" ? "" : location.pathname.replace(/\/[^/]*$/, "");
+export const PROXIED = BASE !== "";
+
 /** The token arrives in the tool URL once; it is kept for this web view only (reloads keep
  *  working) and removed from the address, so no document can see it in a URL or Referer. */
 export let TOKEN = new URLSearchParams(location.search).get("t") ?? session.get("fb.token") ?? "";
@@ -25,7 +31,7 @@ export function keepToken() {
 
 /** A viewer window's URL carries a one-time code instead of the token: trade it in once. */
 export async function redeemTicket(code: string) {
-  const res = await fetch(`/ticket?v=${encodeURIComponent(code)}`);
+  const res = await fetch(`${BASE}/ticket?v=${encodeURIComponent(code)}`);
   const body = await res.json().catch(() => null);
   if (!res.ok || !body?.token) throw new ApiError(res.status, body?.error ?? "bad_ticket", body?.message ?? "Viewer link expired", body);
   TOKEN = body.token;
@@ -38,9 +44,10 @@ export async function redeemTicket(code: string) {
 let proven: Promise<void> | null = null;
 let isProven = false;
 export function proveServer(): Promise<void> {
+  if (PROXIED) { isProven = true; return Promise.resolve(); }
   if (!proven) {
     const n = hex(crypto.getRandomValues(new Uint8Array(16)));
-    const mine: Promise<void> = fetch(`/api/hello?n=${n}`).then(async (res) => {  // a network error: not reachable
+    const mine: Promise<void> = fetch(`${BASE}/api/hello?n=${n}`).then(async (res) => {  // a network error: not reachable
       const body = await res.json().catch(() => null);
       if (!res.ok || body?.proof !== proof(TOKEN, n)) {
         throw new ApiError(401, "unproven", "fbd does not accept this panel's token, or another program holds its port", body);
@@ -82,6 +89,7 @@ export interface TermState {
   build?: string;   // fbd's build: another one than this page's means an upgrade (AC-34)
   setup_notice?: { id: string; message: string; error: boolean };
   update?: { latest: string };  // a newer release than this build (AC-51)
+  web?: { enabled: boolean; password: boolean; urls: string[]; error: string | null }; // web access (AC-52)
   host?: string;    // a remote pane's host: its files are reached through that host's agent (AC-37)
   /** a remote pane's host as offered to the user (AC-38): key = its ssh arguments */
   remote?: {
@@ -107,7 +115,7 @@ type Query = Record<string, string | number | boolean | undefined>;
 export async function api<T>(method: string, path: string, opts: { query?: Query; body?: unknown; headers?: Record<string, string>; retry?: boolean; host?: string | null } = {}): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(opts.query ?? {})) if (v !== undefined) qs.set(k, String(v));
-  const url = path + (qs.size ? `?${qs}` : "");
+  const url = BASE + path + (qs.size ? `?${qs}` : "");
   const host = opts.host === undefined ? scope : opts.host;
   const headers: Record<string, string> = { "X-FB-Token": TOKEN, "X-FB-Client": CLIENT, ...(host ? { "X-FB-Host": host } : {}), ...opts.headers };
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
@@ -138,8 +146,8 @@ export const setScope = (host: string | null) => { scope = host || null; };
 
 /** An image's URL carries the token: none until fbd proved itself. */
 export const rawUrl = (path: string) => !isProven ? "data:," :
-  `/api/raw?path=${encodeURIComponent(path)}&t=${encodeURIComponent(TOKEN)}${scope ? `&host=${encodeURIComponent(scope)}` : ""}`;
-export const socketUrl = () => `ws://${location.host}/api/ws?t=${encodeURIComponent(TOKEN)}&client=${CLIENT}`;
+  `${BASE}/api/raw?path=${encodeURIComponent(path)}&t=${encodeURIComponent(TOKEN)}${scope ? `&host=${encodeURIComponent(scope)}` : ""}`;
+export const socketUrl = () => `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${BASE}/api/ws?t=${encodeURIComponent(TOKEN)}&client=${CLIENT}`;
 
 /** Run an API call; on failure show its message and resolve to undefined. */
 export const apiOrToast = <T>(...args: Parameters<typeof api<T>>) => api<T>(...args).catch((e: Error) => { toast(e.message); return undefined; });
@@ -158,6 +166,16 @@ export const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 let toastTimer = 0;
+/** Copy text, with the old copy command where the clipboard API is refused; then say `done`. */
+export async function copyText(text: string, done = `Copied ${text}`) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const ta = Object.assign(document.createElement("textarea"), { value: text });
+    document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove();
+  }
+  toast(done);
+}
+
 export function toast(msg: string) {
   const el = document.getElementById("toast")!;
   el.textContent = msg;

@@ -5,12 +5,13 @@
 
 import "./style.css";
 import {
-  api, apiOrToast, ApiError, basename, CLIENT, DEFAULT_PREFS, dirname, keepToken, redeemTicket, scope, setScope, toast, TOKEN,
+  api, apiOrToast, ApiError, basename, CLIENT, copyText, DEFAULT_PREFS, dirname, keepToken, PROXIED, redeemTicket, scope, setScope, toast, TOKEN,
   type FsChange, type Pane, type Prefs, type TermState,
 } from "./api";
 import { Binding } from "./binding";
-import { hostEntries, hostMenu, renderOffer } from "./host-offer";
-import { ask, menu, type MenuEntry } from "./dialogs";
+import { renderOffer } from "./host-offer";
+import { contextMenu } from "./context-menu";
+import { acceptFromPage, openOutside, PIN, PIN_CWD, PIN_HOST, pinKey, revealOutside } from "./embed";
 import { applyTheme } from "./theme";
 import { Tree, type EditMode } from "./tree";
 import { Viewer } from "./viewer";
@@ -21,6 +22,7 @@ import { commitPath, trashPaths } from "./file-actions";
 import { refreshScope } from "./panel-refresh";
 import { renderSetupNotice, renderUpdate, watchToolbeltWidth } from "./iterm-tools";
 import { refreshRecovery, renderRecovery } from "./recovery";
+import { renderWeb } from "./web-access";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -34,6 +36,7 @@ let ws: Pane | null = null;           // its workspace as last read or written
 let workspaceRun = 0;                // orders reads and accepted write replies, even after a revision reset
 let prefs: Prefs = { ...DEFAULT_PREFS };
 let saveTimer = 0;
+let pinCwd = PIN_CWD;                 // the web app's pane folder, sent with the first workspace read
 let filterTimer = 0;
 /** A viewer window (AC-26) shows only tabs: `?view=<path>`, opened with a one-time code `v`. */
 const params = new URLSearchParams(location.search);
@@ -103,7 +106,10 @@ async function saveNow() {
 
 async function loadWorkspace(k: string) {
   const run = ++workspaceRun;
-  const pane = await api<Pane>("GET", "/api/workspace", { query: { key: k } });
+  // a pinned panel names its pane's folder once: a later reconnect must not undo a newer cd
+  const cwd = pinCwd ?? undefined;
+  pinCwd = null;
+  const pane = await api<Pane>("GET", "/api/workspace", { query: { key: k, cwd } });
   if (key === k && run === workspaceRun) await applyWorkspace(pane);
 }
 
@@ -163,7 +169,7 @@ async function showOwnWindow() {
 
 /** The user acted in the panel, so its window is key: bind to it (AC-36). */
 function confirmWindow() {
-  if (VIEW) return;
+  if (VIEW || PIN) return;
   void binding.confirm().then((asked) => {
     if (!asked) return;
     if (binding.window && unlinked) { unlinked = false; renderHeader(term); }
@@ -172,8 +178,9 @@ function confirmWindow() {
 }
 
 async function onState(s: TermState) {
-  renderSetupNotice(s.setup_notice); renderUpdate(s.update);
+  renderSetupNotice(s.setup_notice); renderUpdate(s.update); renderWeb(s.web);
   upgrade.build(s.build);
+  if (PIN) { term = { ...term, bridge: s.bridge }; if (applyTheme(s.theme)) tree.themeChanged(); return renderHeader(term); }
   if (!VIEW && !binding.accepts(s)) { // another window's pane (AC-36): only the bridge status counts here
     const foreign = binding.foreign(s);
     if (s.bridge === term.bridge && foreign === unlinked) return;
@@ -239,6 +246,10 @@ const stream = new Stream({
       const host = scope;
       return void api<string[]>("GET", "/api/view/pending", { host }).then((ps) => { if (host === scope) ps.forEach((p) => viewer.open(p)); }, () => {});
     }
+    if (PIN) {                 // the web app's pane (AC-53): no window to bind, no recovery here
+      key = pinKey(PIN, PIN_HOST); setScope(PIN_HOST); viewer.setHost(scope);
+      return void loadWorkspace(key);
+    }
     void refreshRecovery();
     void binding.claim().then(() => showOwnWindow()).catch(() => {});
     renderHeader(term);
@@ -285,14 +296,7 @@ async function trashSelected() {
   scheduleSave();
 }
 
-async function copyText(text: string) {
-  try { await navigator.clipboard.writeText(text); }
-  catch {
-    const ta = Object.assign(document.createElement("textarea"), { value: text });
-    document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove();
-  }
-  toast(text.includes("\n") ? `Copied ${text.split("\n").length} paths` : `Copied ${text}`);
-}
+const copyPaths = (text: string) => copyText(text, text.includes("\n") ? `Copied ${text.split("\n").length} paths` : `Copied ${text}`);
 
 const relative = (p: string) => {
   const root = tree.root?.path ?? "";
@@ -305,51 +309,6 @@ const terminal = (action: "insert" | "cd", body: object) => {
   if (!binding.window) return toast("Click here to follow this window first — nothing typed");
   return apiOrToast("POST", `/api/terminal/${action}`, { body: { ...body, key } });
 };
-
-async function contextMenu(path: string | null, isDir: boolean, ev: MouseEvent) {
-  const sel = path ? [...tree.selected] : [];
-  const many = sel.length > 1;
-  const target = path ?? tree.root?.path ?? "";
-  const dir = path && !isDir ? dirname(path) : target;
-  const canWrite = tree.isWritable(dir);
-  const entries: MenuEntry[] = [
-    { id: "new-file", label: "New File…", keys: "⌥N", disabled: !canWrite },
-    { id: "new-folder", label: "New Folder…", keys: "⌥⇧N", disabled: !canWrite },
-  ];
-  if (path) entries.push(
-    "-",
-    ...(!isDir && !many ? [{ id: "open", label: "Open", keys: "↩" }, { id: "open-window", label: "Open in Window", keys: "⌘↩" }] : []),
-    { id: "rename", label: "Rename…", keys: "F2", disabled: many || !tree.isWritable(dirname(path)) },
-    { id: "trash", label: many ? `Move ${sel.length} Items to Trash` : "Move to Trash", keys: "⌘⌫", danger: true, disabled: !sel.every((p) => tree.isWritable(dirname(p))) },
-    "-",
-    { id: "copy-path", label: many ? `Copy ${sel.length} Paths` : "Copy Path", keys: "⌥⌘C" },
-    { id: "copy-rel", label: many ? `Copy ${sel.length} Relative Paths` : "Copy Relative Path", keys: "⌥⇧⌘C" },
-    ...(scope ? [] : [{ id: "reveal", label: "Reveal in Finder", disabled: many }, { id: "open-app", label: "Open with Default App", disabled: many }]),
-    "-",
-    { id: "insert", label: "Insert Path in Terminal" },
-    { id: "cd", label: "Open Terminal Here", disabled: many },
-  );
-  else entries.push("-", ...(scope ? [] : [{ id: "reveal", label: "Reveal in Finder" }]), { id: "cd", label: "Open Terminal Here" });
-  entries.push(...hostEntries(term.remote));
-  const host = scope;
-  const choice = await menu(ev.clientX, ev.clientY, entries);
-  if (choice && switchedSince(host)) return;
-  if (choice?.startsWith("host-") && term.remote) return void hostMenu(choice, term.remote);
-  switch (choice) {
-    case "new-file": return void tree.startCreate(dir, "file");
-    case "new-folder": return void tree.startCreate(dir, "folder");
-    case "open": return viewer.open(target);
-    case "open-window": return openWindow(target);
-    case "rename": return tree.startRename(target);
-    case "trash": return void trashSelected();
-    case "copy-path": return void copyText(sel.join("\n"));
-    case "copy-rel": return void copyText(sel.map(relative).join("\n"));
-    case "reveal": return void apiOrToast("POST", "/api/os/reveal", { body: { path: target } });
-    case "open-app": return void apiOrToast("POST", "/api/os/open", { body: { path: target } });
-    case "insert": return void terminal("insert", { paths: sel.map(relative) });
-    case "cd": return void terminal("cd", { path: dir });
-  }
-}
 
 // ── layout ───────────────────────────────────────────────────────────────────
 
@@ -375,13 +334,17 @@ function initSplitter() {
 
 // ── wiring ───────────────────────────────────────────────────────────────────
 
-const openWindow = (path: string) => void apiOrToast("POST", "/api/view/open", { body: { path, host: scope } });
+const openWindow = (path: string) => void (openOutside(path, scope) || apiOrToast("POST", "/api/view/open", { body: { path, host: scope } }));
+const openFile = (path: string) => { if (!openOutside(path, scope)) viewer.open(path); };
 
 const tree = new Tree($("tree"), {
-  open: (p) => viewer.open(p),
+  open: openFile,
   openWindow,
   changed: scheduleSave,
-  context: (p, isDir, ev) => void contextMenu(p, isDir, ev),
+  context: (p, isDir, ev) => void contextMenu(p, isDir, ev, {
+    tree, term: () => term, switchedSince, open: openFile, openWindow, trash: () => void trashSelected(),
+    copy: (t) => void copyPaths(t), relative, terminal,
+  }),
   commit,
   notify: toast,
 });
@@ -389,10 +352,11 @@ const tree = new Tree($("tree"), {
 const viewer = new Viewer($("tabs"), $("tools"), $("vbody"), {
   changed: scheduleSave,
   layout: (has) => $("app").classList.toggle("has-tabs", has),
-  reveal: (p) => { tree.selected = new Set([p]); void tree.reveal(p); scheduleSave(); },
+  reveal: (p) => { if (!revealOutside(p)) revealInTree(p); },
   active: (p) => pathBar?.show(p),
 });
 let pathBar: PathBar | null = null; // viewer window only
+function revealInTree(p: string) { tree.selected = new Set([p]); void tree.reveal(p); scheduleSave(); }
 
 const upgrade = new Upgrade({
     busy: () => viewer.hasDirty || !!document.querySelector(".modal, .inline-edit.on, dialog[open]"),
@@ -450,7 +414,7 @@ document.addEventListener("keydown", (e) => {
   else if (e.metaKey && e.altKey && e.code === "KeyC" && inTree) {
     e.preventDefault();
     const sel = [...tree.selected];
-    void copyText((e.shiftKey ? sel.map(relative) : sel).join("\n"));
+    void copyPaths((e.shiftKey ? sel.map(relative) : sel).join("\n"));
   }
   else if (e.ctrlKey && e.key === "Tab") { e.preventDefault(); viewer.cycle(e.shiftKey ? -1 : 1); }
   else if (e.altKey && e.code === "KeyW") { e.preventDefault(); viewer.closeActive(); }
@@ -469,17 +433,20 @@ async function startViewer(path: string) {
   document.documentElement.classList.add("viewer-mode");
   setScope(params.get("host")); // a remote file's viewer window (AC-37)
   viewer.setHost(scope);
-  pathBar = new PathBar($("pathbar"), copyText);
+  pathBar = new PathBar($("pathbar"), copyPaths);
   pathBar.show(path);
   const code = params.get("v");
   if (code && !TOKEN) {
     try { await redeemTicket(code); } catch { return authFailed(); }
   }
-  if (!TOKEN) return authFailed();
+  if (!TOKEN && !PROXIED) return authFailed();
+
   keepToken(); // reloads keep working; the URL keeps no secret
   void stream.connect();
   viewer.open(path, "auto");
 }
+
+acceptFromPage({ open: (p) => viewer.open(p), reveal: revealInTree });
 
 (async () => {
   if (VIEW) return startViewer(VIEW);

@@ -7,7 +7,7 @@ import { EditorState, Compartment, type Text } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { editorExtensions } from "./viewer-editor";
 
-import { api, apiOrToast, ApiError, basename, esc, fmtSize, isUnder, rawUrl, rebase, toast, type FileView, type Stamp, type Tab } from "./api";
+import { api, apiOrToast, ApiError, basename, esc, fmtSize, isUnder, PROXIED, rawUrl, rebase, toast, type FileView, type Stamp, type Tab } from "./api";
 import { ask } from "./dialogs";
 import { fileIcon } from "./icons";
 import { languageForFile } from "./highlight";
@@ -330,8 +330,9 @@ export class Viewer {
         const img = this.body.querySelector("img")!;
         img.onload = () => { this.body.querySelector(".imgmeta")!.textContent = `${img.naturalWidth} × ${img.naturalHeight} · ${fmtSize(f.size)}`; };
       } else {
-        this.body.innerHTML = `${banner}<div class="pinfo"><div class="big">Binary file</div>${esc(f.mime ?? "unknown type")} · ${fmtSize(f.size)}` +
-          `<div><button class="btn" data-open-app>Open with default app</button></div></div>`;
+        const action = PROXIED ? `<a class="btn" href="${esc(rawUrl(f.path))}" download="${esc(basename(f.path))}">Download</a>` // web app (AC-53)
+          : `<button class="btn" data-open-app>Open with default app</button>`;
+        this.body.innerHTML = `${banner}<div class="pinfo"><div class="big">Binary file</div>${esc(f.mime ?? "unknown type")} · ${fmtSize(f.size)}<div>${action}</div></div>`;
       }
       return;
     }
@@ -454,7 +455,7 @@ export class Viewer {
       (md ? `<div class="seg"><button data-act="rendered" class="${mode === "rendered" ? "on" : ""}" title="Rendered">Rendered</button>` +
         `<button data-act="source" class="${mode === "source" ? "on" : ""}" title="Source${f?.writable ? " (editable)" : ""}">Source</button></div>` : "") +
       `<button class="icon" data-act="reveal" title="Reveal in tree"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3"/></svg></button>` +
-      `<button class="icon" data-act="open-app" title="Open with default app"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 2.5h4.5V7M13.5 2.5 7 9M12 10v3.5H2.5V4H6"/></svg></button>`;
+      (PROXIED ? "" : `<button class="icon" data-act="open-app" title="Open with default app"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 2.5h4.5V7M13.5 2.5 7 9M12 10v3.5H2.5V4H6"/></svg></button>`);
   }
 
   private openWithApp(path: string) { return apiOrToast("POST", "/api/os/open", { body: { path } }); }

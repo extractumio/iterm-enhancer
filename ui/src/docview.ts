@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Rendered documents (Markdown and HTML) and the links inside them. A link never navigates
-// the panel: anchors scroll, web links go to the default browser, files open as tabs
+// the panel: anchors scroll, web links go to the default browser (in the web app: the reader's browser), files open as tabs
 // (`guide.md#install` opens guide.md and scrolls to "install").
 
-import { api, apiOrToast, basename, dirname, decodePath, hasScheme, rawUrl, resolvePath, toast, type FileView } from "./api";
+import { api, apiOrToast, basename, dirname, decodePath, hasScheme, PROXIED, rawUrl, resolvePath, toast, type FileView } from "./api";
 import { isMarkdown, renderMarkdown } from "./markdown";
 
 export const isHtml = (path: string) => /\.x?html?$/i.test(path);
@@ -25,7 +25,11 @@ export function scrollToAnchor(scope: Document | HTMLElement, anchor: string, sm
 /** Follow `href` found in the document at `from`; `scope` is where in-page anchors live. */
 export async function followLink(href: string, from: string, scope: Document | HTMLElement, host: LinkHost) {
   if (href.startsWith("#")) return scrollToAnchor(scope, decodePath(href.slice(1)));
-  if (/^(https?:|mailto:)/i.test(href)) return void apiOrToast("POST", "/api/os/open", { body: { url: href } });
+  if (/^(https?:|mailto:)/i.test(href)) {
+    // in the web app (AC-52) the reader is on another device: open it there, not on the Mac
+    if (PROXIED) return void window.open(href, "_blank", "noopener,noreferrer");
+    return void apiOrToast("POST", "/api/os/open", { body: { url: href } });
+  }
   if (hasScheme(href) && !href.startsWith("file:")) return toast(`Not opened: ${href.split(":")[0]} links`);
   const [file, anchor] = href.replace(/^file:\/\//, "").split("#");
   let target: string;
