@@ -12,7 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bridge"))
 from fbbridge.common import APP_DIR, PORT, ROOT  # noqa: E402,F401
 
 if not os.environ.get("FB_APP_DIR") or APP_DIR.resolve() == (ROOT / "state").resolve():
-    raise RuntimeError("Integration tests require an isolated FB_APP_DIR; the live installation is refused")
+    raise RuntimeError("Integration tests require an isolated FB_APP_DIR; the live installation is refused. "
+                       "Run them all with: python3 scripts/e2e_isolated.py")
 TOKEN = (APP_DIR / "token").read_text().strip()
 REPO = Path(__file__).resolve().parent.parent
 

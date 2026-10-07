@@ -257,14 +257,18 @@ quit iTerm2 and run `make clean-registrations` to remove them.
 make test                                  # builds the UI, then cargo test, bridge + installer tests, typecheck, UI unit tests
 cd ui && npx playwright-core install chromium-headless-shell   # once, for the browser test
 cd ui && node test/e2e_panel.mjs           # panel checks in a real browser against a private fbd
-python3 scripts/e2e_cwd.py 10              # cd → panel latency in bash / tmux / tmux -CC (opens an iTerm2 window)
-python3 scripts/e2e_terminal.py            # Insert Path / Open Terminal Here / refusals (opens an iTerm2 window)
+python3 scripts/e2e_isolated.py            # iTerm2 checks with a private fbd and state: cd latency (e2e_cwd),
+                                           # terminal commands (e2e_terminal), refused requests (security_check);
+                                           # opens its own windows; the live installation is never used
 python3 scripts/e2e_windows.py             # Toolbelt in new windows, viewer window, panel per window (opens iTerm2 windows; needs iTerm2 in front)
-scripts/security_check.sh                  # refused requests against the installed fbd
 python3 scripts/e2e_remote.py [--amd64]    # remote helper end to end against a Linux container with sshd (Docker)
 make package                               # the release package in dist/package (tarball, install.sh, SHA256SUMS)
 scripts/make_big_dir.sh /tmp/fb-big 500000 && scripts/bench_ls.sh /tmp/fb-big
 ```
+
+A private fbd's `FB_APP_DIR` must be a short path (its Unix socket path is limited to 104
+bytes; `/tmp/<name>` works, a deep temporary folder does not). Python tests run from the
+repository root as `python3 -m unittest bridge.tests.test_web` (or `discover -s bridge/tests`).
 
 Contributor rules: [CLAUDE.md](CLAUDE.md) (also read by AI agents as `AGENTS.md`).
 

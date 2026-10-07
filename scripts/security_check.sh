@@ -3,7 +3,9 @@
 # security_check.sh — AC-07: refused requests against the installed fbd.
 port=${FB_PORT:-47821}; b="http://127.0.0.1:$port"
 if [ -z "${FB_APP_DIR:-}" ]; then
-  echo "Integration tests require an isolated FB_APP_DIR; the live installation is refused" >&2
+  echo "Integration tests require an isolated FB_APP_DIR; the live installation is refused." >&2
+  echo "Run it with the iTerm2 checks: python3 scripts/e2e_isolated.py, or against a private fbd:" >&2
+  echo "  FB_PORT=<its port> FB_APP_DIR=<its short folder> scripts/security_check.sh" >&2
   exit 1
 fi
 app="$FB_APP_DIR"
