@@ -34,6 +34,8 @@ mod recovery_tests;
 mod socket;
 mod termtext;
 mod update;
+mod watch_web;
+mod web;
 mod watcher;
 mod workspace;
 
@@ -78,6 +80,7 @@ struct Config {
     text_max: u64,
 }
 
+#[derive(Default)]
 struct Term {
     /// last state pushed by the bridge (the key window's), as sent to panels
     state: Value,
@@ -90,6 +93,8 @@ struct Term {
     setup: Value,
     /// the newest release the bridge found, `{"latest": tag}`, or null (AC-51)
     update: Value,
+    /// web access as the bridge reports it, `{"enabled", "password", "urls", "error"}`, or null (AC-52)
+    web: Value,
 }
 
 impl Term {
@@ -124,6 +129,8 @@ pub struct App {
     tickets: Tickets,
     /// files sent to the viewer window before its page connected (drained by the page)
     viewer_pending: Mutex<Vec<api_state::ViewBody>>,
+    /// the web app's Files panels, watched beside the focused pane (AC-53)
+    web_panes: watch_web::WebPanes,
     /// which window each panel lives in (AC-36)
     panels: panels::Panels,
     live: Mutex<liveness::Live>,
@@ -170,15 +177,15 @@ impl App {
             let t = self.term.lock();
             (t.state["key"].as_str().map(str::to_string), t.state["host"].as_str().map(str::to_string))
         };
-        let pane = key.map(|k| self.store.get(&k, None));
-        if let (Some(h), Some(p)) = (&host, &pane) {
-            remote::watch(&self.remotes, h, p.root.clone(), p.expanded.clone(), p.tabs.iter().map(|t| t.path.clone()).collect());
+        let focused = key.map(|k| (host, self.store.get(&k, None)));
+        let web = self.web_panes.keys().into_iter().map(|k| (watch_web::host_of(&k), self.store.get(&k, None)));
+        let (local, remote) = watch_web::plan(focused.into_iter().chain(web).collect());
+        for (h, r) in remote {
+            remote::watch(&self.remotes, &h, r.root, r.expanded, r.files);
         }
-        let Some(w) = &self.watcher else { return };
-        w.set(match (host, pane) {
-            (None, Some(p)) => watcher::wanted(&p.root, &p.expanded, p.tabs.into_iter().map(|t| t.path)),
-            _ => Default::default(),
-        });
+        if let Some(w) = &self.watcher {
+            w.set(local);
+        }
     }
 
     /// A change made through a panel: tell every panel now, without waiting for FSEvents.
@@ -223,6 +230,7 @@ fn routes(app: Shared) -> Router {
         .route("/api/ui/toolbelt-width", post(toolbelt_width))
         .route("/api/ui/open-quickly", post(open_quickly))
         .route("/api/update", post(update::choose))
+        .route("/api/web", post(web::choose))
         .route("/api/panel/claim", post(panels::panel_claim))
         .route("/api/panel/bind", post(panels::panel_bind))
         .route("/ticket", get(ticket))
@@ -245,6 +253,7 @@ fn bridge_routes(app: Shared) -> Router {
         .route("/internal/liveness", post(liveness::inventory))
         .route("/internal/setup", post(liveness::setup))
         .route("/internal/update", post(update::internal_update))
+        .route("/internal/web", post(web::internal_web))
         .route("/internal/recovery", get(recovery::get))
         .route("/internal/recovery/snapshot/{id}", get(recovery::snapshot))
         .route("/internal/recovery/capture", post(recovery::capture).layer(axum::extract::DefaultBodyLimit::max(4 << 20)))
@@ -312,7 +321,7 @@ async fn main() {
         store: Store::load(dir.join("workspaces.json"), env("FB_WORKSPACE_TTL_DAYS", 14), bus.clone()),
         roots: Roots::parse(&std::env::var("FB_WRITABLE_ROOTS").unwrap_or_else(|_| "$HOME:/tmp".into())),
         bus,
-        term: Mutex::new(Term { state: json!({}), windows: HashMap::new(), version: 0, last_push: None, announced_alive: false, setup: Value::Null, update: Value::Null }),
+        term: Mutex::new(Term { state: json!({}), ..Default::default() }),
         panels: Default::default(),
         live: Default::default(),
         recovery: Arc::new(Mutex::new(recovery_store::Store::load(dir.join("recovery")))),
@@ -325,6 +334,7 @@ async fn main() {
         watcher,
         tickets: Tickets::default(),
         viewer_pending: Mutex::new(Vec::new()),
+        web_panes: Default::default(),
     });
 
     if let Some(a) = agent {
@@ -395,19 +405,18 @@ mod tests {
                 token: "test-token".into(), bridge_secret: None, text_max: 1024 },
             bus: Bus::new(), cache: Cache::new(1024), store: Store::load(path.clone(), 14, Bus::new()),
             roots: Roots::parse("/tmp"),
-            term: Mutex::new(Term { state: json!({}), windows: HashMap::new(), version: 0,
-                last_push: None, announced_alive: false, setup: Value::Null, update: Value::Null }),
+            term: Mutex::new(Term { state: json!({}), ..Default::default() }),
             panels: Default::default(), live: Default::default(), remotes: Default::default(),
             recovery: Arc::new(Mutex::new(recovery_store::Store::load(path.with_extension("recovery")))),
             bridge_build: Mutex::new(Value::Null), streams: Default::default(), started: Instant::now(),
             denied: Default::default(), commands: tokio::sync::broadcast::channel(32).0,
-            watcher: None, tickets: Default::default(), viewer_pending: Default::default(),
+            watcher: None, tickets: Default::default(), viewer_pending: Default::default(), web_panes: Default::default(),
         })
     }
 
     #[test]
     fn bridge_silence_is_announced_once() {
-        let mut t = Term { state: json!({}), windows: HashMap::new(), version: 3, last_push: None, announced_alive: false, setup: Value::Null, update: Value::Null };
+        let mut t = Term { state: json!({}), version: 3, ..Default::default() };
         assert!(!t.went_silent(), "never connected: nothing to announce");
         t.last_push = Some(Instant::now());
         t.announced_alive = true;

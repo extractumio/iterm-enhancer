@@ -46,6 +46,9 @@ fn with_status(t: &Term, state: &Value) -> Value {
     if !t.update.is_null() {
         s["update"] = t.update.clone();
     }
+    if !t.web.is_null() {
+        s["web"] = t.web.clone();
+    }
     s
 }
 
@@ -131,9 +134,19 @@ fn stream_event(e: Result<Event, tokio_stream::wrappers::errors::BroadcastStream
 #[derive(Deserialize)]
 pub struct KeyQuery {
     key: String,
+    /// a web panel's pane folder now (AC-53); ignored for any other key
+    cwd: Option<String>,
 }
 
 pub async fn get_workspace(State(app): State<Shared>, Query(q): Query<KeyQuery>) -> Json<Pane> {
+    if crate::watch_web::is_web(&q.key) {
+        // the web app follows its pane's folder as the bridge follows the focused pane's
+        let moved = q.cwd.as_deref().filter(|c| c.starts_with('/')).is_some_and(|cwd| app.store.set_root(&q.key, cwd));
+        if app.web_panes.touch(&q.key) || moved {
+            app.refresh_watch();
+        }
+        return Json(app.store.get(&q.key, None));
+    }
     let cwd = {
         let t = app.term.lock();
         (t.state["key"].as_str() == Some(q.key.as_str())).then(|| t.state["cwd"].as_str().map(str::to_string)).flatten()
@@ -166,6 +179,7 @@ pub async fn open_quickly(State(app): State<Shared>, headers: HeaderMap) -> ApiR
 }
 
 pub async fn put_workspace(State(app): State<Shared>, Query(q): Query<KeyQuery>, headers: HeaderMap, Json(pane): Json<Pane>) -> Response {
+    app.web_panes.touch(&q.key);
     match app.store.put(&q.key, pane, client(&headers)) {
         Ok(rev) => {
             app.refresh_watch();
@@ -353,6 +367,7 @@ pub async fn health(State(app): State<Shared>) -> Json<Value> {
         "agent_id": crate::agent::AGENT_ID,
         "bridge_build": *app.bridge_build.lock(),
         "bridge_connected": app.term.lock().bridge_alive(),
+        "web": app.term.lock().web.clone(),
         "cache_bytes": cache_bytes,
         "cache_dirs": cache_dirs,
         "sse_clients": app.streams.sse.load(Ordering::Relaxed),

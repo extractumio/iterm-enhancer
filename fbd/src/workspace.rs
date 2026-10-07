@@ -122,13 +122,14 @@ impl Store {
         }
     }
 
-    /// The bridge reports the pane's cwd. A new root clears the tree state but keeps tabs.
-    pub fn set_root(&self, key: &str, root: &str) {
+    /// The bridge reports the pane's cwd. A new root clears the tree state but keeps tabs;
+    /// true when the root changed.
+    pub fn set_root(&self, key: &str, root: &str) -> bool {
         let rev = {
             let mut data = self.data.lock();
             let p = data.panes.entry(key.to_string()).or_default();
             if p.root == root {
-                return;
+                return false;
             }
             p.root = root.to_string();
             p.expanded.clear();
@@ -139,6 +140,7 @@ impl Store {
             p.rev
         };
         self.touched(key, rev, None);
+        true
     }
 
     /// Replace a pane's state if the client saw the latest revision; else the current one.
