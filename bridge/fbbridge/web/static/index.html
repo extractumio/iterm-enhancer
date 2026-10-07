@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
+<title>iTerm2 Web</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-shown="term">
+<div id="app" hidden>
+  <aside id="nav" aria-label="Sessions">
+    <div class="nav-head">
+      <input id="filter" type="search" placeholder="Filter sessions" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Filter sessions">
+      <button id="navclose" class="icon" type="button" aria-label="Close the session list">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"/></svg>
+      </button>
+    </div>
+    <div id="sessions"></div>
+  </aside>
+  <div id="scrim"></div>
+
+  <section id="main">
+    <header id="bar">
+      <button id="navbtn" class="icon" type="button" aria-label="Show sessions" aria-controls="nav" aria-expanded="false">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
+      </button>
+      <button id="current" type="button" aria-label="Current session; show all sessions">
+        <span id="curkind"></span>
+        <span class="lines"><span class="t">Choose a session</span><span class="s"></span></span>
+      </button>
+      <div id="tools">
+        <div class="seg wide-only term-only" role="group" aria-label="Lines">
+          <button data-mode="wrap" type="button" aria-pressed="true" title="Re-flow long lines to this screen">Wrap</button>
+          <button data-mode="grid" type="button" aria-pressed="false" title="iTerm2's exact layout">Grid</button>
+          <button data-mode="fit" type="button" aria-pressed="false" title="iTerm2's exact layout, scaled to the width of this screen">Fit</button>
+        </div>
+        <button id="keysbtn" class="icon wide-only term-only" type="button" aria-pressed="false" aria-controls="hotkeys" title="Hot keys">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="5" width="16" height="10" rx="2"/><path d="M5 8h1M8 8h1M11 8h1M14 8h1M6 12h8"/></svg>
+        </button>
+        <div id="views" class="seg" role="tablist" aria-label="View">
+          <button data-view="term" role="tab" type="button" aria-selected="true" title="Terminal">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="3.5" width="16" height="13" rx="2"/><path d="M5.5 8l2.5 2-2.5 2M10 12.5h4"/></svg>
+          </button>
+          <button data-view="files" role="tab" type="button" aria-selected="false" title="Files">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.5c0-.8.6-1.5 1.5-1.5h3.5l2 2H16c.8 0 1.5.7 1.5 1.5v7.5c0 .8-.7 1.5-1.5 1.5H4c-.9 0-1.5-.7-1.5-1.5z"/></svg>
+          </button>
+          <button data-view="file" role="tab" type="button" aria-selected="false" title="File (open one from Files)" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h6.5L15.5 6.5V16c0 .8-.7 1.5-1.5 1.5H5c-.8 0-1.5-.7-1.5-1.5V4c0-.8.7-1.5 1.5-1.5z"/><path d="M11.5 2.5v4h4M6.5 10h7M6.5 13h5"/></svg>
+          </button>
+        </div>
+        <button id="menubtn" class="icon" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="menu" title="Settings">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.5" cy="10" r="1.3"/><circle cx="10" cy="10" r="1.3"/><circle cx="15.5" cy="10" r="1.3"/></svg>
+        </button>
+      </div>
+    </header>
+    <div id="status" role="status" hidden></div>
+    <!-- No whitespace inside: the terminal uses white-space: pre. -->
+    <main id="term" class="wrap view"><p id="note" hidden>Older lines are not loaded. The browser keeps the most recent part of long histories to stay fast.</p><div id="hist"></div><div id="screen"></div></main>
+    <iframe id="files" class="view" title="Files" hidden></iframe>
+    <iframe id="file" class="view" title="File" hidden></iframe>
+    <p id="viewnote" class="view" hidden></p>
+    <p id="toast" role="status" hidden></p>
+    <p id="paused" role="status" hidden>Paused while you select. Clear the selection to catch up.</p>
+    <button id="bottom" type="button" hidden aria-label="Scroll to the bottom">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v11M5 10l5 5 5-5"/></svg>
+    </button>
+    <section id="hotkeys" aria-label="Hot keys" hidden>
+      <div class="keys"></div>
+    </section>
+  </section>
+
+  <div id="menu" role="menu" hidden>
+    <div class="row narrow-only">
+      <span>Lines</span>
+      <div class="seg" role="group" aria-label="Lines">
+        <button data-mode="wrap" type="button" aria-pressed="true">Wrap</button>
+        <button data-mode="grid" type="button" aria-pressed="false">Grid</button>
+        <button data-mode="fit" type="button" aria-pressed="false">Fit</button>
+      </div>
+    </div>
+    <div class="row">
+      <span>Text size</span>
+      <div class="stepper">
+        <button id="smaller" type="button" aria-label="Smaller text">−</button>
+        <output id="sizeval">13</output>
+        <button id="bigger" type="button" aria-label="Bigger text">+</button>
+      </div>
+    </div>
+    <button id="resize" class="row" type="button"><span><span class="label">Resize iTerm to this screen</span><small>Changes the window on the Mac until you restore it</small></span></button>
+    <label class="row narrow-only"><span>Hot keys panel</span><input id="keysswitch" type="checkbox" role="switch"></label>
+    <label class="row"><span>Show this session in iTerm<small>Selects its tab on the Mac when you open it or type. iTerm updates hidden tabs only a few times a second</small></span><input id="showiterm" type="checkbox" role="switch"></label>
+    <label class="row"><span>Application cursor keys<small>For apps that ignore the arrow keys</small></span><input id="appcur" type="checkbox" role="switch"></label>
+    <label class="row"><span>Bracketed paste<small>Turn off if pasted text shows extra characters</small></span><input id="bracket" type="checkbox" role="switch"></label>
+    <button id="signout" class="row danger" type="button">Sign out</button>
+  </div>
+</div>
+
+<form id="login" hidden>
+  <h1>iTerm2 Web</h1>
+  <p>Sign in to see the terminal sessions on this Mac.</p>
+  <label for="password">Password</label>
+  <input id="password" type="password" autocomplete="current-password" required>
+  <p id="loginerr" role="alert"></p>
+  <button type="submit">Sign in</button>
+</form>
+
+<dialog id="pastebox">
+  <form method="dialog">
+    <label for="pastetext">Paste here, then send it to the terminal</label>
+    <textarea id="pastetext" rows="5" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+    <div class="actions">
+      <button value="cancel" type="submit">Cancel</button>
+      <button value="send" type="submit" class="primary">Send</button>
+    </div>
+  </form>
+</dialog>
+
+<textarea id="kbd" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Terminal input"></textarea>
+<script type="module" src="app.js"></script>
+</body>
+</html>

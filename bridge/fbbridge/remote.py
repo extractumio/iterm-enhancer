@@ -6,6 +6,7 @@ build (AC-42: for every open window of the host, not only the focused one; the p
 so), reconnected with back-off. Any other host is offered once per bridge run: Enable
 copies the agent over that ssh (hosts.enable), "Not now" hides the offer until the bridge
 restarts. Threads, so ssh never blocks the poll loop."""
+import os
 import threading
 import time
 import secrets
@@ -38,6 +39,19 @@ class Remotes:
     def _owns(self, key, owner):
         with self.lock:
             return self.hosts.get(key) is owner
+
+    def place(self, r):
+        """Where a resolved pane's files are: {"cwd", "host", "remote", "note"}. A host's pane has
+        `remote` (its offer, for the panel) and, once its helper is enabled, `host` and the host's
+        own path, never resolved on this Mac (AC-37, AC-38); a local pane has its real folder."""
+        if not r.get("remote_key"):
+            return {"cwd": os.path.realpath(r["cwd"]) if r.get("cwd") else None, "host": None, "remote": None, "note": None}
+        st = self.status(r["remote_key"], r["ssh"], r["remote_host"])
+        remote = {"key": r["remote_key"], "name": r["remote_host"], "state": st["state"],
+                  **({"updated": st["updated"]} if st.get("updated") else {})}
+        enabled = st["enabled"]
+        return {"cwd": r.get("path") if enabled else None, "host": r["remote_key"] if enabled else None,
+                "remote": remote, "note": st["note"]}
 
     def status(self, key, target, name):
         """{"state", "note", "enabled"} of a remote pane's host; an enabled one starts

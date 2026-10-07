@@ -28,6 +28,7 @@ from .recovery_runner import Runner
 from .recovery_startup import Startup
 from .recovery_quit import QuitWatch
 from .viewer_profile import install_viewer_profile
+from .web.access import WebAccess
 from .windows import Windows
 
 backend = Backend()
@@ -86,7 +87,7 @@ async def send_command(conn, app, command):
     await session.async_activate()
 
 
-async def run_commands(conn, app, windows, queue, recovery=None, updates=None):
+async def run_commands(conn, app, windows, queue, recovery=None, updates=None, web=None):
     while True:
         c = await queue.get()
         try:
@@ -118,6 +119,8 @@ async def run_commands(conn, app, windows, queue, recovery=None, updates=None):
                     remotes.remove(k, c.get("by"))
             elif action in ("update-skip", "update-off", "update-on") and updates:  # the chip's menu (AC-51)
                 await updates.choose(action[7:], c.get("version"))
+            elif action in ("web-on", "web-off") and web:  # the panel's web access menu (AC-52)
+                await web.switch(action == "web-on")
             elif action == "which-window":  # its own task: never delays a terminal command
                 asyncio.create_task(answer_which_window(conn, app, windows, c))
         except Exception as e:
@@ -173,23 +176,21 @@ class Follower:
             if sess.session_id != self.theme_session or self.tick % THEME_EVERY == 0:
                 self.theme, self.theme_session = await theme_of(app, sess), sess.session_id
             r = await resolve(self.conn, sess)
-            cwd = os.path.realpath(r["cwd"]) if r.get("cwd") else None  # remote panes: below
+            place = remotes.place(r)
+            cwd = place["cwd"]
             state = {"window": win.window_id, "session": sess.session_id, "key": r["key"],
                      "title": await sess.async_get_variable("presentationName") or "",
                      "mode": r["mode"], "note": r.get("note", ""), "job": r.get("job"),
                      "busy": r.get("busy", False), "theme": self.theme,
                      "panel": await windows.toolbelt_shown(self.conn, win.window_id, refresh=self.tick % THEME_EVERY == 0)}
             last = self.last
-            remote_path = False
-            if r.get("remote_key"):  # a host's own path, never resolved on this Mac (AC-37, AC-38)
-                st = remotes.status(r["remote_key"], r["ssh"], r["remote_host"])
-                state["note"] = st["note"]
-                state["remote"] = {"key": r["remote_key"], "name": r["remote_host"], "state": st["state"], **({"updated": st["updated"]} if st.get("updated") else {})}
-                if st["enabled"]:
+            remote_path = place["host"] is not None
+            if place["remote"]:  # a host's pane (AC-37, AC-38)
+                state.update(note=place["note"], remote=place["remote"])
+                if remote_path:
                     # always with its host: while disconnected the panel's requests fail
                     # with "not connected" instead of reading the same path on this Mac
-                    state.update(host=r["remote_key"], busy=not r["idle"])
-                    cwd, remote_path = r.get("path"), True
+                    state.update(host=place["host"], busy=not r["idle"])
             if remote_path and not cwd:
                 state.update(cwd=None, stale=True)
             elif cwd:
@@ -268,7 +269,9 @@ async def main(conn):
     asyncio.create_task(capture.lifecycle.follow())
     recovery = Runner(capture)
     updates = Updates(backend.post)
-    asyncio.create_task(run_commands(conn, app, windows, commands, recovery, updates))
+    web = WebAccess(conn, app, backend.post, remotes)
+    asyncio.create_task(run_commands(conn, app, windows, commands, recovery, updates, web))
+    asyncio.create_task(web.follow())
     asyncio.create_task(updates.follow())
     asyncio.create_task(Startup(capture, recovery).follow())
     asyncio.create_task(recovery.follow())

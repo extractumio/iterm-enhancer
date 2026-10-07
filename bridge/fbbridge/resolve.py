@@ -129,6 +129,8 @@ async def theme_of(app, session):
     font, _, size = (p.normal_font or "").rpartition(" ")
     return {"bg": color("background"), "fg": color("foreground"), "sel": color("selection"),
             "selfg": color("selected_text"), "cursor": color("cursor"), "link": color("link"),
+            # the web mirror (AC-52) draws the terminal itself: bold text and the cursor's text too
+            "bold": color("bold"), "useBold": bool(p.use_bold_color), "cursorText": color("cursor_text"),
             "ansi": [color(f"ansi_{i}") for i in range(16)],
             "font": font or None, "size": float(size) if size.replace(".", "", 1).isdigit() else None,
             "dark": dark}
