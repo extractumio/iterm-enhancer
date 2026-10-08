@@ -28,6 +28,7 @@ from .recovery_runner import Runner
 from .recovery_startup import Startup
 from .recovery_quit import QuitWatch
 from .viewer_profile import install_viewer_profile
+from .tmuxwatch import TmuxWatch
 from .web.access import WebAccess
 from .windows import Windows
 
@@ -269,7 +270,9 @@ async def main(conn):
     asyncio.create_task(capture.lifecycle.follow())
     recovery = Runner(capture)
     updates = Updates(backend.post)
-    web = WebAccess(conn, app, backend.post, remotes)
+    tmux_watch = TmuxWatch(conn, app)
+    asyncio.create_task(tmux_watch.follow())
+    web = WebAccess(conn, app, backend.post, remotes, tmux_watch)
     asyncio.create_task(run_commands(conn, app, windows, commands, recovery, updates, web))
     asyncio.create_task(web.follow())
     asyncio.create_task(updates.follow())

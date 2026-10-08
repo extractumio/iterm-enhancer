@@ -39,7 +39,8 @@ fbd: ui
 
 test: ui
 	cd fbd && cargo test --locked
-	python3 -m unittest discover -s bridge/tests
+	# a private state folder: tests never write the live log, token or workspaces
+	d=$$(mktemp -d /tmp/fbt-XXXXXX) && FB_APP_DIR=$$d python3 -m unittest discover -s bridge/tests; s=$$?; rm -rf "$$d"; exit $$s
 	cd ui && npx tsc -p . && npm test
 
 install: ui

@@ -15,7 +15,8 @@ MAX_HEAD = 32 * 1024
 MAX_BODY = 64 * 1024 * 1024        # a saved file travels in one request
 SMALL_BODY = 4096                  # what any other request may carry (a sign-in, a JSON action)
 MAX_MESSAGE = 1 << 20              # a WebSocket message from the browser
-HEAD_TIMEOUT = 10                  # seconds for a request head (and its body) to arrive
+HEAD_TIMEOUT = 10                  # seconds for a request head (and a small body) to arrive
+BODY_TIMEOUT = 300                 # seconds for a large body a signed-in page may send (a saved file, an image)
 MAX_CONNECTIONS = 64               # open at once; more are refused, the bridge's descriptors stay free
 TOKEN = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 UNSAFE = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")      # control characters, but not tab
@@ -59,7 +60,7 @@ async def read_request(reader, writer, body_limit=lambda req: SMALL_BODY):
     """The next request with its body, or None when the client closed the connection.
     body_limit(req) says how large a body this request may carry (decided from its head)."""
     try:
-        head = await reader.readuntil(b"\r\n\r\n")
+        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), HEAD_TIMEOUT)
     except (asyncio.IncompleteReadError, ConnectionError):
         return None
     except asyncio.LimitOverrunError:
@@ -85,10 +86,11 @@ async def read_request(reader, writer, body_limit=lambda req: SMALL_BODY):
         length = int(req.header("content-length") or 0)
     except ValueError:
         raise HttpError(400, "bad Content-Length")
-    if length < 0 or length > body_limit(req):
+    limit = body_limit(req)
+    if length < 0 or length > limit:
         raise HttpError(413, "request body too large")
     if length:
-        req.body = await reader.readexactly(length)
+        req.body = await asyncio.wait_for(reader.readexactly(length), HEAD_TIMEOUT if limit <= SMALL_BODY else BODY_TIMEOUT)
     return req
 
 
@@ -250,7 +252,7 @@ async def serve(handler, host, port, body_limit=lambda req: SMALL_BODY):
             return
         server.open.add(writer)
         try:
-            req = await asyncio.wait_for(read_request(reader, writer, body_limit), HEAD_TIMEOUT)
+            req = await read_request(reader, writer, body_limit)
             if req:
                 await handler(req)
         except HttpError as e:

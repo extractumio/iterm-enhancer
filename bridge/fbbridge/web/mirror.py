@@ -6,10 +6,13 @@ import json
 
 import iterm2
 
-from ..common import log
+from ..common import UserError, log
 from ..resolve import theme_of
 from .httpd import ConnectionClosed
 from .layout import layout_of
+from .newsession import NewSessionError, new_session, new_window, profiles, reorder_tabs
+from .rename import RenameError, rename
+from .tmuxkeys import key_names
 from .screen import enc_line, line_key
 
 FIRST_HISTORY = 1000   # scrollback lines sent when a session opens; older ones load on scroll
@@ -26,6 +29,16 @@ ACTIVE_FOR = 3.0
 LAYOUT_EVERY = 2       # seconds between window/tab/title polls
 SEND_TIMEOUT = 10      # a browser that takes longer to accept a message is dropped
 CLOSED = "This session has closed. Pick another one."
+DROPPED = "iTerm2 dropped this tmux connection; its raw output is not shown. Use Reattach above, or pick another session."
+NEW_EVERY = 1.0        # seconds between two new sessions from one browser
+ACTIONS = {"sub": "open the session", "in": "type into the session", "files": "show the session's files",
+           "more": "load older lines", "fit": "resize iTerm", "unfit": "restore iTerm's size",
+           "new": "open a new session", "rename": "name the session"}
+
+
+def gone(e):
+    """iTerm2's answer for a session that has closed (its RPCException names it)."""
+    return "SESSION_NOT_FOUND" in str(e)
 
 
 def encode(msg):
@@ -42,26 +55,49 @@ class Hub:
     """One poll of iTerm's windows, tabs and titles, shared by every signed-in browser; and
     the original size of each session a browser resized (Fit iTerm), shared too."""
 
-    def __init__(self, app):
-        self.app = app
+    def __init__(self, app, tmux=None):
+        self.app, self.tmux = app, tmux      # tmux: the bridge's watch for dropped integrations (AC-54)
         self.clients = set()
+        if tmux:
+            tmux.listeners.append(self.drops_changed)
         self.layout = None
         self.fitted = {}         # session id -> [original (cols, rows), browsers that fitted it]
 
     async def run(self):
         while True:
             if any(not c.paused for c in self.clients):     # nobody looking: nothing to ask iTerm2
-                try:
-                    lay = await layout_of(self.app)
-                except Exception as e:       # surface, keep polling
-                    log(f"web: layout: {e!r}")
-                    lay = self.layout
-                if lay != self.layout:
-                    self.layout = lay
-                    text = encode({"t": "layout", "groups": lay})       # once, for every browser
-                    for c in list(self.clients):
-                        asyncio.create_task(c.send_quietly(text))
+                await self.refresh()
             await asyncio.sleep(LAYOUT_EVERY)
+
+    def stop(self):
+        if self.tmux and self.drops_changed in self.tmux.listeners:
+            self.tmux.listeners.remove(self.drops_changed)
+
+    def drops(self):
+        return {"t": "drops", "items": self.tmux.items() if self.tmux else []}
+
+    def suspect(self, sid):
+        return bool(self.tmux and self.tmux.suspect(sid))
+
+    def drops_changed(self):
+        text = encode(self.drops())
+        for c in list(self.clients):
+            asyncio.create_task(c.send_quietly(text))
+            if c.session and self.suspect(c.session.session_id):
+                asyncio.create_task(c.leave_dropped())
+
+    async def refresh(self):
+        """Ask iTerm2 for its windows now and tell every browser what changed."""
+        try:
+            lay = await layout_of(self.app)
+        except Exception as e:       # surface, keep polling
+            log(f"web: layout: {e!r}")
+            return
+        if lay != self.layout:
+            self.layout = lay
+            text = encode({"t": "layout", "groups": lay})       # once, for every browser
+            for c in list(self.clients):
+                asyncio.create_task(c.send_quietly(text))     # a stalled browser holds up nobody
 
     async def fit(self, client, session, cols, rows):
         sid = session.session_id
@@ -80,27 +116,34 @@ class Hub:
             if not owners:
                 del self.fitted[sid]
                 session = self.app.get_session_by_id(sid)
-                if session:
-                    await session.async_set_grid_size(iterm2.util.Size(*size))
+                try:
+                    if session:
+                        await session.async_set_grid_size(iterm2.util.Size(*size))
+                except Exception as e:
+                    if not gone(e):          # a closed session has no size to give back
+                        raise
 
     async def join(self, client):
         self.clients.add(client)
         if self.layout is None:
             self.layout = await layout_of(self.app)
         await client.send({"t": "layout", "groups": self.layout})
+        await client.send(self.drops())
 
 
 class Client:
-    def __init__(self, conn, hub, ws, max_history, files_of):
+    def __init__(self, conn, hub, ws, max_history, files_of, build=None):
         self.conn, self.hub, self.app, self.ws = conn, hub, hub.app, ws
         self.max_history = max_history
         self.files_of = files_of # session -> {key, cwd, host} for the Files view, or {error}
+        self.build = build       # the page's files; a page of another build reloads
         self.stream_task = None
         self.session = None
         self.wake = None         # set to fetch the screen right away
         self.show_in_iterm = True
         self.active_until = 0.0  # loop time until which the screen is polled fast
         self.paused = False      # the page is hidden
+        self.last_new = -NEW_EVERY   # loop time of this browser's last new session
         self.reset_screen()
 
     def reset_screen(self):
@@ -208,6 +251,8 @@ class Client:
             ticks = 0
             while True:
                 changed.clear()
+                if self.hub.suspect(session.session_id):      # raw tmux protocol: not mirrored (AC-54)
+                    return await self.send({"t": "error", "msg": DROPPED, "sid": session.session_id})
                 if await self.send_screen(session, await session.async_get_screen_contents()):
                     self.active_until = loop.time() + ACTIVE_FOR
                     await asyncio.sleep(FRAME_GAP)
@@ -241,8 +286,10 @@ class Client:
         self.session = self.app.get_session_by_id(sid)
         self.reset_screen()
         if not self.session:
-            await self.send({"t": "error", "msg": CLOSED})
+            await self.send({"t": "error", "msg": CLOSED, "sid": sid})   # the page drops it once it shows another pane
             return
+        if self.hub.suspect(sid):
+            return await self.send({"t": "error", "msg": DROPPED, "sid": sid})
         if self.show_in_iterm:
             await self.bring_tab_forward()       # a shown tab also refreshes at full speed
         self.stream_task = asyncio.create_task(self.guard(self.stream(self.session)))
@@ -255,8 +302,8 @@ class Client:
         except ConnectionClosed:
             return          # the browser went away; run() cleans up
         except Exception as e:  # surface, never swallow
-            if "SESSION_NOT_FOUND" in str(e):
-                await self.send_quietly({"t": "error", "msg": CLOSED})
+            if gone(e):
+                await self.send_quietly({"t": "error", "msg": CLOSED, "sid": self.session.session_id})
                 return
             log(f"web: stream: {e!r}")
             await self.send_quietly({"t": "error", "msg": f"Lost the session stream: {e}"})
@@ -282,10 +329,12 @@ class Client:
         t = msg.get("t")
         if t == "sub":
             await self.subscribe(msg["id"])
+        elif t == "in" and self.session and self.hub.suspect(self.session.session_id):
+            await self.send({"t": "error", "msg": DROPPED, "sid": self.session.session_id})   # it would reach tmux as commands
         elif t == "in" and self.session:
             if self.show_in_iterm:
                 await self.bring_tab_forward()
-            await self.session.async_send_text(msg["data"], suppress_broadcast=True)
+            await self.type_into(self.session, msg["data"])
             self.active_until = asyncio.get_running_loop().time() + ACTIVE_FOR
             if self.wake:
                 self.wake.set()                    # show the echo now, not at the next poll
@@ -303,22 +352,103 @@ class Client:
         elif t == "pause":                         # the page is hidden: stop polling for it
             self.paused = True
             await self.stop_stream()
+        elif t == "new":
+            await self.create(str(msg.get("group", "")))
+        elif t == "newwindow":
+            await self.create(None, str(msg.get("profile", "")))
+        elif t == "reorder":
+            try:
+                await reorder_tabs(self.app, str(msg.get("group", "")), [str(i) for i in msg.get("ids", [])])
+            except NewSessionError as e:
+                await self.send({"t": "error", "msg": str(e)})
+            await self.hub.refresh()
+        elif t == "profiles":
+            await self.send({"t": "profiles", "items": await profiles(self.conn)})
+        elif t in ("reattach", "dismiss"):
+            await self.drop_action(t, str(msg.get("id", "")))
+        elif t == "rename":
+            await self.rename(str(msg.get("id", "")), msg.get("name", ""))
         elif t == "resume":                        # back: only what changed meanwhile is sent
             self.paused = False
             if self.session and not self.stream_task:
                 self.stream_task = asyncio.create_task(self.guard(self.stream(self.session)))
 
+    async def create(self, window_id, profile=None):
+        """[+]: a new session in that group, or "New window" with `profile`; the list has it
+        before the page is told to show it."""
+        now = asyncio.get_running_loop().time()
+        if now - self.last_new < NEW_EVERY:
+            return await self.send({"t": "error", "msg": "One new session a second: press + again."})
+        self.last_new = now
+        try:
+            sid = await (new_session(self.conn, self.app, window_id) if window_id is not None
+                         else new_window(self.conn, self.app, profile))
+        except NewSessionError as e:
+            return await self.send({"t": "error", "msg": str(e)})
+        await self.hub.refresh()
+        await self.send({"t": "layout", "groups": self.hub.layout})    # in order: the list has it, then show it
+        await self.send({"t": "created", "id": sid})
+
+    async def type_into(self, session, data):
+        """Text as it is; special keys for a tmux pane by tmux's names, which tmux encodes for
+        the pane's cursor mode (mc and vim switch to application cursor keys)."""
+        names = key_names(data)
+        tab = session.tab
+        if names and tab and tab.tmux_window_id not in (None, "-1"):
+            pane = await session.async_get_variable("tmuxWindowPane")
+            tc = await iterm2.async_get_tmux_connection_by_connection_id(self.conn, tab.tmux_connection_id)
+            if tc and pane not in (None, ""):
+                await tc.async_send_command(f"send-keys -t %{str(pane).lstrip('%')} {' '.join(names)}")
+                return
+        await session.async_send_text(data, suppress_broadcast=True)
+
+    async def leave_dropped(self):
+        """The shown gateway turned out dropped: stop mirroring it."""
+        sid = self.session.session_id
+        await self.stop_stream()
+        await self.send_quietly({"t": "error", "msg": DROPPED, "sid": sid})
+
+    async def drop_action(self, t, drop_id):
+        tmux = self.hub.tmux
+        if not tmux or drop_id not in tmux.dropped:
+            return await self.send({"t": "error", "msg": "This tmux session was reattached or dismissed already."})
+        if t == "dismiss":
+            return tmux.dismiss(drop_id)
+        try:
+            await tmux.reattach(drop_id)
+        except UserError as e:
+            await self.send({"t": "error", "msg": str(e)})
+
+    async def rename(self, sid, name):
+        """The pencil: name the pane; the list shows it at once."""
+        session = self.app.get_session_by_id(sid)
+        if not session:
+            return await self.send({"t": "error", "msg": CLOSED, "sid": sid})
+        try:
+            await rename(self.conn, session, name)
+        except RenameError as e:
+            return await self.send({"t": "error", "msg": str(e), "sid": sid})
+        await self.hub.refresh()
+
     async def run(self):
         """The page signed in (its cookie was checked before the WebSocket was accepted)."""
         try:
+            if self.build:
+                await self.send({"t": "build", "id": self.build})     # first: an outdated page reloads
             await self.hub.join(self)
             async for raw in self.ws:
+                msg = {}
                 try:
-                    await self.handle(json.loads(raw))
+                    msg = json.loads(raw)
+                    await self.handle(msg)
                 except ConnectionClosed:
                     raise
-                except Exception as e:
-                    await self.send_quietly({"t": "error", "msg": str(e)})
+                except Exception as e:  # fail loud: in words on the page, and in the log
+                    t = msg.get("t") if isinstance(msg, dict) else None
+                    action = ACTIONS.get(t, "do that")
+                    log(f"web: {t}: {e!r}")
+                    text = f"iTerm2 no longer has a session needed to {action}." if gone(e) else f"Could not {action}: {e}"
+                    await self.send_quietly({"t": "error", "msg": text})
         except ConnectionClosed:
             pass        # a phone that sleeps or switches network drops the socket without a goodbye
         finally:

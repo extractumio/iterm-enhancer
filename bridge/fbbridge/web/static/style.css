@@ -23,6 +23,8 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
 svg circle { fill: currentColor; stroke: none; }
+svg.lu { width: var(--s, 16px); height: var(--s, 16px); stroke-width: 2; stroke-linejoin: round; flex: 0 0 auto; }
+svg.lu circle { fill: none; stroke: currentColor; }
 /* Only terminal text is selectable: a long press on a button or label must not select it. */
 #bar, #nav, #hotkeys, #menu, #bottom, #paused, #toast, .winhead, button { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 
@@ -30,69 +32,146 @@ svg circle { fill: currentColor; stroke: none; }
 #app { display: grid; grid-template-columns: var(--nav-w) 1fr; grid-template-rows: minmax(0, 1fr); height: var(--app-h, 100dvh); }
 #app.nav-hidden { grid-template-columns: 0 1fr; }
 #app.nav-hidden #nav { visibility: hidden; }
+#nav { position: relative; }
+#navgrip { position: absolute; top: 0; right: -4px; width: 8px; height: 100%; cursor: col-resize; z-index: 6; touch-action: none; }
+#navgrip:hover, #navgrip:focus-visible { background: color-mix(in srgb, var(--accent) 45%, transparent); outline: none; }
 
 /* ---------- navigator ---------- */
 #nav { background: var(--chrome); border-right: 1px solid var(--line); display: flex; flex-direction: column;
   min-width: 0; padding-top: env(safe-area-inset-top); }
-.nav-head { display: flex; gap: 6px; padding: 10px 10px 6px; }
-#filter { flex: 1; min-width: 0; font: inherit; color: inherit; background: var(--chrome-2); border: 1px solid transparent;
-  border-radius: 8px; padding: 7px 10px; }
+.nav-head { display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+.search { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px;
+  border-radius: 8px; background: var(--chrome-2); border: 1px solid transparent; color: var(--muted); }
+.search:focus-within { border-color: var(--accent); }
+#filter { flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--t-fg); background: none; border: 0; outline: 0; padding: 0; }
 #filter::placeholder { color: var(--muted); }
-#sessions { overflow-y: auto; flex: 1; padding: 0 6px 16px; overscroll-behavior: contain; }
-.grp h2 { margin: 10px 0 2px; font-size: 12px; font-weight: 600; }
-.grp h2 .toggle { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 4px 8px 4px 2px; border-radius: 6px;
-  text-align: left; font-weight: inherit; }
+.search kbd { font: 11px ui-monospace, Menlo, monospace; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+#sessions { overflow-y: auto; flex: 1; padding: 8px 8px 12px; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 10px; }
+.grp ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+
+/* group header: chevron, name, tmux session, count, + */
+.grp h2 { position: relative; display: flex; align-items: center; gap: 6px; height: 30px; margin: 0; padding: 0 2px 0 0; font-size: 12.5px; font-weight: 600; }
+.grp h2 .toggle { flex: 1; min-width: 0; height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 6px; border-radius: 6px; text-align: left; font-weight: inherit; }
 .grp h2 .toggle:hover { background: var(--chrome-2); }
-.grp h2 .toggle svg { width: 14px; height: 14px; flex: 0 0 auto; align-self: center; color: var(--muted); transition: transform .15s; }
-.grp h2 .toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }
-.grp h2 .count.on { color: var(--accent); font-weight: 600; }
+.grp h2 .toggle .lu { color: var(--muted); flex: 0 0 auto; transition: transform .15s; }
+.grp h2 .toggle[aria-expanded="false"] .lu { transform: rotate(-90deg); }
+.grp h2 .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grp h2 .tsess { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; font-weight: 500;
+  color: cornflowerblue; background: color-mix(in srgb, cornflowerblue 15%, transparent); border-radius: 999px; padding: 1px 8px; }
 .grp h2 .where { color: var(--muted); font-weight: 400; }
-.host { color: var(--remote); font-weight: 500; }
-.grp h2 .host { font-size: 11px; }
-.kind { flex: 0 0 auto; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; }
-.kind svg { width: 18px; height: 18px; stroke-width: 1.7; stroke-linejoin: round; }
-.kind.local { color: var(--local); background: color-mix(in srgb, var(--local) 18%, transparent); }
-.kind.remote { color: var(--remote); background: color-mix(in srgb, var(--remote) 20%, transparent); }
-.grp h2 .count { margin-left: auto; color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
-.grp ul { list-style: none; margin: 0; padding: 0; }
-.item { width: 100%; display: flex; align-items: flex-start; gap: 8px; text-align: left; padding: 7px 8px 7px 10px;
-  border-radius: 8px; position: relative; }
-.item:hover, .item.on { background: var(--chrome-2); }
-.item.on::before { content: ""; position: absolute; left: 2px; top: 8px; bottom: 8px; width: 3px; border-radius: 2px;
-  background: var(--accent); }
+.grp h2 .count { margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.grp h2 .count.on { color: var(--accent); font-weight: 600; }
+.grp h2 .new { flex: 0 0 auto; width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border-radius: 7px;
+  border: 1px solid var(--line); background: var(--chrome); color: var(--muted); }
+.grp h2 .new:hover { background: var(--chrome-2); color: var(--t-fg); border-color: color-mix(in srgb, var(--t-fg) 30%, var(--t-bg)); }
+
+/* row: dot | title and meta | state */
+.grp li { position: relative; }
+.item { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) 18px; column-gap: 8px; align-items: start;
+  padding: 8px 10px 8px 8px; border-radius: 8px; text-align: left; }
+.item:hover { background: color-mix(in srgb, var(--t-fg) 8%, var(--chrome)); }
+.item.on { background: color-mix(in srgb, var(--accent) 16%, var(--chrome)); }
+.pdot { width: 8px; height: 8px; margin: 5px 1px 0; border-radius: 50%; background: var(--dot); flex: 0 0 auto; }
+.pdot.focus { box-shadow: 0 0 0 2px var(--chrome), 0 0 0 3.5px var(--dot); }
+/* a working agent: a ring of the dot's color grows from it and fades, as a radar ping */
+.pdot.busy { position: relative; }
+.pdot.busy::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--dot);
+  animation: ping 1.6s cubic-bezier(0, 0, .2, 1) infinite; }
+@keyframes ping { from { transform: scale(1); opacity: .7; } 75%, to { transform: scale(2.6); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .pdot.busy::after { animation: none; } }
+.item .txt { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .item .head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.item .idx { flex: 0 0 auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.item .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.item .t { min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.item .s { display: flex; flex-wrap: wrap; column-gap: 10px; color: var(--muted); font-size: 12px; min-width: 0; }
-.item .s span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-.item .focus { flex: 0 0 auto; width: 7px; height: 7px; margin-top: 6px; border-radius: 50%; background: var(--accent); }
+.item .idx { flex: 0 0 auto; width: 14px; text-align: right; color: var(--muted); font: 11px ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+.item .t { min-width: 0; font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s { display: flex; gap: 6px; min-width: 0; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; }
+.s > span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.s > .sep, .s > .host, .s > .pdot { flex: none; }
+.s > .last { flex-shrink: 1000; min-width: 6ch; }   /* the folder gives way first, down to a few letters */
+.s .sep { color: color-mix(in srgb, var(--t-fg) 25%, var(--t-bg)); }
+.item .s { padding-left: 20px; }
+.host { color: var(--remote); font-weight: 500; }
+.s .ag-claude { color: #f0b48a; }     /* pale orange */
+.s .ag-codex { color: #c9b8ff; }      /* pale violet */
+.item .st { display: grid; place-items: center; padding-top: 2px; }
+
+/* agent states (Lucide): amber hourglass, orange question (pulsing), red alert, green check */
+.state { display: inline-grid; place-items: center; flex: 0 0 auto; }
+.state.working { color: #e0af68; }
+.state.waiting { color: #ff9e64; animation: ask 1.6s ease-in-out infinite; }
+.state.failed { color: #f7768e; }
+.state.done { color: #9ece6a; }
+@keyframes ask { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .state.waiting { animation: none; } }
+
+/* drag handles: in the gutter, shown on hover; a finger long-presses the row's grip */
+.grip { position: absolute; left: -9px; top: 9px; width: 14px; height: 20px; display: grid; place-items: center; color: var(--muted);
+  cursor: grab; touch-action: none; opacity: 0; z-index: 1; }
+.grp h2 .grip { top: 5px; }
+.grp li:hover .grip, .grp h2:hover .grip, .grip:focus-visible { opacity: .8; }
+@media (hover: none) { .grip { opacity: .35; } }
+#sessions.reordering, #sessions.reordering * { cursor: grabbing; user-select: none; }
+.dragging { opacity: .7; }
+.dragging .item { background: var(--chrome-2); box-shadow: 0 8px 24px color-mix(in srgb, #000 45%, transparent); }
 .empty { color: var(--muted); padding: 16px 10px; margin: 0; }
 #scrim { display: none; }
 
+/* foot: New window, and its profile menu above it */
+.nav-foot { padding: 10px; border-top: 1px solid var(--line); }
+#newwin { width: 100%; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--chrome); font-weight: 500; }
+#newwin:hover, #newwin[aria-expanded="true"] { background: var(--chrome-2); }
+#newwin .chev { margin-left: auto; color: var(--muted); display: grid; transition: transform .15s; }
+#newwin[aria-expanded="true"] .chev { transform: rotate(180deg); }
+#profiles { margin: 0 10px 6px; display: flex; flex-direction: column; padding: 6px; border-radius: 10px;
+  background: var(--chrome-2); border: 1px solid var(--line); box-shadow: 0 12px 32px color-mix(in srgb, #000 40%, transparent); }
+#profiles p { margin: 0; padding: 4px 8px 6px; color: var(--muted); font-size: 11px; }
+#profiles button { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 7px; text-align: left; }
+#profiles button:hover, #profiles button:focus-visible { background: color-mix(in srgb, var(--t-fg) 10%, var(--chrome-2)); }
+#profiles .pdot { margin: 0; }
+.nav-title { display: none; }
+
 /* ---------- main column ---------- */
 #main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
-#bar { display: flex; align-items: center; gap: 4px; min-height: 48px; padding: 4px 8px;
-  padding-top: max(4px, env(safe-area-inset-top)); background: var(--chrome); border-bottom: 1px solid var(--line); }
-.icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; flex: 0 0 auto; }
-.icon:hover, #current:hover { background: var(--chrome-2); }
+#bar { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 10px 0 14px;
+  padding-top: env(safe-area-inset-top); background: var(--chrome); border-bottom: 1px solid var(--line); }
+.icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; flex: 0 0 auto; color: color-mix(in srgb, var(--t-fg) 75%, var(--t-bg)); }
+.icon:hover { background: var(--chrome-2); color: var(--t-fg); }
 #app:not(.nav-hidden) #navbtn { display: none; }
-#current { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; text-align: left;
-  padding: 3px 8px 3px 4px; border-radius: 8px; }
-#curkind:empty { display: none; }
-#current .lines { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
-#current .t { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#current .s { display: block; color: var(--muted); font-size: 12px; max-width: 100%; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
-#current .s span + span { margin-left: 12px; }
-#current .s:empty { display: none; }
-#tools { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
-#tools button[aria-pressed="true"], #tools button[aria-expanded="true"] { background: var(--accent); color: var(--t-bg); }
-.seg { display: inline-flex; background: var(--chrome-2); border-radius: 8px; padding: 2px; }
-.seg button { padding: 0 10px; height: 28px; border-radius: 6px; }
-#tools .seg button[aria-pressed="true"], #menu .seg button[aria-pressed="true"] { background: var(--t-bg); color: var(--t-fg); }
+#current { flex: 1; min-width: 0; display: flex; align-items: center; cursor: pointer; border-radius: 8px; }
+/* The title block is a two-column grid: a 16px column holds the agent's state over the profile's
+   dot, centered on one axis; the title and the details start together 8px right of it. Rows are
+   22px and 16px whatever they hold, so the block is 40px and centers on the 44px buttons. */
+#current .lines { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+#current .tline { display: flex; align-items: center; gap: 8px; min-width: 0; height: 22px; }
+#current .t { font-size: 15px; line-height: 22px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#curstate { flex: 0 0 16px; height: 16px; display: grid; place-items: center; }
+#rename { flex: 0 0 auto; width: 28px; height: 28px; margin: -3px 0 -3px -4px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); }
+#rename:hover { color: var(--t-fg); background: var(--chrome-2); }
+/* the header's details: one line of text that ends in an ellipsis, so the folder at its end
+   gives way first; the dot is centered under the state, the text starts with the title's */
+#cursub { display: block; height: 16px; line-height: 16px; text-overflow: ellipsis; }
+#cursub > span { display: inline; }
+#cursub > .sep { margin: 0 6px; }
+#cursub .pdot { display: inline-block; vertical-align: 1px; margin: 0 12.5px 0 4.5px; width: 7px; height: 7px; }
+#cursub:empty { display: none; }
+#term.onlink { cursor: pointer; }
+#renamebox { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; }
+#renamebox input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--accent);
+  background: var(--chrome-2); color: inherit; font: inherit; font-size: 16px; outline: 0; }
+#tools { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+#tools .divider { width: 1px; height: 22px; background: var(--line); }
+#tools button[aria-pressed="true"], #tools button[aria-expanded="true"] { background: var(--chrome-2); color: var(--t-fg); }
+.seg { display: inline-flex; padding: 2px; border-radius: 8px; background: color-mix(in srgb, var(--t-fg) 5%, var(--t-bg)); border: 1px solid var(--line); }
+.seg button { height: 26px; padding: 0 11px; border-radius: 6px; font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.seg button:hover { color: var(--t-fg); }
+#tools .seg button[aria-pressed="true"], #menu .seg button[aria-pressed="true"], #views button[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 22%, var(--chrome-2)); color: var(--t-fg); font-weight: 500; }
+#views button:disabled { opacity: .35; cursor: default; }
 
 #status { background: color-mix(in srgb, #d0453a 85%, var(--t-bg)); color: #fff; padding: 6px 12px; }
+#drops { background: color-mix(in srgb, #c98a1b 80%, var(--t-bg)); color: #fff; padding: 4px 12px; }
+#drops p { margin: 4px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#drops button { padding: 3px 10px; border-radius: 6px; background: rgba(255,255,255,.18); color: inherit; font-weight: 600; }
 
 /* ---------- terminal ---------- */
 #term { flex: 1; overflow: auto; padding: 4px 8px; background: var(--t-bg); color: var(--t-fg); outline: none;
@@ -102,11 +181,14 @@ svg circle { fill: currentColor; stroke: none; }
 #hist, #screen { display: contents; }
 /* Wrap: lines flow inline; only a hard line end breaks. Padding a program added up to iTerm's
    width is hidden (it would stick out of a narrow screen), prose the program wrapped at iTerm's
-   width is re-joined, and separator lines are cut to one row. */
+   width is re-joined, and separator lines are cut to one row. A hard line end closes its
+   paragraph with an empty block (the zero-width space keeps a blank line one row high): iOS
+   Safari shows no Copy menu for a long press inside one huge paragraph of inline lines. */
 #term.wrap { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; }
 #term.wrap .ln { display: inline; }
-#term.wrap .ln.eol::after { content: "\A"; }
-#term.wrap .ln.eol.join::after { content: " "; }
+#term.wrap .ln.eol::before { content: "\200B"; }
+#term.wrap .ln.eol::after { content: ""; display: block; }
+#term.wrap .ln.eol.join::after { content: " "; display: inline; }
 #term.wrap .ln.cont .lead { display: none; }
 #term.wrap .tail { display: none; }
 #term.wrap .ln.rule { display: block; white-space: pre; overflow: hidden; height: 1.25em; }
@@ -124,8 +206,9 @@ svg circle { fill: currentColor; stroke: none; }
 #toast { position: absolute; left: 50%; bottom: calc(16px + var(--keys-h, 0px)); transform: translateX(-50%);
   z-index: 6; margin: 0; padding: 6px 14px; border-radius: 999px; font-size: 13px; white-space: nowrap;
   background: var(--t-fg); color: var(--t-bg); }
+/* over the terminal's top (term.js places it); taps go through to what is under it */
 #paused { position: absolute; top: calc(56px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
-  z-index: 5; margin: 0; padding: 5px 12px; border-radius: 999px; font-size: 12px; white-space: nowrap;
+  z-index: 5; pointer-events: none; margin: 0; padding: 5px 12px; border-radius: 999px; font-size: 12px; white-space: nowrap;
   background: var(--chrome-2); border: 1px solid var(--line); color: var(--t-fg); }
 #bottom { position: absolute; right: 16px; bottom: calc(16px + var(--keys-h, 0px)); width: 40px; height: 40px;
   border-radius: 50%; display: grid; place-items: center; background: var(--chrome-2); border: 1px solid var(--line); }
@@ -137,7 +220,7 @@ svg circle { fill: currentColor; stroke: none; }
   background: color-mix(in srgb, var(--chrome-2) 85%, transparent); border: 1px solid var(--line);
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
   box-shadow: 0 4px 14px color-mix(in srgb, #000 35%, transparent); }
-#fabs button[aria-pressed="true"] { background: var(--accent); color: var(--t-bg); }
+#fabs button[aria-pressed="true"], #fabs #copyfab { background: var(--accent); color: var(--t-bg); }
 @media (hover: none), (max-width: 860px) {
   #fabs { display: flex; }
   #keysbtn { display: none !important; }
@@ -145,18 +228,19 @@ svg circle { fill: currentColor; stroke: none; }
   #term { padding-bottom: 60px; }      /* the last line scrolls clear of the buttons */
 }
 /* A mouse and a hardware keyboard need no keyboard button. */
-@media (hover: hover) { #fabs #kbdbtn { display: none; } }
+@media (hover: hover) { #fabs #kbdbtn, #fabs #copyfab { display: none; } }
 
 /* ---------- hot keys panel ---------- */
 #hotkeys { background: var(--chrome); border-top: 1px solid var(--line);
   padding: 8px 8px max(8px, env(safe-area-inset-bottom)); }
-#hotkeys .keys { display: flex; flex-direction: column; gap: 5px; max-width: 640px; margin: 0 auto; }
-.keyrow { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 5px; }
-.key { height: 40px; min-width: 0; padding: 0 2px; display: grid; place-items: center; border-radius: 7px;
-  background: var(--chrome-2); border-bottom: 2px solid var(--line); font-size: clamp(12px, 3.7vw, 15px); line-height: 1;
+#hotkeys .keys { display: flex; flex-direction: column; gap: 6px; max-width: 640px; margin: 0 auto; }
+.keyrow { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.key { height: 40px; min-width: 0; padding: 0 2px; display: grid; place-items: center; border-radius: 9px;
+  background: var(--chrome-2); border: 1px solid var(--line); font-size: clamp(12px, 3.6vw, 14px); font-weight: 500; line-height: 1;
   white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; }
-.key:active { transform: translateY(1px); border-bottom-width: 1px; }
-.key[aria-pressed="true"] { background: var(--accent); color: var(--t-bg); }
+.key:active { transform: translateY(1px); background: color-mix(in srgb, var(--t-fg) 16%, var(--chrome-2)); }
+.key.strong { background: color-mix(in srgb, var(--accent) 22%, var(--chrome-2)); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.key[aria-pressed="true"] { background: var(--accent); color: var(--t-bg); border-color: var(--accent); }
 
 /* ---------- settings menu ---------- */
 #menu { position: fixed; top: 52px; right: 8px; z-index: 30; width: min(320px, calc(100vw - 16px));
@@ -191,13 +275,15 @@ svg circle { fill: currentColor; stroke: none; }
 #pastebox .actions button { height: 40px; padding: 0 16px; border-radius: 10px; background: var(--chrome-2); }
 
 /* Off-screen but focusable; 16px stops iOS from zooming on focus. */
-#kbd { position: fixed; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; font-size: 16px; border: 0; padding: 0; resize: none; }
+#kbd { position: fixed; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; font-size: 16px; border: 0; padding: 0; resize: none;
+  z-index: 3; color: transparent; caret-color: transparent; background: transparent; }
 
 .narrow-only { display: none !important; }
 
 /* ---------- phones and narrow windows: the navigator becomes a drawer ---------- */
 @media (max-width: 860px) {
   #app, #app.nav-hidden { grid-template-columns: 1fr; }
+  #navgrip { display: none; }
   #nav { position: fixed; inset: 0 auto 0 0; width: min(88vw, 360px); z-index: 20; transform: translateX(-102%);
     transition: transform .2s ease; visibility: visible !important; box-shadow: 8px 0 24px color-mix(in srgb, #000 35%, transparent); }
   #app.nav-open #nav { transform: none; }
@@ -205,8 +291,38 @@ svg circle { fill: currentColor; stroke: none; }
   #app:not(.nav-hidden) #navbtn { display: grid; }
   .wide-only { display: none !important; }
   .narrow-only { display: flex !important; }
-  .item { padding-top: 10px; padding-bottom: 10px; }
+  /* the session list: a sheet over the whole screen, finger-sized */
+  #nav { width: 100vw; border-right: 0; box-shadow: none; }
+  .nav-title { align-items: center; justify-content: space-between; padding: 12px 12px 4px 16px; }
+  .nav-title h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  .nav-title .icon, #bar .icon { width: 44px; height: 44px; border-radius: 12px; }
+  .nav-head { height: auto; padding: 4px 16px 10px; border-bottom: 0; }
+  .search { height: 44px; border-radius: 12px; padding: 0 12px; }
+  #filter { font-size: 16px; }
+  #sessions { padding: 0 10px 12px; gap: 14px; }
+  .grp h2 { height: 40px; font-size: 13.5px; }
+  .grp h2 .new { width: 40px; height: 40px; border-radius: 10px; }
+  .item { min-height: 60px; grid-template-columns: 10px minmax(0, 1fr) 22px; column-gap: 10px; padding: 10px 12px; border-radius: 12px; }
+  .item .t { font-size: 15px; }
+  .item .s { font-size: 12.5px; }
+  .nav-foot { padding: 10px 16px max(16px, env(safe-area-inset-bottom)); }
+  #newwin { height: 48px; border-radius: 12px; font-size: 15px; }
+  /* the header: title row, then the view switch across the width */
+  #bar { flex-wrap: wrap; gap: 4px 4px; padding: env(safe-area-inset-top) 8px 8px; }
+  #current { order: 1; align-self: flex-start; padding-top: 11px; }   /* the title row centers on ☰ and ⋯ (44px) */
+  #navbtn, #menubtn { align-self: flex-start; }
+  #renamebox { order: 1; }
+  #navbtn { order: 0; }
+  #tools { display: contents; }
+  #menubtn { order: 2; }
+  #views { order: 3; flex-basis: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 3px; border-radius: 10px; }
+  #views button { height: 34px; justify-content: center; font-size: 13.5px; border-radius: 8px; }
 }
+/* wide screens: the terminal is always shown; Files and File are toggles beside it */
+body.wide #views { background: none; border: 0; padding: 0; gap: 4px; }
+body.wide #views button[data-view="term"] { display: none; }
+body.wide #views button { height: 30px; border: 1px solid var(--line); border-radius: 8px; }
+body.wide #views button[aria-selected="true"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--chrome)); }
 @media (prefers-reduced-motion: reduce) { #nav, .grp h2 .toggle svg { transition: none; } }
 
 /* ---------- views: Terminal, Files, File ---------- */
@@ -215,26 +331,23 @@ svg circle { fill: currentColor; stroke: none; }
 #viewnote { flex: 1; margin: 0; padding: 24px 16px; color: var(--muted); }
 body:not([data-shown="term"]) .term-only, body:not([data-shown="term"]) #hotkeys,
 body:not([data-shown="term"]) #bottom, body:not([data-shown="term"]) #paused { display: none !important; }
-#views button { width: 34px; padding: 0; display: grid; place-items: center; }
-#views svg { width: 18px; height: 18px; }
-#views button[aria-selected="true"] { background: var(--t-bg); color: var(--t-fg); }
-#views button:disabled { opacity: .35; cursor: default; }
 
 /* ---------- 1400px and wider: Files docked on the right, File a window over the terminal ---------- */
-.winhead { display: none; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 4px 14px;
-  background: var(--chrome); border-bottom: 1px solid var(--line); font-weight: 600; }
-body.wide #main { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.winhead { display: none; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px 0 16px;
+  background: var(--chrome); border-bottom: 1px solid var(--line); font-size: 14px; font-weight: 600; }
+body.wide #main { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
 body.wide #main > * { grid-column: 1 / 2; }   /* both lines: an absolute child's auto end is the edge */
 body.wide #bar { grid-row: 1; }
 body.wide #status { grid-row: 2; }
-body.wide #term { grid-row: 3; }
-body.wide #hotkeys { grid-row: 4; }
+body.wide #drops { grid-row: 3; }
+body.wide #term { grid-row: 4; }
+body.wide #hotkeys { grid-row: 5; }
 /* Positioned children are placed in the terminal's column, not over the docked Files. */
 body.wide #toast, body.wide #paused, body.wide #bottom, body.wide #fabs { grid-row: 1 / -1; }
-body.docked #sidehead { display: flex; grid-column: 2; grid-row: 1; min-height: 48px; border-left: 1px solid var(--line); }
+body.docked #sidehead { display: flex; grid-column: 2; grid-row: 1; min-height: 56px; border-left: 1px solid var(--line); }
 body.docked #files, body.docked #viewnote { grid-column: 2; grid-row: 2 / -1; width: var(--side-w);
   height: auto; align-self: stretch; border-left: 1px solid var(--line); }
-body.wide #filewin { position: absolute; grid-row: 3; z-index: 7; top: 12px; right: 16px; bottom: 16px;
+body.wide #filewin { position: absolute; grid-row: 4; z-index: 7; top: 12px; right: 16px; bottom: 16px;
   width: min(820px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
   background: var(--chrome); box-shadow: 0 16px 40px color-mix(in srgb, #000 50%, transparent); }
 body.wide #filewin .winhead { display: flex; }

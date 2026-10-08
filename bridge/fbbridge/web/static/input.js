@@ -1,16 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Keyboard, paste and the hot keys panel. Everything typed ends up in send(bytes).
 import { ctrlChar, encodeKey } from "./keys.js";
+import { selectedText } from "./seltext.js";
+import { copyByCommand, keepSelectionAt } from "./touchcopy.js";
 
-// Three rows of equal keys, most used first. The keyboard has its own floating button.
+// Four rows of six keys, grouped by what they do: text and the clipboard (with Upload), control
+// keys, the arrows with their modifiers, and moving around. Fn swaps the last two rows for the
+// F keys (mc, htop), so the panel never grows. The keyboard has its own floating button.
 const HOTKEYS = [
-  [["Copy", "copy", "Copy the selected text"], ["Paste", "paste"], ["Tab", "\t"], ["⇧Tab", "\x1b[Z", "Shift+Tab"],
-    ["^C", "\x03", "Interrupt"], ["^D", "\x04", "End of input"], ["Esc", "\x1b"]],
-  [["Ctrl", "mod:ctrl"], ["Alt", "mod:alt"], ["⇧←", "\x1b[1;2D", "Shift+Left"],
-    ["⇧↩", "\x1b[13;2u", "Shift+Enter: a new line in apps that tell it from Enter"],
-    ["←", "arrow:D"], ["↑", "arrow:A"], ["↓", "arrow:B"], ["→", "arrow:C"]],
-  [["Home", "\x1b[H"], ["End", "\x1b[F"], ["PgUp", "\x1b[5~"], ["PgDn", "\x1b[6~"],
-    ["^Z", "\x1a", "Suspend"], ["^L", "\x0c", "Redraw"], ["^R", "\x12", "Search history"]],
+  [["Copy", "copy", "Copy the selected text"], ["Paste", "paste"], ["Upload", "upload", "Upload a file and paste its path"],
+    ["⇧↩", "\x1b[13;2u", "Shift+Enter: a new line in apps that tell it from Enter"], ["Tab", "\t"], ["Enter", "\r", "Enter (Return)", "strong"]],
+  [["Esc", "\x1b"], ["^C", "\x03", "Interrupt"], ["^D", "\x04", "End of input"], ["^Z", "\x1a", "Suspend"],
+    ["^R", "\x12", "Search history"], ["Fn", "fn", "F1–F12 in place of the last two rows"]],
+  [["Ctrl", "mod:ctrl"], ["Alt", "mod:alt"], ["←", "arrow:D"], ["↑", "arrow:A"], ["↓", "arrow:B"], ["→", "arrow:C"]],
+  [["Home", "\x1b[H"], ["End", "\x1b[F"], ["PgUp", "\x1b[5~"], ["PgDn", "\x1b[6~"], ["⇧←", "\x1b[1;2D", "Shift+Left"],
+    ["⇧Tab", "\x1b[Z", "Shift+Tab"]],
+];
+const FN_ROWS = [
+  [["F1", "\x1bOP"], ["F2", "\x1bOQ"], ["F3", "\x1bOR"], ["F4", "\x1bOS"], ["F5", "\x1b[15~"], ["F6", "\x1b[17~"]],
+  [["F7", "\x1b[18~"], ["F8", "\x1b[19~"], ["F9", "\x1b[20~"], ["F10", "\x1b[21~"], ["F11", "\x1b[23~"], ["F12", "\x1b[24~"]],
 ];
 
 export class Input {
@@ -45,6 +53,17 @@ export class Input {
       this.type(this.withMods(text.replace(/\n/g, "\r")));
     });
     k.addEventListener("compositionend", () => { this.type(k.value); k.value = ""; });
+    // The field may lie over the cursor's row (for iOS's long-press Paste): a short tap on it
+    // still moves the cursor like a tap on the terminal.
+    let down = null;
+    k.addEventListener("touchstart", (e) => { const t = e.touches[0]; down = t && { x: t.clientX, y: t.clientY, at: Date.now() }; }, { passive: true });
+    k.addEventListener("touchend", (e) => {
+      const t = e.changedTouches[0];
+      if (down && t && Date.now() - down.at < 350 && Math.hypot(t.clientX - down.x, t.clientY - down.y) < 10
+          && !this.options.tapLink?.(t.clientX, t.clientY))       // an address or a path on the row still opens
+        this.options.tapMove?.(t.clientX, t.clientY);
+      down = null;
+    });
     const typing = (on) => {
       this.term.classList.toggle("focused", on);
       this.kbdButton.setAttribute("aria-pressed", String(on));
@@ -54,10 +73,21 @@ export class Input {
     // The button never takes focus itself; iOS opens the keyboard for a focus() made in its click.
     this.kbdButton.addEventListener("mousedown", (e) => e.preventDefault());
     this.kbdButton.addEventListener("click", () => (document.activeElement === k ? k.blur() : this.focus()));
-    document.addEventListener("paste", (e) => {
-      if (e.target.closest?.("input, textarea:not(#kbd)")) return;   // let fields paste normally
+    // Terminal text copies with its line ends (the page draws them with CSS, which never copies).
+    document.addEventListener("copy", (e) => {
+      const text = selectedText(this.term);
+      if (text === null) return;
+      e.clipboardData.setData("text/plain", text);
       e.preventDefault();
-      this.paste(e.clipboardData.getData("text/plain"));
+    });
+    document.addEventListener("paste", (e) => {
+      if (e.target.closest?.("input, textarea:not(#kbd, #pastetext)")) return;   // let fields paste normally
+      const image = imageIn(e.clipboardData);
+      if (!image && e.target.id === "pastetext") return;               // text goes into the paste field
+      e.preventDefault();
+      if (e.target.id === "pastetext") this.pasteDialog.close();
+      if (image) this.options.pasteImage(image);
+      else this.paste(e.clipboardData.getData("text/plain"));
     });
     // With a mouse, a click that does not end a text selection gives the terminal the keyboard.
     const mouse = matchMedia("(hover: hover) and (pointer: fine)");
@@ -65,23 +95,36 @@ export class Input {
     // On a touch screen a short tap opens the keyboard; a long press selects text and a moving
     // finger scrolls, so neither of those does. iOS opens the keyboard only for a focus() made
     // inside the touch handler itself.
-    let start = null;
+    // While the keyboard is up, iOS selects no page text on a long press (it taps instead; the
+    // same on a plain page with a focused field). So a finger held still closes the keyboard and
+    // selects the word under it, with iOS's handles; a tap on the selection shows Copy.
+    let start = null, hold = 0;
+    const release = () => { clearTimeout(hold); hold = 0; };
     this.term.addEventListener("touchstart", (e) => {
       const t = e.touches[0];
       start = e.touches.length === 1 ? { x: t.clientX, y: t.clientY, at: Date.now() } : null;
+      release();
+      if (start && document.activeElement === this.kbd) hold = setTimeout(() => { if (start) { selectWordAt(this.kbd, this.term, start.x, start.y); start.held = true; } }, 450);
     }, { passive: true });
     this.term.addEventListener("touchmove", (e) => {
       const t = e.touches[0];
-      if (start && Math.hypot(t.clientX - start.x, t.clientY - start.y) > 10) start = null;
+      if (start && Math.hypot(t.clientX - start.x, t.clientY - start.y) > 10) { start = null; release(); }
     }, { passive: true });
+    this.term.addEventListener("touchcancel", release, { passive: true });
     this.term.addEventListener("touchend", (e) => {
+      release();
+      if (start?.held) { e.preventDefault(); start = null; return; }   // its click would drop the word
       const tap = start && Date.now() - start.at < 350;
       start = null;
       if (!tap) return;
+      const t = e.changedTouches[0];
+      const sel = getSelection();
+      if (t && sel && !sel.isCollapsed && inSelection(sel, t.clientX, t.clientY)) return;   // iOS shows its Copy menu
       // Without this the tap's emulated mousedown that follows moves focus off the keyboard field.
       e.preventDefault();
-      const sel = getSelection();
-      if (sel && !sel.isCollapsed) { sel.removeAllRanges(); return; }   // a tap clears a selection first
+      if (sel && !sel.isCollapsed) { sel.removeAllRanges(); return; }   // a tap elsewhere clears a selection first
+      if (t && this.options.tapLink?.(t.clientX, t.clientY)) return;    // a tap on an address or a path opens it
+      if (t) this.options.tapMove?.(t.clientX, t.clientY);              // on the input: the cursor goes there
       if (document.activeElement !== this.kbd) this.focus();
     });
     const form = this.pasteDialog.querySelector("form");
@@ -102,20 +145,28 @@ export class Input {
     this.type(this.options.bracketed() ? `\x1b[200~${clean}\x1b[201~` : clean);
   }
 
-  // Copies the selection. The clipboard API needs HTTPS (or localhost); elsewhere the older
-  // copy command does the same for the current selection.
-  async copySelection() {
-    const text = String(getSelection());
+  // Copies the selection, or `given` text (the Copy button's, taken while it was selected). The
+  // clipboard API needs HTTPS (or localhost); elsewhere the older copy command copies a selection.
+  async copySelection(given) {
+    const text = given ?? selectedText(this.term) ?? String(getSelection());
     if (!text) return this.options.status("Select text first, then press Copy.");
     if (window.isSecureContext && navigator.clipboard?.writeText) {
       try { await navigator.clipboard.writeText(text); return this.options.status("Copied."); } catch { /* fall through */ }
     }
-    const ok = document.execCommand("copy");
+    const ok = given ? copyByCommand(text) : document.execCommand("copy");
     this.options.status(ok ? "Copied." : "Copying is blocked here; use the system Copy menu.");
   }
 
   async pasteFromClipboard() {
     // The clipboard API needs HTTPS (or localhost); elsewhere, paste into a field instead.
+    if (window.isSecureContext && navigator.clipboard?.read) {
+      try {
+        for (const item of await navigator.clipboard.read()) {
+          const type = item.types.find((t) => t.startsWith("image/"));
+          if (type) return this.options.pasteImage(await item.getType(type));
+        }
+      } catch { /* denied or no image: try text */ }
+    }
     if (window.isSecureContext && navigator.clipboard?.readText) {
       try { return this.paste(await navigator.clipboard.readText()); } catch { /* denied: use the field */ }
     }
@@ -123,24 +174,29 @@ export class Input {
     this.pasteDialog.querySelector("textarea").focus();
   }
 
-  buildPanel() {
+  renderKeys() {
     const frag = document.createDocumentFragment();
-    for (const group of HOTKEYS) {
+    for (const group of this.fn ? [...HOTKEYS.slice(0, 2), ...FN_ROWS] : HOTKEYS) {
       const g = document.createElement("div");
       g.className = "keyrow";
-      for (const [label, action, hint] of group) {
+      for (const [label, action, hint, look] of group) {
         const b = document.createElement("button");
         b.type = "button";
-        b.className = "key";
+        b.className = look ? `key ${look}` : "key";
         b.textContent = label;
         b.dataset.action = action;
         if (hint) b.title = hint;
-        if (action.startsWith("mod:")) b.setAttribute("aria-pressed", "false");
+        if (action.startsWith("mod:") || action === "fn") b.setAttribute("aria-pressed", String(action === "fn" && !!this.fn));
         g.append(b);
       }
       frag.append(g);
     }
     this.panel.querySelector(".keys").replaceChildren(frag);
+    this.syncMods();
+  }
+
+  buildPanel() {
+    this.renderKeys();
     // Buttons never take focus from the terminal, so the iOS keyboard stays up.
     this.panel.addEventListener("mousedown", (e) => { if (e.target.closest("button")) e.preventDefault(); });
     this.panel.addEventListener("click", (e) => {
@@ -148,7 +204,9 @@ export class Input {
       if (!b) return;
       const a = b.dataset.action;
       if (a.startsWith("mod:")) { const m = a.slice(4); this.mods[m] = !this.mods[m]; this.syncMods(); return; }
+      if (a === "fn") { this.fn = !this.fn; return this.renderKeys(); }
       if (a === "paste") return this.pasteFromClipboard();
+      if (a === "upload") return this.options.pickFile();
       if (a === "copy") return this.copySelection();
       let seq = a;
       if (a.startsWith("arrow:")) seq = (this.options.appCursor() ? "\x1bO" : "\x1b[") + a.slice(6);
@@ -160,4 +218,31 @@ export class Input {
     for (const b of this.panel.querySelectorAll('[data-action^="mod:"]'))
       b.setAttribute("aria-pressed", String(this.mods[b.dataset.action.slice(4)]));
   }
+}
+
+/** The first image on a paste event's clipboard, or null. */
+function imageIn(data) {
+  for (const f of data?.files ?? []) if (f.type.startsWith("image/")) return f;
+  for (const it of data?.items ?? []) if (it.kind === "file" && it.type.startsWith("image/")) return it.getAsFile();
+  return null;
+}
+
+/** A path as a shell word: as it is when nothing in it is special, else in single quotes. */
+export function shellWord(path) {
+  return /^[\w@%+=:,./-]+$/.test(path) ? path : `'${path.replace(/'/g, "'\\''")}'`;
+}
+
+function inSelection(sel, x, y) {
+  return [...sel.getRangeAt(0).getClientRects()].some((r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom);
+}
+
+function selectWordAt(kbd, term, x, y) {
+  const at = document.caretRangeFromPoint?.(x, y);
+  kbd.blur();
+  if (!at) return;
+  const sel = getSelection();
+  sel.collapse(at.startContainer, at.startOffset);
+  sel.modify("move", "backward", "word");
+  sel.modify("extend", "forward", "word");
+  if (sel.rangeCount) keepSelectionAt(term, sel.getRangeAt(0).getBoundingClientRect().top);
 }

@@ -167,12 +167,22 @@ Open one of the addresses (default port 8765, every network of this Mac; `--port
 and sign in:
 
 - **Sessions**: every window, tab and pane by title and host (blue laptop: this Mac; violet
-  server: a remote host).
+  server: a remote host). **+** on a window opens a new tab with that window's current
+  profile; on a tmux group, a new tmux tab. Each row has a dot in its profile's color; Claude
+  Code and Codex sessions show their state (working, needs you, failed, done).
 - **Terminal**: the pane in its profile's colors and font, typing, a hot keys panel (Copy,
   Paste, Tab, ⇧Tab, ^C, Esc, Ctrl, Alt, ⇧←, ⇧↩, arrows…), scrollback, selection. On a phone
   two floating buttons open the keyboard and the hot keys. On a phone lines
   re-flow to the screen (**Wrap**); **Grid** keeps iTerm2's layout, **Fit** scales it to the
   width, **Resize iTerm to this screen** (⋯) changes the Mac's window until you restore it.
+- **Names**: the pencil beside the title names the session: its iTerm2 tab and session, and in
+  tmux its window and pane title. Clear the name to give it back to iTerm2 and tmux.
+- **Links**: click or tap a web address to open it in a new tab, or a file path or name the
+  terminal printed (`src/main.rs:42`, `~/notes.md`, `README.md`) to open it in File.
+- **Images**: paste one (PNG, JPEG, GIF, WebP, up to 20 MB) and it is saved where the pane's
+  shell runs, in `$TMPDIR/iterm-enhancer-paste/` on this Mac or `~/.cache/iterm-enhancer/paste/`
+  on a host with the helper; its path is pasted, which Claude Code takes as an image. Files go
+  after 7 days.
 - **Files** and **File**: this panel for the pane's folder (remote hosts too) and its editor
   (at 1400 px and wider, Files docked on the right and File a window over the terminal);
   web links open in your browser; Finder, apps and typing into a terminal are not offered.
@@ -270,7 +280,8 @@ scripts/make_big_dir.sh /tmp/fb-big 500000 && scripts/bench_ls.sh /tmp/fb-big
 
 A private fbd's `FB_APP_DIR` must be a short path (its Unix socket path is limited to 104
 bytes; `/tmp/<name>` works, a deep temporary folder does not). Python tests run from the
-repository root as `python3 -m unittest bridge.tests.test_web` (or `discover -s bridge/tests`).
+repository root as `FB_APP_DIR=$(mktemp -d /tmp/fbt-XXXXXX) python3 -m unittest bridge.tests.test_web` (or `discover -s bridge/tests`):
+the private state folder keeps tests out of the live log, token and workspaces, as `make test` does.
 
 Contributor rules: [CLAUDE.md](CLAUDE.md) (also read by AI agents as `AGENTS.md`).
 

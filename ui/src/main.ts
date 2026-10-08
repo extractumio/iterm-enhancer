@@ -358,8 +358,11 @@ const viewer = new Viewer($("tabs"), $("tools"), $("vbody"), {
 let pathBar: PathBar | null = null; // viewer window only
 function revealInTree(p: string) { tree.selected = new Set([p]); void tree.reveal(p); scheduleSave(); }
 
+const busy = () => viewer.hasDirty || !!document.querySelector(".modal, .inline-edit.on, dialog[open]");
+// The web app (AC-52) reloads its page after an upgrade only while none of its frames is busy.
+if (PROXIED) (window as unknown as { fbBusy: () => boolean }).fbBusy = busy;
 const upgrade = new Upgrade({
-    busy: () => viewer.hasDirty || !!document.querySelector(".modal, .inline-edit.on, dialog[open]"),
+  busy,
   beforeReload: () => saveNow(),
   waiting: (text) => {
     if (updateNote) return;

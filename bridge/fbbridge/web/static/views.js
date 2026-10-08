@@ -63,6 +63,9 @@ export class Views {
     document.body.classList.toggle("docked", wide && this.docked);
     for (const n of NAMES) document.querySelector(`button[data-view="${n}"]`).setAttribute("aria-selected", String(shown[n]));
     $("term").hidden = !shown.term;
+    // a selection left in the hidden terminal would keep it paused, and iOS its Copy menu up
+    const sel = getSelection();
+    if (!shown.term && sel?.anchorNode && $("term").contains(sel.anchorNode)) sel.removeAllRanges();
     $("files").hidden = !shown.files || !!this.filesError;
     $("viewnote").hidden = !shown.files || !this.filesError;
     $("viewnote").textContent = this.filesError ?? "";
@@ -96,10 +99,22 @@ export class Views {
     this.refresh = setTimeout(() => { if (this.filesShown) this.send({ t: "files" }); }, 700);
   }
 
+  /** The shown pane's folder, host and home, asked now (a "cd" may have moved it): for a path
+   *  clicked in the terminal. {error} when it has none, null when the server does not answer. */
+  paneInfo() {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { this.waiters = this.waiters.filter((w) => w !== done); resolve(null); }, 5000);
+      const done = (m) => { clearTimeout(timer); resolve(m); };
+      (this.waiters ??= []).push(done);
+      this.send({ t: "files" });
+    });
+  }
+
   /** The server's answer to "files": the pane's key, folder and host, or why there are none. */
   onFiles(m) {
+    for (const w of this.waiters?.splice(0) ?? []) w(m);
     this.filesError = m.error ?? null;
-    if (!m.error) {
+    if (!m.error && this.filesShown) {         // the Files frame loads only while it is shown
       const q = new URLSearchParams({ key: m.key, cwd: m.cwd ?? "" });
       if (m.host) q.set("host", m.host);
       const src = `/fb/?${q}`;

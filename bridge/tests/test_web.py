@@ -182,6 +182,18 @@ class LabelsTest(unittest.TestCase):
         self.assertIsNone(layout.ssh_host("zsh"))
         self.assertEqual(layout.tilde("/Users/alex/src"), "~/src")
 
+    def test_status_marks_leave_titles(self):
+        for raw, clean in [("✳ Virtual patching", "Virtual patching"), ("◐ Enable web", "Enable web"), ("⠋ build", "build"),
+                           ("✻\ufe0e Imunify", "Imunify"), ("mc [root@devbox]", "mc [root@devbox]"), ("100% done", "100% done"),
+                           ("✳", "✳")]:
+            self.assertEqual(layout.bare(raw), clean)
+
+    def test_coding_agents_by_program_or_start_command(self):
+        self.assertEqual(layout.agent_of("claude", ""), "claude")
+        self.assertEqual(layout.agent_of("node", "/opt/homebrew/bin/codex --full-auto"), "codex")
+        for job, cmd in [("zsh", "-zsh"), ("ssh", "ssh devbox.example tmux -CC"), ("vim", "vim claude.md"), ("", None)]:
+            self.assertIsNone(layout.agent_of(job, cmd), (job, cmd))
+
     def test_addresses(self):
         self.assertEqual(net.host_name("10.0.0.5:8765"), "10.0.0.5")
         self.assertEqual(net.host_name("[::1]:8765"), "::1")
@@ -293,6 +305,137 @@ class SiteTest(unittest.TestCase):
         self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
         self.assertEqual(self.ask("GET", "/", headers={"If-None-Match": headers["ETag"]})[0], 304)
         self.assertEqual(self.ask("GET", "/../web.json")[0], 404)
+
+
+class MirrorTest(unittest.TestCase):
+    def test_a_gone_session_is_named_so_the_page_can_drop_the_error_later(self):
+        from fbbridge.web import mirror
+        sent = []
+
+        class Ws:
+            async def send(self, text):
+                sent.append(json.loads(text))
+
+        class Hub:
+            app = types.SimpleNamespace(get_session_by_id=lambda sid: None)
+
+            async def release(self, client):
+                pass
+
+        client = mirror.Client(None, Hub(), Ws(), 1000, None)
+        asyncio.run(client.subscribe("gone-id"))
+        self.assertIn({"t": "error", "msg": mirror.CLOSED, "sid": "gone-id"}, sent)
+        self.assertIsNone(client.session)
+
+    def test_a_closed_session_needs_no_size_back_and_does_not_stop_opening_another(self):
+        from fbbridge.web import mirror
+        sent = []
+
+        class Gone:
+            async def async_set_grid_size(self, size):
+                raise RuntimeError("RPCException: SESSION_NOT_FOUND")
+
+        class Ws:
+            async def send(self, text):
+                sent.append(json.loads(text))
+
+        app = types.SimpleNamespace(get_session_by_id=lambda sid: Gone() if sid == "fitted" else None)
+        hub = mirror.Hub(app)
+        client = mirror.Client(None, hub, Ws(), 1000, None)
+        hub.fitted["fitted"] = [(80, 24), {client}]
+        old = sys.modules["iterm2"].__dict__.get("util")
+        sys.modules["iterm2"].util = types.SimpleNamespace(Size=lambda w, h: (w, h))
+        try:
+            asyncio.run(client.subscribe("other"))
+        finally:
+            sys.modules["iterm2"].util = old
+        self.assertEqual(hub.fitted, {})
+        self.assertEqual(sent[-1]["sid"], "other", "the open went on to its own answer")
+
+    def test_a_failed_action_is_said_in_words_and_logged(self):
+        from fbbridge.web import mirror
+        sent, logged = [], []
+
+        class Ws:
+            def __init__(self):
+                self.messages = [json.dumps({"t": "files"}), json.dumps(["not", "an", "object"])]
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if not self.messages:
+                    raise StopAsyncIteration
+                return self.messages.pop(0)
+
+            async def send(self, text):
+                sent.append(json.loads(text))
+
+        class Hub:
+            app, clients = None, set()
+
+            async def join(self, client):
+                pass
+
+            async def release(self, client):
+                pass
+
+        async def files_of(session):
+            raise RuntimeError("RPCException: SESSION_NOT_FOUND")
+        client = mirror.Client(None, Hub(), Ws(), 1000, files_of)
+        client.session = types.SimpleNamespace(session_id="s1")
+        old, mirror.log = mirror.log, logged.append
+        try:
+            asyncio.run(client.run())
+        finally:
+            mirror.log = old
+        self.assertEqual(sent[0]["msg"], "iTerm2 no longer has a session needed to show the session's files.")
+        self.assertTrue(sent[1]["msg"].startswith("Could not do that"))
+        self.assertTrue(all("SESSION_NOT_FOUND" not in m["msg"] for m in sent))
+        self.assertIn("SESSION_NOT_FOUND", logged[0])
+
+
+class BuildTest(unittest.TestCase):
+    def test_the_build_names_every_page_file_and_index_carries_it(self):
+        from fbbridge.web import site
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "index.html").write_bytes(b'<meta name="build" content="__BUILD__">')
+            (root / "app.js").write_bytes(b"one")
+            files, build = site.page_files(root)
+            self.assertIn(f'content="{build}"'.encode(), files["/index.html"][0])
+            self.assertEqual(files["/"], files["/index.html"])
+            (root / "app.js").write_bytes(b"two")
+            files2, build2 = site.page_files(root)
+            self.assertNotEqual(build, build2)
+            self.assertNotEqual(files["/index.html"][2], files2["/index.html"][2], "the page's ETag follows the build")
+        self.assertIn(b'name="build" content="__BUILD__"', (site.STATIC / "index.html").read_bytes())
+
+    def test_a_page_hears_the_build_before_anything_else(self):
+        from fbbridge.web import mirror
+        sent = []
+
+        class Ws:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise StopAsyncIteration
+
+            async def send(self, text):
+                sent.append(json.loads(text))
+
+        class Hub:
+            app, clients = None, set()
+
+            async def join(self, client):
+                await client.send({"t": "layout", "groups": []})
+
+            async def release(self, client):
+                pass
+        asyncio.run(mirror.Client(None, Hub(), Ws(), 1000, None, "abc123").run())
+        self.assertEqual([m["t"] for m in sent], ["build", "layout"])
+        self.assertEqual(sent[0]["id"], "abc123")
 
 
 if __name__ == "__main__":

@@ -5,11 +5,14 @@ the state so panels can show it. fbd itself stays on 127.0.0.1; the web server r
 proxy that adds its token and lets only file work through (AC-53)."""
 import asyncio
 import json
+from pathlib import Path
 
+from .. import agentctl
 from ..common import log
 from ..resolve import resolve
 from . import config, httpd
 from .net import lan_addresses, urls
+from .paste import PasteError
 from .site import Site
 
 FOLLOW_EVERY = 2         # seconds between looks at web.json
@@ -17,12 +20,13 @@ REPORT_EVERY = 30        # seconds between status reports (a restarted fbd forge
 
 
 class WebAccess:
-    def __init__(self, conn, app, post, remotes):
-        self.conn, self.app, self.post, self.remotes = conn, app, post, remotes
+    def __init__(self, conn, app, post, remotes, tmux=None):
+        self.conn, self.app, self.post, self.remotes, self.tmux = conn, app, post, remotes, tmux
         self.server = self.site = self.hub_task = None
         self.running = None      # the settings the server runs with
         self.seen = object()     # web.json's mtime when last applied
         self.cfg, self.error, self.urls = None, None, []
+        self.homes = {}          # host key -> its user's home folder, asked once (for "~/" in the terminal)
 
     async def follow(self):
         ticks = 0
@@ -67,7 +71,7 @@ class WebAccess:
             log(f"web: {self.error}")
             return
         addresses = await asyncio.get_running_loop().run_in_executor(None, lan_addresses)
-        site = Site(self.conn, self.app, cfg, verify, self.files_of, addresses)
+        site = Site(self.conn, self.app, cfg, verify, self.files_of, addresses, self.paste_to, self.tmux)
         try:
             self.server = await httpd.serve(site.handle, cfg["host"], cfg["port"], site.body_limit)
         except OSError as e:
@@ -106,4 +110,29 @@ class WebAccess:
                              f"enable the host in the Files panel on the Mac."}
         if not place["cwd"]:
             return {"error": f"This session's folder is not known yet ({r.get('note') or r.get('mode')})."}
-        return {"key": r["key"], "cwd": place["cwd"], "host": place["host"]}
+        home = await self.home_of(place["host"], r.get("ssh")) if place["host"] else str(Path.home())
+        return {"key": r["key"], "cwd": place["cwd"], "host": place["host"], "home": home}
+
+    async def home_of(self, key, target):
+        """The home folder on an enabled host, asked once over its ssh; None when it does not answer."""
+        if key not in self.homes and target:
+            try:
+                out = await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: agentctl.ssh(target, 'printf %s "$HOME"', timeout=10))
+                self.homes[key] = out if out.startswith("/") else None
+            except agentctl.AgentError as e:
+                log(f"web: home on {key}: {e}")
+                return None                      # asked again next time
+        return self.homes.get(key)
+
+    async def paste_to(self, session):
+        """Where a pasted image goes for this pane: None for this Mac, else the host's ssh
+        arguments; PasteError for a host whose helper is not enabled (as Files, AC-53)."""
+        r = await resolve(self.conn, session)
+        place = self.remotes.place(r)
+        if not place["remote"]:
+            return None
+        if not place["host"]:
+            raise PasteError(f"Pasting images on {place['remote']['name']} needs iterm-enhancer's helper there: "
+                             f"enable the host in the Files panel on the Mac.")
+        return r["ssh"]

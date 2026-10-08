@@ -37,4 +37,5 @@ class UserError(Exception):
 def log(msg):
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     with open(LOG_DIR / "bridge.log", "a") as f:
-        f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {msg}\n")
+        now = time.time()      # milliseconds: to match a log line with iTerm2's and the host's
+        f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now))}.{int(now % 1 * 1000):03d} {msg}\n")

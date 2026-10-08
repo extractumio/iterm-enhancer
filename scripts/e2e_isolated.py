@@ -63,9 +63,10 @@ def run():
                     time.sleep(0.1)
                 else:
                     raise RuntimeError("Private bridge did not become ready")
-                for script in ("e2e_cwd.py", "e2e_terminal.py"):
+                for script in ("e2e_cwd.py", "e2e_terminal.py", "e2e_web_rename.py"):
                     subprocess.run([python, str(REPO / "scripts" / script)], env=env, check=True, timeout=240)
                     if bridge.poll() is not None:
+                        print((private / "follower.log").read_text()[-3000:], file=sys.stderr)   # why, before it is deleted
                         raise RuntimeError("Private bridge exited during checks")
                 subprocess.run(["bash", str(REPO / "scripts/security_check.sh")], env=env, check=True, timeout=60)
             finally:
@@ -143,8 +144,11 @@ def follow():
         follower = bridge_app.Follower(conn, model, windows)
         try:
             while True:
-                await model.refresh(conn)
-                await asyncio.wait_for(follower.poll(), 10)
+                try:
+                    await model.refresh(conn)
+                    await asyncio.wait_for(follower.poll(), 10)
+                except Exception as e:  # as the installed bridge: a test window closing mid-poll is no reason to stop
+                    print(f"poll: {type(e).__name__}: {e}", flush=True)
                 await asyncio.sleep(0.5)
         finally:
             backend.stop()

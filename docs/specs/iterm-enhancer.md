@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.25.1 |
+| Version | 0.26.0 |
 | Date | 2026-10-07 |
 | Status | draft |
 | Author | Project maintainers |
@@ -13,6 +13,7 @@ Change log:
 
 | Version | Date | Change |
 |---|---|---|
+| 0.26.0 | 2026-10-07 | AC-52, from the owner: (1) a browser showed iTerm2's raw "SESSION_NOT_FOUND" over a live pane: a failed action sent the exception's text and logged nothing, and restoring the size of a resized pane that had closed stopped the next pane from opening; now the action is named in words and logged, and a closed pane's size is skipped. A phone showed "This session has closed" over a live pane: the page opened the pane it remembered (gone after an iTerm2 restart), fell back to the first one, and the error stayed; the error now names its pane and clears when another pane is shown. (2) Images pasted in the web app reach the pane: saved where the pane's shell runs (this Mac, or a host with its helper enabled) and their path pasted (owner's choice over putting them on the Mac's clipboard). Choice: the bridge writes the file, not fbd (fbd saves text only; a binary write would need fbd and every host's helper to change; the bridge already copies files over ssh for the helper's install). (3) [+] on each group of the session list opens a new tab with the window's current profile, or a new window of the tmux session. The pencil names a pane (tab, session; tmux window and pane title), as plain text: names are escaped for iTerm2's interpolation and for tmux's parser and formats (checked against tmux 3.6a, and in real iTerm2 by scripts/e2e_web_rename.py); clearing restores the user's own tmux automatic-rename. Rows of panes running Claude Code or Codex show its mark. Web addresses and file paths in the terminal open on click or tap: addresses in a new tab, paths in File, from the pane's folder and its user's home (read once per host over ssh). Pragmatic review of rename: accepted: tmux tabs are named through tmux only, non-text names and unknown panes refused, C1, separators and bidi marks refused, focus returns to the pencil; rejected: making the header title a button again (the pencil belongs beside the title text; the session list stays reachable through ☰ and the filter). An open page of another build reloads itself after an upgrade, but not over unsaved edits (the Files panel offers its busy check to the web page). Large signed-in bodies get 300 s to arrive (heads and small bodies keep 10 s). Pragmatic review: accepted: ssh off the bridge's loop with a 30 s timeout, the host prints the saved path, at most 2 uploads in memory, PNG/JPEG/GIF/WebP only with their bytes checked, [+] labelled with the profile it uses, tmux through its connection, the list updated before the page shows the new pane, one new session a second per browser. Not covered: a pane whose shell moved to another machine after it started (a second ssh, sudo, a container) gets a path on the first one. Noticed, not fixed: a second sign-in for Files and File seen on an iPhone over Tailscale; not reproduced in Chrome or WebKit over the same address. iOS Safari showed no Copy menu on a long press in Wrap: all lines formed one inline paragraph (found in Simulator by bisecting; any short paragraph shows it); a hard line end now closes its paragraph, and copying rebuilds line ends that CSS drew (copies had lost them). Also: with the keyboard up the long press tapped instead (the owner's phone): a held finger now closes the keyboard and selects a word. Wrap joined an agent's tool line to its ⎿ result and numbered code lines; such lines now start anew (checked on two live Claude Code sessions: 8 of 86 joins were wrong). A long press then a tap on the selection froze an iPhone for seconds and lost the taps that followed: iOS reads the whole block a selection lies in, and Wrap's history was one block (7.4 s at 3000 lines in Simulator); the history is now kept in blocks that end at paragraph ends, a touch screen keeps about 2000 lines while following the output, and showing Files or File clears a terminal selection (it stayed, kept the terminal paused and left Copy floating over Files); the "Paused while you select" notice covered the view tabs on a phone and took their taps. On the owner's iPhone a long press with the keyboard up still gave a haptic tick but no selection or menu: reproduced in Simulator with its on-screen keyboard (earlier runs had a hardware keyboard, so none showed): the word was selected, but the keyboard closing scrolled it away and iOS offers no menu for a selection the page made; now the word stays put and a Copy button appears. Pragmatic review: accepted: the button copies the text taken while selected, not the selected range (the terminal catching up moved the lines and the range copied nothing; reproduced), a browser check of that, "in sight" at the end of the output (no room to scroll there); rejected: selecting on iOS's touchcancel (dropped: unproven, and a slow scroll could select). Pragmatic review: accepted: no cap while older lines are on their way (it left a gap) and older lines with a gap refused, no cap behind Files or File, blocks cut at 400 lines, history placed without spreading 10000s of arguments, the last line kept loose after loading into an empty history, a browser check of the blocks (ui/test/e2e_web_term.mjs, in e2e_panel); rejected: dropping the cap after the measurement showed no touch delay (the owner asked for it; it keeps the page light) |
 | 0.25.1 | 2026-10-07 | AC-33: a first install with iTerm2 running failed with "Script not found" and advice to turn on the Python API (it was on): iTerm2 lists AutoLaunch scripts when it starts, and listed the new one only later on the owner's Mac (a retry minutes later worked). The installer now asks again for 15 s, then says to restart iTerm2 |
 | 0.25.0 | 2026-10-07 | From the owner: the project is renamed iterm-enhancer everywhere: the command `iterm-enhancer`, the root `~/.iterm-enhancer/` on the Mac and on hosts, the package `iterm-enhancer-macos.tar.gz`, the release signature namespace `iterm-enhancer-release`, the Toolbelt tool id, the viewer's dynamic profile, the recovery marker ("iterm-enhancer Restore …") and this spec's file name. Owner decision: a new setup with no backward compatibility, so the migrations from earlier layouts (the unversioned install, `~/.local/lib`, `~/.local/bin`, Application Support, Library/Logs; Stage 8's host helper) and the health check of builds from before fbd's socket are removed with their scenarios and tests; an install of the old name is removed with its own `uninstall` before the new setup (both use port 47821 and the AutoLaunch `fb_bridge.py`). The maintainer moved the release key to `~/.config/iterm-enhancer/release-key` and renamed the GitHub repository to `extractumio/iterm-enhancer` (GitHub redirects the old name). Kept: the earlier release notes (history). Change-log rows and evidence below name the new paths |
 | 0.24.0 | 2026-10-07 | AC-52 and AC-53, from the owner: on touch screens and narrow windows the hot keys panel is hidden until asked and two floating buttons open and close the keyboard and the panel; hot keys ⇧Tab, ⇧← and ⇧↩; Shift+Enter (and Ctrl+Enter) are sent as their own key (CSI u `ESC[13;2u`), not as Enter; at 1400 px and wider Files is docked on the right like the session list, with × to close, and File is a window over the terminal; session groups collapse; fixed: Files and File wore the focused pane's colors instead of the shown pane's; Wrap/Grid/Fit is remembered per session and the last choice is the default for new session ids (they change when iTerm2 restarts or tmux -CC attaches again). Install: the PATH tip is cornflower blue (gray was unreadable). Choices: CSI u is how iTerm2 reports Shift+Enter to apps that ask for it (Claude Code, Codex, editors); a plain shell shows it as text, as in iTerm2 with that mode on |
@@ -158,6 +159,7 @@ Open questions:
 | AC-51 | [SHOULD / P1] | The user learns from the panel that a newer release exists and can copy the command that installs it, skip that release, or stop the check. |
 | AC-52 | [SHOULD / P1] | With web access switched on, a browser on another device signs in with a password and sees every iTerm2 window, tab and pane by title and host, the shown pane's screen in its profile's colors, with typing, hot keys, scrollback, selection and copy; lines re-flow to a phone's width or keep iTerm2's grid. |
 | AC-53 | [SHOULD / P1] | In the web app the shown pane's files open in the Files panel, and files in its viewer and editor, as views that replace the terminal; links in documents open in the reader's browser; nothing of the Mac itself (Finder, apps, typing into a terminal, switching web access) is reachable from it. |
+| AC-54 | [SHOULD / P1] | When iTerm2 drops a tmux -CC integration while tmux keeps streaming to the gateway session, the raw tmux protocol stops within seconds, tmux and its windows keep running on their host, and the user is told and can reattach with one action, on the Mac and in the web app. |
 
 ## 5. BDD scenarios
 
@@ -1968,24 +1970,122 @@ Scenario: AC-52 happy path — switch on and sign in
   And before sign-in a request may carry at most 4 KB, its head must arrive within 10 s, and at most 64 connections are open at once
 
 Scenario: AC-52 happy path — sessions
-  Then the session list groups panes by iTerm2 window; a tmux -CC window shows as "tmux <session>" with its host
-  And each row shows the title the user set, else the program's title, then program and folder; a blue laptop marks this Mac's panes, a violet server a remote host's, with its name
+  Then the session list groups panes by iTerm2 window; a tmux -CC window shows as "tmux" and its session's name in cornflower blue (the rows name the host)
+  And a title loses the status marks programs put in front of it (Claude Code's ✳ ✻ ✶ ◐ ⏺, spinners); in a tmux pane too, where the title reaches iTerm2 as the session's name
+  And a pane running Claude Code or Codex (by its program, which for a tmux pane is tmux's pane_current_command, asked once per connection per refresh because iTerm2 reports the gateway's ssh; or by Claude Code's title marks) shows its state before the title, in the list and the header: a yellow hourglass while it works (a spinner in the title, Claude Code's status line "✻ Doing… (…)" on screen, or "esc to interrupt"; a pane or window the user named has no title marks, so the screen decides), a flashing question mark while it waits for the user (a question, a permission prompt, "Esc to cancel"), a red alert sign when it stopped on an error ("API Error", overloaded, a usage limit), a green check when it is done; only the screen's last 25 rows count
+  And on a wide screen the list's width follows its border when dragged (200–640 px, remembered per browser; arrow keys on the focused border too)
+  And a row dragged by its grip within its group reorders that window's tabs in iTerm2 (a tmux window's tmux windows follow); a group dragged by its grip moves in this browser's list only; tabs of another window are never moved
+  And each row shows a dot in its iTerm2 profile's color (one color per profile name; ringed when the session is focused in iTerm2; while a coding agent in it works, a ring of its color grows from it and fades every 1.6 s, not with reduced motion), the tab number and the title the user set, else the program's title, then host (violet), program and folder on one line where only the folder shortens first; icons are Lucide's (ISC)
   And a group's header collapses and expands it, remembered per browser; a collapsed group holding the shown pane marks its count, and a filter shows the matches of collapsed groups
   When the user opens a pane
-  Then its screen appears in its profile's colors and font within 1 s, with the last 1000 lines of scrollback; scrolling up loads up to 10000
-  And on a phone lines re-flow to the screen ("Wrap"); "Grid" keeps iTerm2's layout, "Fit" scales it to the width, and "Resize iTerm to this screen" (menu) changes the Mac's window until restored or the browser leaves
-  And the browser remembers the mode chosen for each pane (the last 100) and applies it when the page opens; a pane it has no choice for gets the mode chosen last
+  Then its screen appears in its profile's colors and font within 1 s, with the last 1000 lines of scrollback; scrolling up loads up to 10000; a touch screen keeps about 2000 lines on the page while it follows the output, dropping whole blocks of the oldest (older ones load again on scrolling up; not while an older page is on its way, nor while Files or File is shown; measured in Simulator, a touch reached the next frame in one frame at 500, 2000 and 5000 lines alike, so this keeps the page light rather than fixing a measured delay)
+  And on a phone lines re-flow to the screen ("Wrap"): prose an agent wrapped at iTerm's width is re-joined (a hard line end where the next word would not have fit), but a line that starts with a list item, an agent's mark (⏺ ⎿ ● ❯ ✻ ·, other symbols, emoji) or a numbered listing or diff line ("151:", "12 +", "694-}") always starts a new line; "Grid" keeps iTerm2's layout, "Fit" scales it to the width, and "Resize iTerm to this screen" (menu) changes the Mac's window until restored or the browser leaves
+  And the browser remembers the mode chosen for each pane (the last 100) and applies it when the page opens; a pane it has no choice for gets the mode chosen last, and before any choice Wrap
+
+Scenario: AC-52 edge — the remembered pane is gone
+  Given the browser last showed a pane that has since closed (or iTerm2 restarted, giving every pane a new id)
+  When the page opens and signs in
+  Then it shows the first pane of the list instead, with no error
+  And "This session has closed. Pick another one." names the pane it is about, shows only while that pane is the one shown, and clears when the user opens another pane
+  And a pane resized by "Resize iTerm to this screen" that has since closed has no size to give back: opening another pane goes on
+  And an action that fails because iTerm2 no longer has a session it needed says so in words ("iTerm2 no longer has a session needed to …"), never iTerm2's code, and the bridge log names the action and the error
 
 Scenario: AC-52 happy path — typing
-  When the user types, uses the hot keys panel (Copy, Paste, Tab, ⇧Tab, ^C, ^D, Esc, Ctrl, Alt, ⇧←, ⇧↩, arrows, Home, End, PgUp, PgDn, ^Z, ^L, ^R), or pastes
+  When the user types, uses the hot keys panel (four rows of six, grouped by what they do: Copy, Paste, Upload, ⇧↩, Tab, Enter; Esc, ^C, ^D, ^Z, ^R, Fn; Ctrl, Alt, arrows; Home, End, PgUp, PgDn, ⇧←, ⇧Tab; Fn swaps the last two rows for F1–F12), or pastes
   Then the bytes reach the pane as iTerm2 would send them, and the echo shows within 100 ms on this Mac's network
   And Shift+Enter and Ctrl+Enter (and ⇧↩) send their own key, ESC[13;2u and ESC[13;5u, never Enter's CR
   And with "Show this session in iTerm" on, the pane's tab is selected in its window (not raised), because iTerm2 refreshes hidden tabs only a few times a second
 
+Scenario: AC-52 edge — a page open across an upgrade
+  Given a browser has the web app open, and the bridge restarts with other page files (an upgrade)
+  When the page connects again
+  Then the bridge names the build of its page files first (a hash of all of them, also written into index.html), and a page of another build reloads itself once
+  But while the Files or File frame is busy (unsaved edits, a dialog, an inline edit) it waits and says "An update is ready: the page reloads after you save"
+  And a page that reloaded for a build and still differs asks the user to reload instead of reloading again
+  And the page's files are revalidated on every load (no-cache with an ETag), the Files frames are never stored (no-store), and a page Safari brings back from memory connects again
+
+Scenario: AC-52 happy path — paste an image
+  Given the shown pane runs on this Mac, or on a host whose helper is enabled (AC-37)
+  When the user pastes an image (PNG, JPEG, GIF or WebP) into the terminal, or presses the hot key "Paste" over HTTPS with an image on the clipboard
+  Then the page uploads it, and the bridge saves it where the pane's shell runs: on this Mac in "$TMPDIR/iterm-enhancer-paste/", on a host in "~/.cache/iterm-enhancer/paste/" (folder 0700, file 0600, named by UTC time and 8 random hex digits)
+  And the page pastes the file's absolute path, shell-quoted, as it pastes text (bracketed when on); no Enter is sent, so a program such as Claude Code takes it as an image
+  And files older than 7 days in that folder are removed at the next paste
+
+Scenario: AC-52 happy path — upload a file
+  When the user presses "Upload" on the hot keys and picks a file (on iOS from Photos or Files)
+  Then it is saved as a pasted image is, but of any kind, named by UTC time, 8 random hex digits and its own name in safe letters (A–Z, a–z, 0–9, ".", "_", "-"; anything else becomes "_"), and its path is pasted
+  And the limits, folders, cleanup and failures are an image's (20 MB, 2 at once)
+
+Scenario: AC-52 failure — an image that cannot be pasted
+  When the image is of another type (HEIC, TIFF), its bytes do not match its type, or it is larger than 20 MB
+  Then nothing is typed and a toast says why
+  When the pane is on a host whose helper is not enabled
+  Then nothing is typed and the toast says to enable the host in the Files panel on the Mac
+  When ssh to the host fails or takes longer than 30 s plus 1 s per 256 KB of image
+  Then nothing is typed, the toast shows ssh's message, and no partial image is left under the image's name
+  And at most 2 uploads run at once (a third answers "Two images are uploading already"), a signed-in upload may take up to 300 s to arrive, and the bridge keeps following iTerm2 meanwhile
+  But a pane whose shell went on to another machine (a second ssh, sudo, a container) gets a path on the first machine: the bridge sees only where the session started
+
+Scenario: AC-52 happy path — links and file names in the terminal
+  When the user clicks or taps a web address (http or https) on the terminal's screen or in its scrollback
+  Then it opens in a new tab of the reader's browser (noopener), never on the Mac; an address wrapped over rows is taken whole
+  When the user clicks or taps a file path or name the pane printed: absolute, "~/…", "./…", "../…", a path with a slash, or a name with a known extension, possibly followed by ":line" or ":line:col"
+  Then the page opens it in File as a tab, on the pane's host for a remote pane; a relative one is taken from the pane's folder, "~" is the home folder of the user on the pane's machine
+  And with a mouse the pointer is a hand over such text
+  But a click that ends a selection, a long press or a drag opens nothing, and a tap on other text opens the keyboard as before
+  And "and/or", dates and version numbers are not paths; a path that does not exist, or a folder, opens File with its error
+
+Scenario: AC-52 happy path — name a session
+  Given the page shows a pane
+  When the user presses the pencil beside its title in the header, types a name and presses Enter (or ✓)
+  Then the pane's iTerm2 tab gets that title (as Edit Tab Title) and the session that name (as Edit Session), so the tab bar, the pane's title bar and the session list all show it within 2 s
+  And in a tmux -CC pane the tmux window is renamed ("rename-window", so iTerm2's tab and tmux's own status line show it) and the pane gets the title ("select-pane -T")
+  And the name is plain text: at most 100 characters, without control characters; iTerm2 never interpolates it
+  When the user clears the name and presses Enter
+  Then the tab title and the session name return to automatic, and a tmux window names itself again ("automatic-rename on")
+  But Esc or ✕ leaves the name as it was, and a failure (the session or tmux connection gone) shows in the status line
+
+Scenario: AC-52 happy path — a new session
+  Given the session list shows a group
+  When the user presses the group's [+], a small outlined button ("New tab (<profile>)", or "New tmux tab")
+  Then a window group gets a new tab in that iTerm2 window with the profile of the window's current session, so an ssh profile opens a new session on its host
+  And a tmux group gets a new tmux window as a tab of that iTerm2 window (iTerm2's "New Tmux Tab", for which iTerm2 brings that window to the front; the window that was in front before is given back)
+  And the list shows the new session within 2 s and the page shows it
+  When the user presses "New window" under the session list and picks one of iTerm2's profiles
+  Then a new iTerm2 window opens with that profile, and the page shows its session
+  But at most one new session a second is made per browser, and a press within that second says so; a failure (window closed, tmux gone, a profile deleted) shows in the status line
+
+Scenario: AC-52 happy path — keys for full-screen programs in tmux
+  Given the shown pane is a tmux -CC pane running a program that switched to application cursor keys (mc, vim)
+  When the user presses an arrow, Home, End, PgUp, PgDn, Insert, Delete, ⇧Tab, F1–F12 (the hot keys have F1–F10), or one of them with Shift, Alt or Ctrl
+  Then the bridge sends it as tmux's key name ("send-keys -t %pane Up"), which tmux encodes for the pane's mode (measured: Up arrives as ESC O A in that mode, the raw ESC [ A arrived unchanged before)
+  And text, pastes and keys tmux has no name for go to the pane as they are; a pane outside tmux keeps the menu's "Application cursor keys" switch
+
+Scenario: AC-52 happy path — editing in a terminal program on a phone
+  Given the page shows a pane running a shell or a coding agent (Claude Code, Codex)
+  When the user types, or output arrives in the 3 s after a key
+  Then the view keeps the cursor's row in sight, two rows above the bottom edge, not the screen's last row (an agent's input box stands above its footer)
+  When the user taps a character on the cursor's row (or ⌥-clicks it with a mouse)
+  Then the cursor moves there with ← or → keys, as many as the columns between them
+  And in a coding agent's pane a tap on another row up to 10 rows away moves there with ↑ or ↓, then ← or →
+  But in other panes a tap on another row moves nothing (↑ and ↓ would recall shell history), and the keyboard opens as before
+  When the user long-presses the cursor's row on iOS
+  Then iOS offers its own Paste: the page's keyboard field lies over that row, invisible; text pastes as text and an image as its saved path
+
+Scenario: AC-52 edge — where the keys go
+  Given a computer with a mouse and a hardware keyboard (hover and a fine pointer)
+  When the user comes back to the window or tab and the terminal had the keys when they left, picks a session in the list, or returns to the Terminal view
+  Then the terminal has the keys again, without a click
+  But not while the filter, a name being typed, Files or File, the paste dialog or the menu has them
+  And on a touch screen the page never focuses the terminal by itself: on iOS a focus the user did not tap for would raise the keyboard
+
 Scenario: AC-52 edge — selection and phones
   When the user selects text (or a finger is down) while the screen keeps changing
-  Then updates pause with "Paused while you select" and catch up when the selection is cleared
+  Then updates pause with "Paused while you select" and catch up when the selection is cleared; showing Files or File in the terminal's place clears it; the notice sits over the terminal's first line and lets taps through (it covered the view tabs on a phone)
   And a short tap opens the iOS keyboard, a long press selects, and the page shrinks above the keyboard and grows back when it closes
+  And on iOS a long press anywhere in the history or the screen, in Wrap with thousands of lines, shows Safari's Copy menu, and so does a tap on a selection after its handles moved (a tap elsewhere clears it); with the keyboard up iOS selects nothing on a long press (a plain page with a focused field does the same), so a finger held still for 0.45 s closes the keyboard and selects the word under it with iOS's handles, and the word stays where it was while the page grows back, or at least in sight at the end of the output (the page scrolled to its end and the word jumped away, often out of sight); iOS shows no Copy menu for a selection the page made, so while text in the terminal is selected a Copy button stands beside the keyboard button on a touch screen; it copies the text as it was selected, also when the tap on it cleared the selection and the terminal then caught up (measured in Simulator: one paragraph of all lines selected but showed no menu, so each hard line end closes its paragraph)
+  And with 3000 lines of history in Wrap a long press and a tap on the selection never freeze the page: the history is kept in blocks of 100 to 400 lines that end where a paragraph ends, a longer paragraph (one line iTerm wrapped hundreds of times) cut every 400 lines; older lines that would leave a gap after such blocks went are refused and asked again (measured in Simulator: as one block of all lines, a tap on a selection froze the page for 7.4 s at 3000 lines and 0.9 s at 1000, as iOS reads the whole block the selection lies in; Grid, a block per line, did not freeze)
+  And copied terminal text keeps its line ends, from that menu or the Copy key: a hard end is a newline, a line iTerm wrapped continues, re-joined prose keeps one space and drops its indentation, padding after a line is dropped; in Grid too (rows iTerm wrapped were copied as separate lines before)
   And on a touch screen or a window narrower than 861 px two floating buttons at the bottom right open and close the keyboard and the hot keys panel, which is hidden until asked (remembered per browser); they stay above the panel and the keyboard
   And a hidden page (another app, a locked phone) pauses its stream
 
@@ -2029,7 +2129,7 @@ Scenario: AC-53 happy path — links and reveal
   And a link to a file opens it as a tab; "Reveal in tree" switches to Files with the file selected
 
 Scenario: AC-53 failure — what stays on the Mac
-  Then Finder, "Open with Default App", "Open in Window", typing paths into a terminal, recovery, the update chip and the web access switch are not shown in the web app
+  Then Finder, "Open with Default App", "Open in Window", the Files panel's terminal actions ("cd here", inserting a path), recovery, the update chip and the web access switch are not shown in the web app
   And the web server passes to fbd only the page, listing, reading, saving and file operations; anything else answers 403
   And the page never holds fbd's token: the server adds it to what it passes, and drops one a page sends
   And a raw file (SVG, HTML) keeps fbd's sandbox policy, so it cannot run in the web app's origin
@@ -2037,6 +2137,32 @@ Scenario: AC-53 failure — what stays on the Mac
 Scenario: AC-53 failure — no files to show
   When the pane's folder is not known, or its host has no helper
   Then Files says so and how to fix it (enable the host in the Files panel on the Mac)
+```
+
+### AC-54 — A dropped tmux integration [SHOULD / P1]
+
+```gherkin
+Scenario: AC-54 happy path — detach, tell, reattach
+  Given a session runs a tmux -CC gateway (its command runs "tmux … -CC", locally or through ssh)
+  And iTerm2 has no tmux connection for it, while its screen shows tmux protocol lines ("%output", "%extended-output", "%begin" …)
+  When that lasts 5 s
+  Then the bridge writes "detach-client" to that session once: tmux ends only this client, the tmux session and its windows keep running
+  And iTerm2 shows an alert "tmux integration with <host> dropped" saying the session keeps running there, with "Reattach" and "Later"
+  And the web app stops mirroring that session's screen and shows the same notice with "Reattach" instead
+  When the user chooses "Reattach" (on the Mac or in the web app)
+  Then a new iTerm2 window runs the gateway's own command again, so a command with "new-session -A" or "attach" brings the tmux windows back
+  And the bridge log names the session, its host and command, and the time to the millisecond
+
+Scenario: AC-54 edge — what is not a dropped integration
+  Given a gateway that is attaching (its tmux connection appears within a few seconds), or a session that only prints text starting with "%"
+  Then nothing is written to it: a session counts only when the bridge saw it own a tmux connection that is gone and it owns none now, its newest line on screen is tmux protocol (rows joined where they wrapped), protocol lines keep arriving (at least two changes, the last within two looks) for 5 s, and for a local gateway a tmux process runs under it
+  And a prompt or typing below old protocol lines, a frozen screen, or a gateway attached again never gets "detach-client"; a gone connection's gateway without protocol for 5 looks is forgotten
+  And web input to a gateway stops at the first sign of protocol on its screen; a Reattach that fails says why in a second alert
+  And a session is detached at most once; a gateway that keeps streaming after that is left alone and the notice says to close its window
+
+Scenario: AC-54 failure — tmux commands that fail
+  When a tmux command the bridge sends through iTerm2 (the pane's folder, recovery capture) fails
+  Then the log names the command and the error, with milliseconds, so a drop can be matched to what the bridge was doing
 ```
 
 ## 6. Flow and sequence diagrams

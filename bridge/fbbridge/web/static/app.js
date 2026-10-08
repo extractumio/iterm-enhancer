@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-import { Input } from "./input.js";
-import { findItem, kindIcon, renderNav } from "./nav.js";
+import { Input, shellWord } from "./input.js";
+import { findItem, metaLine, profileDot, renderNav, stateIcon } from "./nav.js";
 import { textForm } from "./render.js";
+import { arrowsTo, cellAt, cursorCell, inOneBox } from "./cursor.js";
+import { navTools } from "./navtools.js";
+import { bindReorder, ordered } from "./reorder.js";
+import { bindLinks } from "./termlinks.js";
+import { copyButton } from "./touchcopy.js";
 import { TermView } from "./term.js";
 import { Views } from "./views.js";
 
@@ -21,18 +26,74 @@ const st = {
   appCursor: false, bracketed: store.get("bracketed", true), showInIterm: store.get("showInIterm", true),
 };
 
+// A phone keeps fewer lines on the page: each one costs on every touch (AC-52).
 const view = new TermView({ term: $("term"), hist: $("hist"), screen: $("screen"), note: $("note"),
-  bottomBtn: $("bottom"), paused: $("paused"), send });
+  bottomBtn: $("bottom"), paused: $("paused"), send, keep: touch.matches ? 2000 : Infinity });
 const input = new Input({ kbd: $("kbd"), kbdButton: $("kbdbtn"), term: $("term"), panel: $("hotkeys"), pasteDialog: $("pastebox"),
   send: (data) => { send({ t: "in", data }); if (data.includes("\r")) views.commandSent(); },
-  options: { appCursor: () => st.appCursor, bracketed: () => st.bracketed, onTyped: () => view.toBottom(), status: toast } });
+  options: { appCursor: () => st.appCursor, bracketed: () => st.bracketed, onTyped: () => view.typed(), status: toast, pasteImage, pickFile,
+    tapLink: (x, y) => tapLink(x, y), tapMove: (x, y) => tapMove(x, y) } });
+copyButton($("copyfab"), $("term"), (text) => input.copySelection(text));
 
 const views = new Views({ send, store, onShow: () => view.keepBottom(applyFit) });
+// Addresses open in a new tab here, paths in File (on the pane's host).
+const tapLink = bindLinks($("term"), { paneInfo: () => views.paneInfo(), openFile: (p, host) => views.open(p, host), toast });
+
+// A tap (or ⌥-click) on the input moves the cursor there with arrow keys; across rows only in
+// a coding agent's pane, where ↑ and ↓ move in the input instead of recalling shell history.
+// Only where arrows edit a line: a coding agent's input or a shell's prompt (not htop, less, mc).
+// Rows only inside one box drawn between two rules: ↑ on an input's first line, or anywhere
+// in a shell, would recall history instead of moving.
+function tapMove(x, y) {
+  const found = st.sid && findItem(st.groups, st.sid);
+  if (!found?.item.agent && !found?.item.shell) return;
+  const from = cursorCell($("screen")), to = cellAt($("screen"), x, y);
+  const vertical = !!found.item.agent && !!from && !!to && inOneBox($("screen"), from.row, to.row);
+  const seq = arrowsTo(from, to, { vertical, appCursor: st.appCursor });
+  if (seq) send({ t: "in", data: seq });
+  if (seq) view.typed();
+}
+$("term").addEventListener("click", (e) => { if (e.altKey && !String(getSelection())) tapMove(e.clientX, e.clientY); });
+
+// On a touch screen the invisible keyboard field lies over the cursor's row, so a long press
+// there gets iOS's own Paste (text, or an image); elsewhere it is out of the way.
+function placeKbd() {
+  const k = $("kbd"), cur = touch.matches && $("screen").querySelector(".cur");
+  const t = $("term").getBoundingClientRect(), r = cur?.getBoundingClientRect();
+  if (!r || r.bottom < t.top || r.top > t.bottom) { k.style.cssText = ""; return; }
+  k.style.cssText = `left:${t.left}px;top:${r.top}px;width:${t.width}px;height:${r.height}px`;   // the cursor's row only
+}
+view.onDrawn = placeKbd;
+let kbdFrame = 0;
+$("term").addEventListener("scroll", () => { if (!kbdFrame) kbdFrame = requestAnimationFrame(() => { kbdFrame = 0; placeKbd(); }); }, { passive: true });
 
 let toastTimer = 0;
-function toast(text) {
+function toast(text, ms = 1800) {
   $("toast").textContent = text; $("toast").hidden = false;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { $("toast").hidden = true; }, 1800);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { $("toast").hidden = true; }, ms);
+}
+
+// A pasted image is saved where the shown pane's shell runs (this Mac or its host), and its
+// path is pasted as text: programs such as Claude Code take an image by its path.
+// "Upload" on the hot keys does the same for a file of any kind, keeping its name.
+function pasteImage(blob) { return sendFile(blob, "image", "/paste?sid="); }      // declared: Input takes it before this line runs
+function uploadFile(file) { return sendFile(file, "file", `/upload?name=${encodeURIComponent(file.name)}&sid=`); }
+function pickFile() { $("upload").value = ""; $("upload").click(); }
+$("upload").addEventListener("change", () => { const f = $("upload").files[0]; if (f) uploadFile(f); });
+
+async function sendFile(blob, what, url) {
+  const sid = st.sid;
+  if (!sid) return toast("Open a session first.");
+  toast(`Uploading the ${what}…`, 60000);
+  const r = await fetch(url + encodeURIComponent(sid), { method: "POST", headers: { "Content-Type": blob.type || "application/octet-stream" }, body: blob })
+    .catch(() => null);
+  const text = r ? await r.text().catch(() => "") : "";
+  let m = {};
+  try { m = JSON.parse(text); } catch { m = { error: text.trim() || undefined }; }   // the server's own refusals are plain text
+  if (!r?.ok || !m.path) return toast(m.error ?? (r ? `The ${what} was not uploaded (${r.status}).` : "The Mac does not answer."), 6000);
+  if (st.sid !== sid) return toast(`The ${what} was saved, but another session is shown now: nothing was pasted.`, 6000);
+  $("toast").hidden = true;
+  input.paste(shellWord(m.path));
 }
 
 // ---------- connection and sign-in ----------
@@ -74,11 +135,54 @@ $("login").addEventListener("submit", async (e) => {
   showLogin(why + (m.retry ? ` Try again in ${m.retry} s.` : ""));
 });
 
+const tools = navTools({ send, store, current: () => (st.sid && findItem(st.groups, st.sid)) || null,
+  onResize: () => view.keepBottom(applyFit) });
+
 function signedIn() {
   $("login").hidden = true; $("app").hidden = false;
   send({ t: "prefs", showInIterm: st.showInIterm });
   if (st.sid) select(st.sid, true);
 }
+
+// ---------- updates ----------
+// The bridge names the build of the page's files first on every connection. A page of another
+// build (open across an upgrade, or restored from memory) reloads once, but never while a
+// Files or File frame has unsaved edits, a dialog or an inline edit: it waits for those.
+const BUILD = document.querySelector('meta[name="build"]').content;
+let updateTimer = 0;
+function checkBuild(id) {
+  if (id === BUILD || updateTimer) return;
+  if (sessionStorage.getItem("web.reloaded-for") === id) return status("An update is ready: reload the page.");   // no loop
+  const attempt = () => {
+    const busy = ["files", "file"].some((f) => { try { return $(f).contentWindow?.fbBusy?.(); } catch { return false; } });
+    if (busy) return status("An update is ready: the page reloads after you save.");
+    clearInterval(updateTimer);
+    try { sessionStorage.setItem("web.reloaded-for", id); } catch { /* private mode: at worst asks again */ }
+    location.reload();
+  };
+  updateTimer = setInterval(attempt, 1000);
+  attempt();
+}
+// ---------- the keys go back to the terminal (a computer only) ----------
+// With a mouse and a hardware keyboard, typing goes to the terminal again when the user comes
+// back to this window or tab (if it had the keys before), picks a session, or returns to the
+// Terminal view; never while a field, Files or File, the paste dialog, a name or a menu has
+// them. A touch screen gets no focus() it did not tap for: on iOS that raises the keyboard.
+const computer = matchMedia("(hover: hover) and (pointer: fine)");
+let termHadKeys = false;
+function focusTerminal() {
+  if (!computer.matches || $("app").hidden || document.body.dataset.shown !== "term") return;
+  if (!$("menu").hidden || $("pastebox").open || tools.renaming()) return;
+  if (document.activeElement?.closest?.("input, textarea:not(#kbd), select, iframe, [contenteditable]")) return;
+  input.focus();
+}
+addEventListener("blur", () => { termHadKeys = document.activeElement === $("kbd"); });   // leaving: who had the keys
+addEventListener("focus", () => { if (termHadKeys) focusTerminal(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && termHadKeys) focusTerminal(); });
+document.querySelector('button[data-view="term"]').addEventListener("click", () => focusTerminal());
+
+// A page Safari brings back from memory connects again, and so learns the current build.
+addEventListener("pageshow", (e) => { if (e.persisted && st.ws?.readyState !== WebSocket.OPEN) connect(); });
 
 // A hidden page (another app, a locked phone) costs the Mac nothing: its stream pauses.
 document.addEventListener("visibilitychange", () => send({ t: document.hidden ? "pause" : "resume" }));
@@ -93,13 +197,25 @@ function onMessage(m) {
     case "fit": st.resized = m.on; syncControls(); break;
     case "files": views.onFiles(m); break;
     case "error": status(m.msg); break;
+    case "drops": tools.showDrops(m.items); break;
+    case "profiles": tools.showProfiles(m.items); break;
+    case "build": checkBuild(m.id); break;
+    case "created": select(m.id); closeDrawer(); break;
   }
 }
 
 // ---------- navigation ----------
 
+// Rows reorder iTerm2's tabs in their window; groups reorder this browser's list only.
+const reorder = bindReorder($("sessions"), (kind, parent, ids) => {
+  if (kind === "group") store.set("groupOrder", ids);
+  else send({ t: "reorder", group: parent.dataset.wid, ids });
+}, () => drawNav());                                // a layout may have come while dragging
+
 function drawNav() {
-  renderNav($("sessions"), st.groups, st.sid, $("filter").value, (id) => { select(id); closeDrawer(); }, st.collapsed, toggleGroup);
+  if (reorder.dragging()) return;                  // the next layout redraws it
+  renderNav($("sessions"), ordered(st.groups, store.get("groupOrder", [])), st.sid, $("filter").value, (id) => { select(id); closeDrawer(); focusTerminal(); }, st.collapsed, toggleGroup,
+    (wid) => send({ t: "new", group: wid }));
   const found = st.sid && findItem(st.groups, st.sid);
   if (!found) {
     const first = st.groups.flatMap((g) => g.items)[0];
@@ -117,21 +233,28 @@ function toggleGroup(key) {
   drawNav();
 }
 
+// The header: the agent's state, the title and the pencil; then one line that only shortens at
+// its end (the folder): the profile's dot, profile, where the tab is, host, program, folder.
 function showCurrent(found) {
-  $("curkind").replaceChildren(...(found ? [kindIcon(found.item.host)] : []));
   $("current").querySelector(".t").textContent = found ? textForm(found.item.title) : "Choose a session";
-  const parts = found ? [found.item.host ?? found.group.label, ...found.item.sub] : [];
-  $("current").querySelector(".s").replaceChildren(...parts.map((p, i) => {
-    const s = document.createElement("span"); s.textContent = textForm(p);
-    if (i === 0 && found.item.host) s.className = "host";
-    return s;
-  }));
+  $("curstate").replaceChildren(...[found && stateIcon(found.item.state)].filter(Boolean));
+  if (!found) $("cursub").replaceChildren();
+  else {
+    const { group: g, item: it } = found;
+    const where = (g.session ? `${g.label} ${g.session}` : g.label) + (it.index ? `, tab ${it.index}` : "");
+    const line = metaLine([it.profile || "", where, ...(it.host ? [it.host] : []), ...it.sub].filter(Boolean), false);
+    if (it.host) [...line.children].find((c) => c.textContent === it.host)?.classList.add("host");
+    $("cursub").replaceChildren(profileDot(it.profile, false, it.state === "working"), ...line.childNodes);
+  }
   document.title = found ? `${found.item.title} – iTerm2 Web` : "iTerm2 Web";
+  if (!tools.renaming()) $("rename").hidden = !found;
 }
 
 function select(id, force = false) {
   if (id === st.sid && !force && view.screen.length) return;
   st.sid = id; store.set("sid", id);
+  status("");                                      // an error about the pane shown before
+  if (tools.renaming()) tools.endRename();         // a name being typed was for that pane
   view.reset();
   send({ t: "sub", id });                          // first: the server answers "files" for the subscribed pane
   views.sessionChanged();
@@ -150,7 +273,16 @@ function closeDrawer() {
 }
 $("navbtn").onclick = openDrawer;
 $("current").onclick = () => (narrow.matches ? openDrawer() : $("filter").focus());
+
 $("scrim").onclick = closeDrawer;
+$("drawerclose").onclick = closeDrawer;
+// "/" filters the sessions, unless the keys go to a field or the terminal
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey || e.target.closest?.("input, textarea, [contenteditable]")) return;
+  e.preventDefault();
+  openDrawer();
+  $("filter").focus();
+});
 $("navclose").onclick = () => {
   if (narrow.matches) return closeDrawer();
   $("app").classList.add("nav-hidden"); store.set("navHidden", true);
@@ -201,7 +333,8 @@ function setSize(px, save = true) {
 // The mode is remembered per session, and the one chosen last is the default for every other:
 // session ids change when iTerm2 restarts or tmux -CC attaches again.
 const MODES_KEPT = 100;
-function mode() { return st.mode[st.sid] ?? store.get("modeDefault", touch.matches ? "wrap" : "grid"); }
+// Until the user picks one: Wrap, on every screen.
+function mode() { return st.mode[st.sid] ?? store.get("modeDefault", "wrap"); }
 function setMode(m, chosen = true) {
   delete st.mode[st.sid];                          // re-added last: the oldest choices go first
   st.mode[st.sid] = m;

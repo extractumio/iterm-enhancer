@@ -1,39 +1,53 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Session navigator: iTerm2 windows (or tmux sessions) as groups, their tabs and panes as rows.
+// A row: the profile's dot (ringed when the session is focused in iTerm2), the tab number and
+// title, then host · program · folder, and a coding agent's state in a column of its own.
+import { icon, profileColor } from "./icons.js";
 import { textForm } from "./render.js";
 
-const SVG = "http://www.w3.org/2000/svg";
-const SHAPES = {
-  // a laptop: this Mac
-  local: ["M4 5.2C4 4.5 4.5 4 5.2 4h9.6c.7 0 1.2.5 1.2 1.2V12H4z", "M2 14.5h16"],
-  // two stacked servers: a remote host
-  remote: ["M4 3.5h12v5H4z", "M4 11.5h12v5H4z", "M6.8 6h.01", "M6.8 14h.01"],
+// A coding agent's state: working, waiting for the user, failed, done.
+const STATES = {
+  working: { label: "Working", icon: "hourglass" },
+  waiting: { label: "Waiting for your answer", icon: "circle-help" },
+  failed: { label: "Failed", icon: "triangle-alert" },
+  done: { label: "Done", icon: "circle-check" },
 };
-
-// The kind badge: blue laptop for a session on this Mac, violet server for a remote one.
-export function kindIcon(host) {
-  const kind = host ? "remote" : "local";
+export function stateIcon(state, size = 16) {
+  const s = STATES[state];
+  if (!s) return null;
   const wrap = document.createElement("span");
-  wrap.className = `kind ${kind}`;
-  wrap.title = host ? `On ${host}` : "On this Mac";
-  wrap.append(icon(SHAPES[kind]));
+  wrap.className = `state ${state}`;
+  wrap.title = s.label;
+  wrap.setAttribute("role", "img");
+  wrap.setAttribute("aria-label", s.label);
+  wrap.append(icon(s.icon, size));
   return wrap;
 }
 
-function icon(paths) {
-  const svg = document.createElementNS(SVG, "svg");
-  svg.setAttribute("viewBox", "0 0 20 20");
-  svg.setAttribute("aria-hidden", "true");
-  for (const d of paths) {
-    const p = document.createElementNS(SVG, "path");
-    p.setAttribute("d", d);
-    svg.append(p);
-  }
-  return svg;
+/** The profile's dot; ringed when the session is the one focused in iTerm2, pulsing while a
+ *  coding agent in it works. */
+export function profileDot(profile, focused = false, busy = false) {
+  const d = el("span", "pdot" + (focused ? " focus" : "") + (busy ? " busy" : ""));
+  d.style.setProperty("--dot", profileColor(profile));
+  d.title = (profile ? `Profile ${profile}` : "Profile unknown") + (focused ? ", focused in iTerm2" : "");
+  return d;
+}
+
+const AGENT_WORDS = { claude: "ag-claude", codex: "ag-codex" };   // the program's own name, in its color
+
+/** "a · b · c" as spans; the last part (a folder) is the one that shortens. */
+export function metaLine(parts, hostFirst) {
+  const s = el("span", "s");
+  parts.forEach((p, i) => {
+    if (i) s.append(el("span", "sep", "·"));
+    const cls = i === 0 && hostFirst ? "host" : i === parts.length - 1 ? "last" : "";
+    s.append(el("span", [cls, AGENT_WORDS[p]].filter(Boolean).join(" "), p));
+  });
+  return s;
 }
 
 /** The key a group's collapsed state is remembered by: its window or tmux session, and host. */
-const groupKey = (g) => `${g.kind}\n${g.label}\n${g.host ?? ""}`;
+const groupKey = (g) => `${g.kind}\n${g.label}${g.session ? " " + g.session : ""}\n${g.host ?? ""}`;
 
 function matches(item, q) {
   if (!q) return true;
@@ -43,41 +57,46 @@ function matches(item, q) {
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = textForm(text);
+  if (text !== undefined) e.textContent = textForm(String(text));
   return e;
 }
 
-function row(item, current, onPick) {
+// The handle a row or a group is dragged by (reorder.js); not while a filter shows a subset.
+function grip(kind, label) {
+  const g = el("span", "grip");
+  g.dataset.kind = kind;
+  g.title = `Drag to reorder ${label}`;
+  g.setAttribute("aria-hidden", "true");
+  g.append(icon("grip-vertical", 14));
+  return g;
+}
+
+function row(item, current, onPick, movable) {
   const li = document.createElement("li");
+  if (movable) li.append(grip("row", "this tab"));
   const b = el("button", "item" + (item.id === current ? " on" : ""));
   b.type = "button";
   b.dataset.id = item.id;
   if (item.id === current) b.setAttribute("aria-current", "true");
   const txt = el("span", "txt");
   const head = el("span", "head");
-  if (item.index) { const idx = el("span", "idx", item.index); idx.title = `Tab ${item.index}`; head.append(idx); }
-  head.append(el("span", "t", item.title));
+  const idx = el("span", "idx", item.index || "");
+  if (item.index) idx.title = `Tab ${item.index}`;
+  head.append(idx, el("span", "t", item.title));
   txt.append(head);
-  if (item.host || item.sub.length) {
-    const s = el("span", "s");
-    if (item.host) s.append(el("span", "host", item.host));
-    for (const part of item.sub) s.append(el("span", "", part));
-    txt.append(s);
-  }
-  b.append(kindIcon(item.host), txt);
-  if (item.focused) {
-    const dot = el("span", "focus");
-    dot.title = "Focused in iTerm2";
-    dot.setAttribute("aria-label", "Focused in iTerm2");
-    b.append(dot);
-  }
+  const parts = [...(item.host ? [item.host] : []), ...item.sub];
+  if (parts.length) txt.append(metaLine(parts, !!item.host));
+  const st = el("span", "st");
+  const mark = stateIcon(item.state);
+  if (mark) st.append(mark);
+  b.append(profileDot(item.profile, item.focused, item.state === "working"), txt, st);
   b.addEventListener("click", () => onPick(item.id));
   li.append(b);
   return li;
 }
 
 // A group's header collapses and expands it; while a filter is typed every match is shown.
-export function renderNav(list, groups, current, query, onPick, collapsed, onToggle) {
+export function renderNav(list, groups, current, query, onPick, collapsed, onToggle, onNew) {
   const q = query.trim().toLowerCase();
   const frag = document.createDocumentFragment();
   let shown = 0;
@@ -88,23 +107,36 @@ export function renderNav(list, groups, current, query, onPick, collapsed, onTog
     const key = groupKey(g);
     const closed = !q && collapsed.has(key);
     const sec = el("section", `grp ${g.kind}`);
+    if (g.wid) sec.dataset.wid = g.wid;
     const h = el("h2");
+    if (g.wid && !q) h.append(grip("group", "this window"));
     const t = el("button", "toggle");
     t.type = "button";
     t.setAttribute("aria-expanded", String(!closed));
     t.addEventListener("click", () => onToggle(key));
-    t.append(icon(["M7 8l3 3 3-3"]), el("span", "label", g.label));
-    if (g.host) t.append(el("span", "host", g.host));
-    else if (g.where) t.append(el("span", "where", g.where));
+    t.append(icon("chevron-down", 14), el("span", "label", g.label));
+    if (g.session) t.append(el("span", "tsess", g.session));      // a tmux group: its session's name; the rows name the host
+    else if (g.host) t.append(el("span", "host", g.host));
+    if (g.where) t.append(el("span", "where", g.where));
     const count = el("span", "count", String(g.items.length));
     count.title = `${g.items.length} session${g.items.length === 1 ? "" : "s"}`;
     if (closed && items.some((it) => it.id === current)) count.classList.add("on");   // the shown session is inside
     t.append(count);
     h.append(t);
+    if (g.wid && g.new) {
+      const n = el("button", "new");
+      n.type = "button";
+      n.title = g.new;
+      n.setAttribute("aria-label", `${g.new} in ${g.label}`);
+      n.append(icon("plus", 14));
+      n.addEventListener("click", () => onNew(g.wid));
+      h.append(n);
+    }
     sec.append(h);
     if (!closed) {
       const ul = el("ul");
-      for (const it of items) ul.append(row(it, current, onPick));
+      if (g.wid) ul.dataset.wid = g.wid;
+      for (const it of items) ul.append(row(it, current, onPick, !!g.wid && !q));
       sec.append(ul);
     }
     frag.append(sec);
@@ -119,4 +151,3 @@ export function findItem(groups, id) {
   for (const g of groups) for (const it of g.items) if (it.id === id) return { group: g, item: it };
   return null;
 }
-

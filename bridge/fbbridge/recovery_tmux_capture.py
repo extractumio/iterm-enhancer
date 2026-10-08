@@ -50,7 +50,10 @@ class TmuxGraphs:
             if target and args is None:
                 raise UserError("Unsupported SSH recovery recipe")
             async def run(argv):
-                return await tc.async_send_command(shlex.join(argv))
+                try:
+                    return await tc.async_send_command(shlex.join(argv))
+                except iterm2.TmuxException as e:   # AC-54: say what the bridge asked when tmux refused
+                    raise UserError(f"tmux {tc.connection_id}: {shlex.join(argv)!r} failed: {e}") from e
             # Unlike plain SSH this API has a proved tmux control channel; the
             # remote job command itself is neither saved nor executed.
             return run, args, False if target else True, None

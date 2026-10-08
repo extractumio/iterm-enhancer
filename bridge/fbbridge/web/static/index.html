@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#000000">
+<meta name="build" content="__BUILD__">
 <title>iTerm2 Web</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
@@ -12,61 +13,74 @@
 <body data-shown="term">
 <div id="app" hidden>
   <aside id="nav" aria-label="Sessions">
+    <div class="nav-title narrow-only"><h1>Sessions</h1>
+      <button id="drawerclose" class="icon" type="button" aria-label="Close the session list"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+    </div>
     <div class="nav-head">
-      <input id="filter" type="search" placeholder="Filter sessions" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Filter sessions">
-      <button id="navclose" class="icon" type="button" aria-label="Close the session list">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"/></svg>
-      </button>
+      <label class="search"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:15px"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        <input id="filter" type="search" placeholder="Filter sessions" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Filter sessions">
+        <kbd class="wide-only" title="Press / to filter">/</kbd>
+      </label>
+      <button id="navclose" class="icon wide-only" type="button" aria-label="Hide the session list"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:17px"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg></button>
     </div>
     <div id="sessions"></div>
+    <div id="profiles" hidden></div>
+    <div id="navgrip" role="separator" aria-orientation="vertical" aria-label="Width of the session list" tabindex="0"
+      aria-valuemin="200" aria-valuemax="640"></div>
+    <div class="nav-foot">
+      <button id="newwin" type="button" aria-expanded="false" aria-controls="profiles" title="A new iTerm2 window, with a profile you pick">
+        <svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:15px"><path d="M5 12h14"/><path d="M12 5v14"/></svg><span>New window</span><span class="chev"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:14px"><path d="m6 9 6 6 6-6"/></svg></span>
+      </button>
+    </div>
   </aside>
   <div id="scrim"></div>
 
   <section id="main">
     <header id="bar">
       <button id="navbtn" class="icon" type="button" aria-label="Show sessions" aria-controls="nav" aria-expanded="false">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
+        <svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:18px"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
       </button>
-      <button id="current" type="button" aria-label="Current session; show all sessions">
-        <span id="curkind"></span>
-        <span class="lines"><span class="t">Choose a session</span><span class="s"></span></span>
-      </button>
+      <div id="current" title="Show all sessions">
+        <span class="lines">
+          <span class="tline"><span id="curstate"></span><span class="t">Choose a session</span>
+            <button id="rename" type="button" title="Name this session" aria-label="Name this session" hidden><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:14px"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg></button></span>
+          <span id="cursub" class="s"></span>
+        </span>
+      </div>
+      <form id="renamebox" hidden>
+        <input id="renamename" maxlength="100" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+          aria-label="Session name" placeholder="Name (empty: automatic)">
+        <button class="icon" type="submit" title="Name it" aria-label="Name it"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="M20 6 9 17l-5-5"/></svg></button>
+        <button class="icon" type="button" id="renamecancel" title="Keep the name" aria-label="Keep the name"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+      </form>
       <div id="tools">
         <div class="seg wide-only term-only" role="group" aria-label="Lines">
           <button data-mode="wrap" type="button" aria-pressed="true" title="Re-flow long lines to this screen">Wrap</button>
           <button data-mode="grid" type="button" aria-pressed="false" title="iTerm2's exact layout">Grid</button>
           <button data-mode="fit" type="button" aria-pressed="false" title="iTerm2's exact layout, scaled to the width of this screen">Fit</button>
         </div>
-        <button id="keysbtn" class="icon wide-only term-only" type="button" aria-pressed="false" aria-controls="hotkeys" title="Hot keys">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="5" width="16" height="10" rx="2"/><path d="M5 8h1M8 8h1M11 8h1M14 8h1M6 12h8"/></svg>
-        </button>
+        <span class="divider wide-only term-only"></span>
+        <button id="keysbtn" class="icon wide-only term-only" type="button" aria-pressed="false" aria-controls="hotkeys" title="Hot keys"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:17px"><path d="M10 8h.01"/><path d="M12 12h.01"/><path d="M14 8h.01"/><path d="M16 12h.01"/><path d="M18 8h.01"/><path d="M6 8h.01"/><path d="M7 16h10"/><path d="M8 12h.01"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg></button>
         <div id="views" class="seg" role="tablist" aria-label="View">
-          <button data-view="term" role="tab" type="button" aria-selected="true" title="Terminal">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="3.5" width="16" height="13" rx="2"/><path d="M5.5 8l2.5 2-2.5 2M10 12.5h4"/></svg>
-          </button>
-          <button data-view="files" role="tab" type="button" aria-selected="false" title="Files">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.5c0-.8.6-1.5 1.5-1.5h3.5l2 2H16c.8 0 1.5.7 1.5 1.5v7.5c0 .8-.7 1.5-1.5 1.5H4c-.9 0-1.5-.7-1.5-1.5z"/></svg>
-          </button>
-          <button data-view="file" role="tab" type="button" aria-selected="false" title="File (open one from Files)" disabled>
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h6.5L15.5 6.5V16c0 .8-.7 1.5-1.5 1.5H5c-.8 0-1.5-.7-1.5-1.5V4c0-.8.7-1.5 1.5-1.5z"/><path d="M11.5 2.5v4h4M6.5 10h7M6.5 13h5"/></svg>
-          </button>
+          <button data-view="term" role="tab" type="button" aria-selected="true" title="Terminal"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:14px"><path d="M12 19h8"/><path d="m4 17 6-6-6-6"/></svg><span>Terminal</span></button>
+          <button data-view="files" role="tab" type="button" aria-selected="false" title="Files"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:14px"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg><span>Files</span></button>
+          <button data-view="file" role="tab" type="button" aria-selected="false" title="File (open one from Files)" disabled><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:14px"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/></svg><span>File</span></button>
         </div>
-        <button id="menubtn" class="icon" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="menu" title="Settings">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.5" cy="10" r="1.3"/><circle cx="10" cy="10" r="1.3"/><circle cx="15.5" cy="10" r="1.3"/></svg>
-        </button>
+        <button id="menubtn" class="icon" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="menu" title="Settings"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:18px"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></button>
       </div>
     </header>
     <div id="status" role="status" hidden></div>
+    <div id="drops" role="alert" hidden></div>
     <!-- No whitespace inside: the terminal uses white-space: pre. -->
     <main id="term" class="wrap view"><p id="note" hidden>Older lines are not loaded. The browser keeps the most recent part of long histories to stay fast.</p><div id="hist"></div><div id="screen"></div></main>
     <!-- At 1400px and wider Files is docked on the right and File floats over the terminal. -->
     <div id="sidehead" class="winhead"><span>Files</span>
-      <button id="sideclose" class="icon" type="button" aria-label="Close the Files panel"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"/></svg></button>
+      <button id="sideclose" class="icon" type="button" aria-label="Close the Files panel"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
     </div>
     <iframe id="files" class="view" title="Files" hidden></iframe>
     <div id="filewin" class="view" hidden>
       <div class="winhead"><span>File</span>
-        <button id="fileclose" class="icon" type="button" aria-label="Close the file window"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"/></svg></button>
+        <button id="fileclose" class="icon" type="button" aria-label="Close the file window"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
       </div>
       <iframe id="file" title="File"></iframe>
     </div>
@@ -74,15 +88,18 @@
     <p id="toast" role="status" hidden></p>
     <p id="paused" role="status" hidden>Paused while you select. Clear the selection to catch up.</p>
     <button id="bottom" type="button" hidden aria-label="Scroll to the bottom">
-      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v11M5 10l5 5 5-5"/></svg>
+      <svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:18px"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
     </button>
     <!-- Touch screens and narrow windows: the keyboard and the hot keys are floating buttons. -->
     <div id="fabs" class="term-only">
+      <button id="copyfab" type="button" aria-label="Copy the selected text" hidden>
+        <svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:17px"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+      </button>
       <button id="keysfab" type="button" aria-pressed="false" aria-controls="hotkeys" aria-label="Show or hide the hot keys">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3" width="6" height="6" rx="1.5"/><rect x="11.5" y="3" width="6" height="6" rx="1.5"/><rect x="2.5" y="11" width="6" height="6" rx="1.5"/><rect x="11.5" y="11" width="6" height="6" rx="1.5"/></svg>
+        <svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:18px"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
       </button>
       <button id="kbdbtn" type="button" aria-pressed="false" aria-label="Show or hide the keyboard">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="5" width="16" height="10" rx="2"/><path d="M5 8h1M8 8h1M11 8h1M14 8h1M6 12h8"/></svg>
+        <svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:17px"><path d="M10 8h.01"/><path d="M12 12h.01"/><path d="M14 8h.01"/><path d="M16 12h.01"/><path d="M18 8h.01"/><path d="M6 8h.01"/><path d="M7 16h10"/><path d="M8 12h.01"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
       </button>
     </div>
     <section id="hotkeys" aria-label="Hot keys" hidden>
@@ -135,6 +152,7 @@
   </form>
 </dialog>
 
+<input id="upload" type="file" hidden>
 <textarea id="kbd" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Terminal input"></textarea>
 <script type="module" src="app.js"></script>
 </body>

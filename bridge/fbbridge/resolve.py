@@ -76,7 +76,11 @@ async def resolve(conn, session):
                     tc = c
         if tc is None or pane is None:
             return {"mode": "tmux -CC", "key": session.session_id, "cwd": None, "note": "tmux connection not found"}
-        out = await tc.async_send_command(f"display -p -t %{pane} '{TMUX_FMT}'")
+        command = f"display -p -t %{pane} '{TMUX_FMT}'"
+        try:
+            out = await tc.async_send_command(command)
+        except iterm2.TmuxException as e:     # AC-54: say what the bridge asked when tmux refused
+            raise RuntimeError(f"tmux {tc.connection_id}: {command!r} failed: {e}") from e
         target = await gateway_target(tc)
         r = tmux_result("tmux -CC", out, via_ssh=bool(target), destination=ssh_key(target) if target else None)
         if r["mode"] == "remote":
