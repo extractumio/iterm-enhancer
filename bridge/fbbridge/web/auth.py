@@ -1,15 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 """Password sign-in, remembered sign-ins, and a brake on guessing: per address, and for all
 addresses together (an attacker on IPv6 can change address at will)."""
+import hashlib
 import ipaddress
+import json
 import secrets
+import threading
 import time
+
+from .. import setup_state
+from ..common import log
 
 SESSION_DAYS = {True: 30, False: 7}   # over HTTPS, and over plain HTTP (a cookie that can be read in transit)
 FREE_ATTEMPTS = 5          # wrong passwords from one address before it has to wait
 FREE_ATTEMPTS_ALL = 20     # wrong passwords from all addresses before every address waits
 MAX_LOCK = 300             # seconds
 COOKIE = "itw"
+MAX_SESSIONS = 100         # remembered sign-ins: the ones that expire first go
 
 
 def client_address(peer, forwarded_for):
@@ -30,14 +37,48 @@ def lock_for(count, free):
     return min(MAX_LOCK, 2 ** (count - free) * 15) if count >= free else 0
 
 
-class Auth:
-    """Used from one thread at a time (site.py checks passwords one by one)."""
+def digest(token):
+    return hashlib.sha256(token.encode()).hexdigest()
 
-    def __init__(self, verify):
+
+class Auth:
+    """Passwords are checked one at a time (site.py); sign-ins also change on the event loop
+    (sign-out), so they change and are written under one lock.
+
+    Sign-ins outlive a restart of the bridge in `store` (0600): only each token's SHA-256 and
+    expiry, never a token, and only for the password whose `salt` they were made under, so a
+    new password signs everyone out; so does switching web access off (access.py)."""
+
+    def __init__(self, verify, store=None, salt=""):
         self._verify = verify        # password -> bool, against the stored hash (config.py)
-        self._sessions = {}          # token -> expiry (memory only: a restart signs everyone out)
+        self._store, self._salt = store, salt
+        self._lock = threading.Lock()
+        self._sessions = self._load()   # SHA-256 of a token -> expiry
         self._failures = {}          # address -> (count, locked_until)
         self._all = (0, 0.0)         # all addresses: (count, locked_until)
+
+    def _load(self):
+        if not self._store:
+            return {}
+        try:
+            data = json.loads(self._store.read_text())
+            if data.get("salt") != self._salt:
+                return {}
+            now = time.time()
+            return {str(k): float(e) for k, e in data["sessions"].items() if float(e) > now}
+        except FileNotFoundError:
+            return {}
+        except (ValueError, TypeError, KeyError, AttributeError, OSError) as e:
+            log(f"web: remembered sign-ins unreadable, starting without them: {type(e).__name__}: {e}")
+            return {}
+
+    def _save(self):
+        if not self._store:
+            return
+        try:
+            setup_state.write(self._store, {"salt": self._salt, "sessions": self._sessions})
+        except OSError as e:
+            log(f"web: remembered sign-ins not saved: {e}")
 
     def locked_for(self, address):
         until = max(self._failures.get(address, (0, 0.0))[1], self._all[1])
@@ -50,8 +91,11 @@ class Auth:
             self._all = (0, 0.0)
             token = secrets.token_urlsafe(32)
             now = time.time()
-            self._sessions = {t: e for t, e in self._sessions.items() if e > now}   # drop expired sign-ins
-            self._sessions[token] = now + SESSION_DAYS[secure] * 86400
+            with self._lock:
+                kept = sorted(((e, t) for t, e in self._sessions.items() if e > now), reverse=True)[:MAX_SESSIONS - 1]
+                self._sessions = {t: e for e, t in kept}                      # drop expired sign-ins
+                self._sessions[digest(token)] = now + SESSION_DAYS[secure] * 86400
+                self._save()
             return token
         now = time.monotonic()
         if len(self._failures) > 1000:            # addresses come and go: keep the ones still waiting
@@ -63,14 +107,20 @@ class Auth:
         return None
 
     def check_session(self, token):
-        expiry = self._sessions.get(token or "")
-        if expiry and expiry > time.time():
-            return True
-        self._sessions.pop(token or "", None)
-        return False
+        if not token:
+            return False
+        expiry = self._sessions.get(digest(token))
+        return bool(expiry and expiry > time.time())
+
+    def close(self):
+        """This server stops: a password check still running writes no sign-in after it."""
+        with self._lock:
+            self._store = None
 
     def sign_out(self, token):
-        self._sessions.pop(token or "", None)
+        with self._lock:
+            if self._sessions.pop(digest(token or ""), None) is not None:
+                self._save()
 
     @staticmethod
     def cookie_header(token, secure):

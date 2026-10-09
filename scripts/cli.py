@@ -219,7 +219,8 @@ def web(cmd, port=None, host=None):
     except ValueError as e:
         sys.exit(f"Not changed: {e}")
     if cmd == "off":
-        return print("web:      off; the bridge closes it within a few seconds")
+        config.SESSIONS.unlink(missing_ok=True)      # every browser signs in again, also if the bridge is not running
+        return print("web:      off; the bridge closes it within a few seconds; every browser is signed out")
     if cmd == "password":
         print("web:      password changed; browsers signed in before must sign in again")
     if cfg["enabled"]:

@@ -120,7 +120,7 @@ your settings and logs stay in `~/.iterm-enhancer` (delete it to remove them). T
   bin/      iterm-enhancer (add this folder to your PATH), fbd
   builds/   one folder per build; current, previous
   logs/     bridge.log, fbd.log
-  state/    token, workspaces.json, agents.json (remote hosts), web.json (web access; password as a hash)
+  state/    token, workspaces.json, agents.json (remote hosts), web.json (web access; password as a hash), web-sessions.json (sign-ins, hashed)
 ```
 
 ```bash
@@ -194,7 +194,7 @@ and sign in:
 It is plain HTTP: on a network you do not trust, use HTTPS through Tailscale —
 `tailscale serve --bg 8765`, then open `https://<mac>.<tailnet>.ts.net/` (it also enables the
 Paste button). The password also opens your terminals: choose it like your Mac's. Sign-ins
-last 7 days (30 over HTTPS); repeated wrong passwords make an address, then everyone, wait.
+last 7 days (30 over HTTPS), also across restarts; a new password or `web off` ends them; repeated wrong passwords make an address, then everyone, wait.
 
 ## How it works
 

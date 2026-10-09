@@ -41,9 +41,10 @@ def page_files(static=STATIC):
 
 
 class Site:
-    def __init__(self, conn, app, cfg, verify, files_of, addresses, paste_to=None, tmux=None):
+    def __init__(self, conn, app, cfg, verify, files_of, addresses, paste_to=None, tmux=None, sessions=None):
         self.conn, self.cfg, self.files_of, self.paste_to = conn, cfg, files_of, paste_to
-        self.auth, self.hub = Auth(verify), Hub(app, tmux)
+        # sessions: where sign-ins outlive a restart (config.SESSIONS); none for a test's Site
+        self.auth, self.hub = Auth(verify, sessions, (cfg.get("password") or {}).get("salt", "")), Hub(app, tmux)
         self.names = {"localhost", "127.0.0.1", "::1", LOCAL_HOST, f"{LOCAL_HOST}.local", *cfg["allow_hosts"]}
         self.set_addresses(addresses)
         self.files, self.build = page_files()
@@ -179,6 +180,7 @@ class Site:
     async def close(self):
         """Sign everyone out of this server: their pages get the sign-in back, iTerm its sizes."""
         self.hub.stop()
+        self.auth.close()
         for c in list(self.hub.clients):
             await c.ws.close()
         self.hasher.shutdown(wait=False)

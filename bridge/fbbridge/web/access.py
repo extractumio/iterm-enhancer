@@ -59,6 +59,8 @@ class WebAccess:
             await self.stop()
             if want:
                 await self.start(cfg, settings)
+        if cfg and not cfg["enabled"]:
+            config.SESSIONS.unlink(missing_ok=True)   # after stop: off signs every browser out (a lost phone)
         if cfg and cfg["enabled"] and not cfg["password"]:
             self.error = "Set a password first: iterm-enhancer web password"
         await self.report()
@@ -71,7 +73,7 @@ class WebAccess:
             log(f"web: {self.error}")
             return
         addresses = await asyncio.get_running_loop().run_in_executor(None, lan_addresses)
-        site = Site(self.conn, self.app, cfg, verify, self.files_of, addresses, self.paste_to, self.tmux)
+        site = Site(self.conn, self.app, cfg, verify, self.files_of, addresses, self.paste_to, self.tmux, config.SESSIONS)
         try:
             self.server = await httpd.serve(site.handle, cfg["host"], cfg["port"], site.body_limit)
         except OSError as e:
