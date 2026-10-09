@@ -232,6 +232,7 @@ svg.lu circle { fill: none; stroke: currentColor; }
 /* a long separator: its characters hidden (copied as they are), a line across the view instead */
 #term .ln.rule.full { display: block; width: auto; height: 1.25em; overflow: hidden; white-space: pre; -webkit-text-fill-color: transparent;
   background: linear-gradient(var(--rule-color), var(--rule-color)) center / 100% var(--rule-width) no-repeat; }
+#term .ln.spare { display: none; }      /* empty rows below the screen's last text and cursor (term.js) */
 #term.grid { white-space: pre; }
 #term.grid .ln { display: block; min-height: 1.25em; width: max-content; }
 #term .c1, #term .c2 { display: inline-block; text-align: center; white-space: pre; }

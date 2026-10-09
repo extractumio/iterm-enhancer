@@ -217,6 +217,31 @@ export async function webApp(browser) {
   await page.setViewportSize({ width: 1400, height: 800 });
   check("AC-52 web app: with a mouse on a wide screen the footer stays, with no button", !(await shown("#screen .blk.foot .ln")).includes(false) && !(await shown("#footfab"))[0]);
 
+  // after a clear the prompt stands at the top: the empty rows below it do not fill the view
+  const cleared = [{ r: [run("$ "), run(" ", 256)], e: true }, ...Array.from({ length: 30 }, () => ({ r: [], e: true })),
+    { r: [["   ", null, 4, 0]], e: true }, ...Array.from({ length: 5 }, () => ({ r: [], e: true }))];   // a coloured row counts as drawn
+  send(cleared);
+  await page.waitForTimeout(150);
+  const spare = await $eval(() => {
+    const t = document.getElementById("term"); t.scrollTop = t.scrollHeight;
+    const rows = [...document.querySelectorAll("#screen .ln")], cur = document.querySelector("#screen .cur").getBoundingClientRect(), v = t.getBoundingClientRect();
+    return { shown: rows.filter((l) => getComputedStyle(l).display !== "none").length, inView: cur.top >= v.top && cur.bottom <= v.bottom };
+  });
+  check("AC-52 web app: empty rows below the screen's last drawing and the cursor are left out, so the prompt is in sight",
+    spare.shown === 32 && spare.inView, JSON.stringify(spare));
+
+  // a new terminal: an empty screen first, then the shell's prompt near its top
+  const blank = () => ({ r: [], e: true });
+  send([{ r: [run("Last login: today")], e: true }, { r: [run(" ", 256)], e: true }, ...Array.from({ length: 62 }, blank)]);
+  await page.waitForTimeout(100);
+  tell({ t: "screen", sid: "S1", full: false, n: 64, cols: 80, rows: 64, ch: [[1, blank()], [2, { r: [run("~ via v3.13")], e: true }], [3, { r: [run("at 15:51 ❯ "), run(" ", 256)], e: true }]] });
+  await page.waitForTimeout(150);
+  const fresh = await $eval(() => {
+    const t = document.getElementById("term"), v = t.getBoundingClientRect(), cur = document.querySelector("#screen .cur").getBoundingClientRect();
+    return { shown: [...document.querySelectorAll("#screen .ln")].filter((l) => getComputedStyle(l).display !== "none").length, inView: cur.top >= v.top && cur.bottom <= v.bottom };
+  });
+  check("AC-52 web app: a new terminal shows its prompt, not the empty rows below it, also when the prompt comes later",
+    fresh.shown === 4 && fresh.inView, JSON.stringify(fresh));
 
   check("AC-52 web app: no page errors", !errors.length, errors.join(" | "));
   await page.close();

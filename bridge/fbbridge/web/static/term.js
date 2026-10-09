@@ -47,6 +47,7 @@ export function blockCuts(ends, min, max = Infinity) {
 
 const endsParagraph = (r) => r.el.classList.contains("eol") && !r.el.classList.contains("join");
 // nothing drawn: no text, no background, no inverse cell
+const blankRow = (r) => !r.txt.trim() && !r.data.r.some(([, , bg, flags]) => bg != null || flags & 32);
 
 export class TermView {
   /** keep: the most history lines on the page while it follows the output (older ones load
@@ -162,6 +163,11 @@ export class TermView {
   // keeps the footer behind a button. The blocks are rebuilt only when they change.
   groupScreen() {
     const rows = this.screen.filter(Boolean);                     // a row not received yet is skipped
+    // The screen's empty rows below its last text and the cursor are not shown: after a clear a
+    // prompt stands at the top and the view, kept at its end, showed only them.
+    let used = rows.findIndex((r) => r.el.querySelector(".cur"));
+    for (let i = rows.length - 1; i > used; i--) if (!blankRow(rows[i])) { used = i; break; }
+    rows.forEach((r, i) => r.el.classList.toggle("spare", i > used));
     const at = this.agent ? this.findBox(rows) : null;
     this.term.classList.toggle("hasbox", !!at);
     const groups = [{ kind: "", rows: [] }];
