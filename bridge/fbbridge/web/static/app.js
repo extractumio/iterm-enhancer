@@ -84,6 +84,15 @@ view.onDrawn = () => { placeKbd(); marks(); };
 let kbdFrame = 0;
 $("term").addEventListener("scroll", () => { if (!kbdFrame) kbdFrame = requestAnimationFrame(() => { kbdFrame = 0; placeKbd(); }); }, { passive: true });
 
+// On a phone an agent's status lines (its footer) stay behind a button, remembered per browser.
+function showFooter(on) {
+  $("term").classList.toggle("showfoot", on);
+  $("footfab").setAttribute("aria-pressed", String(on));
+  store.set("showFooter", on);
+}
+showFooter(store.get("showFooter", false));
+$("footfab").addEventListener("click", () => view.keepBottom(() => showFooter(!$("term").classList.contains("showfoot"))));
+
 let toastTimer = 0;
 function toast(text, ms = 1800) {
   $("toast").textContent = text; $("toast").hidden = false;
@@ -241,6 +250,7 @@ function toggleGroup(key) {
 function showCurrent(found) {
   $("current").querySelector(".t").textContent = found ? textForm(found.item.title) : "Choose a session";
   $("curstate").replaceChildren(...[found && stateIcon(found.item.state)].filter(Boolean));
+  view.setAgent(!!found?.item.agent);
   if (!found) { $("cursub").replaceChildren(); $("curbar").replaceChildren(); }
   else {
     const { group: g, item: it } = found;

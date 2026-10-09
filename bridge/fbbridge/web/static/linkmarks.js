@@ -21,7 +21,8 @@ export function linkMarks(term, boxes) {
   // The rows near the screen: the boxes' children are blocks and loose rows, top to bottom.
   function nearRows() {
     if (term.hidden) return [];
-    const kids = boxes.flatMap((b) => [...b.children]), view = term.getBoundingClientRect();
+    // a hidden block has no position, which the search below needs: an agent's status lines go
+    const kids = boxes.flatMap((b) => [...b.children]).filter((k) => !k.classList.contains("foot")), view = term.getBoundingClientRect();
     const lo = view.top - NEAR * view.height, hi = view.bottom + NEAR * view.height;
     let a = 0, b = kids.length;
     while (a < b) { const m = (a + b) >> 1; if (kids[m].getBoundingClientRect().bottom < lo) a = m + 1; else b = m; }

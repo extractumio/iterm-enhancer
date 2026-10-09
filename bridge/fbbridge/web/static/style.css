@@ -266,6 +266,22 @@ svg.lu circle { fill: none; stroke: currentColor; }
   #bottom { right: 14px; bottom: calc(66px + max(var(--keys-h, 0px), env(safe-area-inset-bottom))); }
   #term { padding-bottom: 60px; }      /* the last line scrolls clear of the buttons */
 }
+/* A coding agent's input box as a panel, its status lines behind the ⓘ button (agentbox.js) */
+#fabs #footfab { display: none; }
+#term.wrap .ln.rule.labelled { white-space: pre-wrap; height: auto; }   /* a long title wraps rather than being cut */
+@media (hover: none), (max-width: 860px) {
+  body:has(#term.wrap.hasbox) #fabs #footfab { display: grid; }
+  #term.wrap .blk.inbox { margin: 8px 0 4px; padding: 5px 10px 6px; border-radius: 12px; min-height: calc(2.5em + 13px);   /* two rows at least */
+    border: 1px solid color-mix(in srgb, var(--t-fg) 24%, transparent); background: color-mix(in srgb, var(--t-fg) 6%, var(--t-bg)); }
+  #term.wrap .inbox .ln.rule { display: none; }                /* its rules go, the top one's title too */
+  #term.wrap .blk.foot { margin: 0 2px 4px; }
+  #term.wrap:not(.showfoot) .foot .ln.status { display: none; }
+  #term.wrap.showfoot .foot .ln.status { font-size: 11.5px; opacity: .85; }
+  /* what a phone does without in an agent's pane: whole-line key hints, and the spaces that push
+     a notice to the right edge */
+  #term.wrap.hasbox .ln.keyhint { display: none; }
+  #term.wrap .ln.ralign .lead { display: none; }
+}
 /* A mouse and a hardware keyboard need no keyboard button. */
 @media (hover: hover) { #fabs #kbdbtn, #fabs #copyfab { display: none; } }
 

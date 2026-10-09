@@ -5,6 +5,8 @@
 const BOLD = 1, FAINT = 2, ITALIC = 4, UNDERLINE = 8, STRIKE = 16, INVERSE = 32, INVISIBLE = 64,
   CURSOR = 256;
 const RULE = /^[─━═╌╍┄┅┈┉\-_=~]{8,}$/;     // a horizontal separator line
+const LABELLED = /^─{8,} +\S.*\S +─{1,4}$/;   // with a title near its end, as Claude Code names its input box
+const KEY_HINT = /^\((?:ctrl|shift|alt|option|cmd|esc|tab)\b[^()]*\)$/i;   // "(ctrl+b to run in background)"
 
 export function palette(theme) {
   const p = [...theme.ansi];
@@ -100,7 +102,10 @@ export function lineRec(data, theme, pal) {
   const txt = el.textContent.replace(/[\ufe0e\ufe0f]/g, "").replace(/\s+$/, "");
   markEdge(el, false, "lead");
   if (data.e) markEdge(el, true, "tail");
-  if (RULE.test(txt.trim())) {
+  const bare = txt.trim();
+  if (KEY_HINT.test(bare)) el.classList.add("keyhint");
+  if (LABELLED.test(bare) && !RULE.test(bare)) el.classList.add("rule", "labelled");   // a rule all the same
+  else if (RULE.test(bare)) {
     el.classList.add("rule");
     // drawn across the view when it is long (term.js): in the color and weight of its characters
     el.style.setProperty("--rule-color", el.querySelector("span[style*=color]")?.style.color || "currentColor");

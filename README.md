@@ -178,7 +178,8 @@ and sign in:
   panel and any unsaved edits there along.
 - **Terminal**: the pane in its profile's colors and font, typing, a hot keys panel (Copy,
   Paste, Tab, ⇧Tab, ^C, Esc, Ctrl, Alt, ⇧←, ⇧↩, arrows…), scrollback, selection. On a phone
-  two floating buttons open the keyboard and the hot keys. On a phone lines
+  two floating buttons open the keyboard and the hot keys; in a coding agent's pane its input is a
+  panel and its status lines wait behind an ⓘ button. On a phone lines
   re-flow to the screen (**Wrap**); **Grid** keeps iTerm2's layout, **Fit** scales it to the
   width, **Resize iTerm to this screen** (⋯) changes the Mac's window until you restore it.
 - **Names**: the pencil beside the title names the session: its iTerm2 tab and session, and in

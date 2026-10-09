@@ -177,6 +177,47 @@ export async function webApp(browser) {
   check("AC-52 web app: a file dropped on the terminal is uploaded and its quoted path pasted, without Enter",
     typed.includes("'/tmp/up/a b.txt'") && !typed.includes("\r") && page.url() === `${ORIGIN}/`, JSON.stringify(typed));
 
+  // a coding agent's input box as a panel; its footer behind a button on a phone
+  const note = "✔ Update installed · Restart to update";
+  const screenOf = (input, below) => [{ r: [run("output")], e: true }, { r: [run("     (ctrl+b to run in background)")], e: true },
+    { r: [run(" ".repeat(80 - note.length) + note)], e: true }, { r: [run(" ".repeat(30) + "deep(nested, code)")], e: true },
+    { r: [run("━".repeat(40) + " 4.2/4.2 MB 12.3 MB/s eta 0:00:00")], e: true },
+    { r: [run([..."─".repeat(48) + " Compromised Node.js packages ─"])], e: true },   // cells, as the bridge sends box drawing
+    { r: [run("❯ " + input), run(" ", 256)], e: true }, { r: [run("─".repeat(80))], e: true }, ...below.map((t) => ({ r: [run(t)], e: true }))];
+  const STATUS = ["  ~/p Opus 5.5 ctx:55%", "  ⏵⏵ bypass permissions on"];
+  const send = (rows) => tell({ t: "screen", sid: "S1", full: true, n: rows.length, cols: 80, rows: rows.length, ch: rows.map((l, i) => [i, l]) });
+  send(screenOf("", STATUS));                                    // idle: its status lines are learnt
+  await page.waitForTimeout(100);
+  send(screenOf("hi", ["  ~/p Opus 5.5 ctx:61%", "  ⏵⏵ bypass permissions on"]));
+  await page.waitForTimeout(150);
+  const shown = (sel) => $eval((q) => [...document.querySelectorAll(q)].map((e) => getComputedStyle(e).display !== "none"), sel);
+  const box = await $eval(() => ({ has: document.getElementById("term").classList.contains("hasbox"),
+    inbox: [...document.querySelectorAll("#screen .blk.inbox .ln")].map((l) => l.textContent.trim().slice(0, 12)),
+    foot: document.querySelectorAll("#screen .blk.foot .ln").length }));
+  check("AC-52 web app: an agent's input box, with its rules, is one block and its status lines another",
+    box.has && box.inbox.length === 3 && box.inbox[1] === "❯ hi" && box.foot === 2, JSON.stringify(box));
+  const kept = await $eval(() => ({ bar: document.querySelectorAll(".ln.labelled").length, deep: [...document.querySelectorAll("#screen .ln")].find((l) => l.textContent.includes("deep(")).classList.contains("ralign") === false }));
+  check("AC-52 web app: a progress bar is no titled rule, and a deeply indented line keeps its indent", kept.bar === 1 && kept.deep, JSON.stringify(kept));
+  const phone = { foot: await shown("#screen .blk.foot .ln"), fab: await shown("#footfab"), hint: await shown(".ln.keyhint"),
+    inbox: await $eval(() => [...document.querySelectorAll(".inbox .ln")].filter((l) => getComputedStyle(l).display !== "none").map((l) => l.textContent.trim())),
+    lead: await shown(".ln.ralign .lead") };
+  check("AC-52 web app: on a phone the box shows only its input, the footer waits behind a button, key hints and a notice's padding go",
+    phone.inbox.join() === "❯ hi" && phone.foot.join() === "false,false" && phone.fab[0] && !phone.hint[0] && !phone.lead[0], JSON.stringify(phone));
+  const tall = await $eval(() => { const b = document.querySelector(".blk.inbox"), lh = parseFloat(getComputedStyle(document.getElementById("term")).fontSize) * 1.25;
+    return { h: b.clientHeight, min: 2 * lh }; });
+  check("AC-52 web app: on a phone the input panel is at least two rows high", tall.h >= tall.min, JSON.stringify(tall));
+  await page.click("#footfab");
+  check("AC-52 web app: the button shows the footer", (await shown("#screen .blk.foot .ln")).join() === "true,true" && await $eval(() => document.getElementById("footfab").getAttribute("aria-pressed") === "true"));
+  await page.click("#footfab");
+  send(screenOf("/", ["  /help   Get help with using Claude Code", "  /model  Set the AI model", ...STATUS]));
+  await page.waitForTimeout(150);
+  const menu = await shown("#screen .blk.foot .ln");
+  check("AC-52 web app: a \"/\" list below the input stays in sight; only the learnt status lines wait behind the button",
+    menu.join() === "true,true,false,false", JSON.stringify(menu));
+  await page.setViewportSize({ width: 1400, height: 800 });
+  check("AC-52 web app: with a mouse on a wide screen the footer stays, with no button", !(await shown("#screen .blk.foot .ln")).includes(false) && !(await shown("#footfab"))[0]);
+
+
   check("AC-52 web app: no page errors", !errors.length, errors.join(" | "));
   await page.close();
 }

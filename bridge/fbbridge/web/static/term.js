@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // The terminal view: scrollback + screen lines, kept in sync with incremental server messages.
+import { inputBox, statusKey } from "./agentbox.js";
+import { typedEnd } from "./cursor.js";
 import { lineRec, palette } from "./render.js";
 
 const LOAD_OLDER_AT = 300;   // px from the top that triggers loading older lines
@@ -44,6 +46,7 @@ export function blockCuts(ends, min, max = Infinity) {
 }
 
 const endsParagraph = (r) => r.el.classList.contains("eol") && !r.el.classList.contains("join");
+// nothing drawn: no text, no background, no inverse cell
 
 export class TermView {
   /** keep: the most history lines on the page while it follows the output (older ones load
@@ -113,8 +116,10 @@ export class TermView {
     if (!a) return;
     const join = wrappedHere(a, b, this.cols);
     a.el.classList.toggle("join", join);
-    // a separator at least half of iTerm's width is a line across the whole view
-    a.el.classList.toggle("full", a.el.classList.contains("rule") && a.txt.trim().length * 2 >= this.cols);
+    // a separator at least half of iTerm's width is a line across the whole view; a line pushed
+    // to the right by spaces (a notice) loses them on a phone, where they would wrap it
+    a.el.classList.toggle("full", a.el.classList.contains("rule") && !a.el.classList.contains("labelled") && a.txt.trim().length * 2 >= this.cols);
+    a.el.classList.toggle("ralign", !!this.cols && a.txt.length >= this.cols - 2 && (a.txt.length - a.txt.trimStart().length) * 3 >= this.cols);
     if (b) b.el.classList.toggle("cont", join);
   }
   relinkAll() {
@@ -152,30 +157,62 @@ export class TermView {
     if (loose > 1) this.wrapInBlocks(this.hist.slice(-loose, -1));
   }
   // The screen's paragraphs in blocks too, but its first: that one goes on from the history's.
-  // The blocks are rebuilt only when the lines' paragraphs change.
+  // In a coding agent's pane its input box, with its rules, is one block ("inbox") and the
+  // status lines below it another ("foot"): on a phone the page draws the box as a panel and
+  // keeps the footer behind a button. The blocks are rebuilt only when they change.
   groupScreen() {
-    const groups = [[]];
-    for (const r of this.screen) {
-      if (!r) continue;                                            // a row not received yet
-      groups.at(-1).push(r);
-      if (endsParagraph(r)) groups.push([]);
-    }
-    if (!groups.at(-1).length) groups.pop();
-    const box = this.screenEl, kept = groups.every((g, k) => {
-      const p = g[0].el.parentNode;
-      return k === 0 ? g.every((r) => r.el.parentNode === box)
-        : p !== box && p?.parentNode === box && p.childElementCount === g.length && g.every((r) => r.el.parentNode === p);
+    const rows = this.screen.filter(Boolean);                     // a row not received yet is skipped
+    const at = this.agent ? this.findBox(rows) : null;
+    this.term.classList.toggle("hasbox", !!at);
+    const groups = [{ kind: "", rows: [] }];
+    rows.forEach((r, i) => {
+      const kind = !at || i < at.top ? "" : i <= at.bottom ? "inbox" : i <= at.end ? "foot" : "";
+      let g = groups.at(-1);
+      if (g.rows.length && g.kind !== kind) groups.push(g = { kind, rows: [] });
+      else if (!g.rows.length && groups.length > 1) g.kind = kind;
+      else if (!g.rows.length && kind) groups.push(g = { kind, rows: [] });   // the first group stays loose
+      g.rows.push(r);
+      if (!kind && endsParagraph(r)) groups.push({ kind: "", rows: [] });
     });
-    if (kept && box.childElementCount === (groups[0]?.length ?? 0) + Math.max(0, groups.length - 1)) return;
+    if (groups.length > 1 && !groups.at(-1).rows.length) groups.pop();
+    const cls = (g) => (g.kind ? `blk ${g.kind}` : "blk");
+    const box = this.screenEl, kept = groups.every((g, k) => {
+      const p = g.rows[0]?.el.parentNode;
+      return k === 0 ? g.rows.every((r) => r.el.parentNode === box)
+        : p !== box && p?.parentNode === box && p.className === cls(g) && p.childElementCount === g.rows.length && g.rows.every((r) => r.el.parentNode === p);
+    });
+    if (kept && box.childElementCount === groups[0].rows.length + groups.length - 1) return;
     const all = new DocumentFragment();
-    all.append(...(groups[0] ?? []).map((r) => r.el));
+    all.append(...groups[0].rows.map((r) => r.el));
     for (const g of groups.slice(1)) {
       const b = document.createElement("div");
-      b.className = "blk";
-      b.append(...g.map((r) => r.el));
+      b.className = cls(g);
+      b.append(...g.rows.map((r) => r.el));
       all.append(b);
     }
     box.replaceChildren(all);
+  }
+  // The agent's input box. A cursor gone for a frame (a redraw) keeps the box while its rules
+  // stay. The status lines shown below it while nothing is typed are learnt: only those wait
+  // behind the button, so a "/" or "@" list or a new notice there stays in sight.
+  findBox(rows) {
+    const cursor = rows.findIndex((r) => r.el.querySelector(".cur"));
+    let at = inputBox(rows.map((r) => ({ rule: r.el.classList.contains("rule"), blank: !r.txt.trim() })), cursor);
+    const was = this.box;
+    if (!at && cursor < 0 && was && was.end < rows.length && rows[was.top]?.el.classList.contains("rule") && rows[was.bottom]?.el.classList.contains("rule")) at = was;
+    this.box = at;
+    if (!at) return null;
+    const below = rows.slice(at.bottom + 1, at.end + 1);
+    if (cursor >= 0 && typedEnd(rows[cursor].data) <= 2) this.idle = new Set(below.map((r) => statusKey(r.txt)));   // only the prompt (a faint suggestion is not typed)
+    for (const r of below) r.el.classList.toggle("status", !!this.idle?.has(statusKey(r.txt)));
+    return at;
+  }
+  /** The shown pane runs a coding agent (or no longer): its input box is drawn as a panel. */
+  setAgent(on) {
+    if (this.agent === on) return;
+    this.agent = on;
+    this.box = this.idle = null;
+    this.keepBottom(() => this.groupScreen());
   }
 
   /** Typing: for 3 s, and at once, keep the cursor's row in sight (an agent's input box
