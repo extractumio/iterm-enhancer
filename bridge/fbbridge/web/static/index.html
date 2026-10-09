@@ -25,11 +25,19 @@
     </div>
     <div id="sessions"></div>
     <div id="profiles" hidden></div>
+    <div id="mergebox" hidden>
+      <p>Move every tab into one iTerm2 window; each tmux session keeps one window of its own. iTerm2 cannot undo this: drag a tab out of its tab bar to split it again.</p>
+      <p>A window that closes takes its Files panel along: save edited files there first.</p>
+      <div class="row"><button id="mergego" class="primary" type="button">Merge</button><button id="mergecancel" type="button">Cancel</button></div>
+    </div>
     <div id="navgrip" role="separator" aria-orientation="vertical" aria-label="Width of the session list" tabindex="0"
       aria-valuemin="200" aria-valuemax="640"></div>
     <div class="nav-foot">
       <button id="newwin" type="button" aria-expanded="false" aria-controls="profiles" title="A new iTerm2 window, with a profile you pick">
         <svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:15px"><path d="M5 12h14"/><path d="M12 5v14"/></svg><span>New window</span><span class="chev"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:14px"><path d="m6 9 6 6 6-6"/></svg></span>
+      </button>
+      <button id="mergewin" type="button" aria-expanded="false" aria-controls="mergebox" title="Move the tabs of iTerm2's windows into as few windows as possible" hidden>
+        <svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:15px"><path d="m14 10 7-7"/><path d="M20 10h-6V4"/><path d="m3 21 7-7"/><path d="M4 14h6v6"/></svg><span>Merge windows</span>
       </button>
     </div>
   </aside>

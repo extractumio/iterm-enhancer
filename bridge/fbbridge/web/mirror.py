@@ -10,6 +10,7 @@ from ..common import UserError, log
 from ..resolve import theme_of
 from .httpd import ConnectionClosed
 from .layout import layout_of
+from .merge import MergeError, merge_windows
 from .newsession import NewSessionError, new_session, new_window, profiles, reorder_tabs
 from .rename import RenameError, rename
 from .tmuxkeys import key_names
@@ -33,7 +34,7 @@ DROPPED = "iTerm2 dropped this tmux connection; its raw output is not shown. Use
 NEW_EVERY = 1.0        # seconds between two new sessions from one browser
 ACTIONS = {"sub": "open the session", "in": "type into the session", "files": "show the session's files",
            "more": "load older lines", "fit": "resize iTerm", "unfit": "restore iTerm's size",
-           "new": "open a new session", "rename": "name the session"}
+           "new": "open a new session", "rename": "name the session", "merge": "merge the windows"}
 
 
 def gone(e):
@@ -62,6 +63,7 @@ class Hub:
             tmux.listeners.append(self.drops_changed)
         self.layout = None
         self.fitted = {}         # session id -> [original (cols, rows), browsers that fitted it]
+        self.merging = asyncio.Lock()   # two browsers merging at once would move tabs of closed windows
 
     async def run(self):
         while True:
@@ -368,6 +370,8 @@ class Client:
             await self.drop_action(t, str(msg.get("id", "")))
         elif t == "rename":
             await self.rename(str(msg.get("id", "")), msg.get("name", ""))
+        elif t == "merge":
+            await self.merge()
         elif t == "resume":                        # back: only what changed meanwhile is sent
             self.paused = False
             if self.session and not self.stream_task:
@@ -429,6 +433,19 @@ class Client:
         except RenameError as e:
             return await self.send({"t": "error", "msg": str(e), "sid": sid})
         await self.hub.refresh()
+
+    async def merge(self):
+        """"Merge windows": iTerm2's tabs into one window, and one per tmux session; the list shows it at once."""
+        if self.hub.merging.locked():
+            return await self.send({"t": "error", "msg": "The windows are being merged already."})
+        async with self.hub.merging:
+            await self.app.async_refresh()
+            try:
+                text = await merge_windows(self.app, self.app.terminal_windows, self.session.session_id if self.session else None)
+            except MergeError as e:
+                return await self.send({"t": "error", "msg": str(e)})
+            await self.hub.refresh()
+        await self.send({"t": "note", "msg": text})
 
     async def run(self):
         """The page signed in (its cookie was checked before the WebSocket was accepted)."""

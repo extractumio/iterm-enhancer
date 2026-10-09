@@ -115,19 +115,24 @@ svg.lu circle { fill: none; stroke: currentColor; }
 .empty { color: var(--muted); padding: 16px 10px; margin: 0; }
 #scrim { display: none; }
 
-/* foot: New window, and its profile menu above it */
-.nav-foot { padding: 10px; border-top: 1px solid var(--line); }
-#newwin { width: 100%; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: 8px;
+/* foot: New window and Merge windows, and their boxes above them */
+.nav-foot { padding: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+#newwin, #mergewin { width: 100%; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: 8px;
   border: 1px solid var(--line); background: var(--chrome); font-weight: 500; }
-#newwin:hover, #newwin[aria-expanded="true"] { background: var(--chrome-2); }
+#newwin:hover, #newwin[aria-expanded="true"], #mergewin:hover, #mergewin[aria-expanded="true"] { background: var(--chrome-2); }
+#mergewin[hidden] { display: none; }
 #newwin .chev { margin-left: auto; color: var(--muted); display: grid; transition: transform .15s; }
 #newwin[aria-expanded="true"] .chev { transform: rotate(180deg); }
-#profiles { margin: 0 10px 6px; display: flex; flex-direction: column; padding: 6px; border-radius: 10px;
+#profiles, #mergebox { margin: 0 10px 6px; display: flex; flex-direction: column; padding: 6px; border-radius: 10px;
   background: var(--chrome-2); border: 1px solid var(--line); box-shadow: 0 12px 32px color-mix(in srgb, #000 40%, transparent); }
 #profiles p { margin: 0; padding: 4px 8px 6px; color: var(--muted); font-size: 11px; }
 #profiles button { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 7px; text-align: left; }
 #profiles button:hover, #profiles button:focus-visible { background: color-mix(in srgb, var(--t-fg) 10%, var(--chrome-2)); }
 #profiles .pdot { margin: 0; }
+#mergebox p { margin: 0; padding: 4px 6px 6px; font-size: 12.5px; line-height: 1.4; }
+#mergebox .row { display: flex; gap: 6px; padding: 4px 6px 2px; }
+#mergebox button { height: 32px; padding: 0 14px; border-radius: 7px; border: 1px solid var(--line); }
+#mergebox .primary { background: var(--accent); color: var(--t-bg); border-color: transparent; font-weight: 600; }
 .nav-title { display: none; }
 
 /* ---------- main column ---------- */
@@ -306,7 +311,7 @@ svg.lu circle { fill: none; stroke: currentColor; }
   .item .t { font-size: 15px; }
   .item .s { font-size: 12.5px; }
   .nav-foot { padding: 10px 16px max(16px, env(safe-area-inset-bottom)); }
-  #newwin { height: 48px; border-radius: 12px; font-size: 15px; }
+  #newwin, #mergewin { height: 48px; border-radius: 12px; font-size: 15px; }
   /* the header: title row, then the view switch across the width */
   #bar { flex-wrap: wrap; gap: 4px 4px; padding: env(safe-area-inset-top) 8px 8px; }
   #current { order: 1; align-self: flex-start; padding-top: 11px; }   /* the title row centers on ☰ and ⋯ (44px) */

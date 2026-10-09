@@ -13,6 +13,7 @@ import iterm2
 
 from .. import sshargs
 from ..common import SHELLS, log
+from ..viewer_profile import VIEWER_PROFILE
 from .agentstate import claude_marked, session_state
 from .newsession import profile_of
 
@@ -136,11 +137,13 @@ async def window_group(w, number, focused, progs=None):
         host = next((it["host"] for it in items if it["host"]), None)   # every pane of it shares the gateway
         return {"kind": "tmux", "label": "tmux", "session": tv["tmuxWindowTitle"].split(":")[0],
                 "where": "" if host else "on this Mac", "host": host, "items": items,
-                "wid": w.window_id, "new": "New tmux tab"}
+                "wid": w.window_id, "new": "New tmux tab", "pool": t.tmux_connection_id}
     wn = await w.async_get_variable("number")
     profile = await profile_of(w)
+    # "Merge windows" (merge.py) gathers the windows of one pool; the Files viewer stays alone
+    viewer = bool(items) and all(it["profile"] == VIEWER_PROFILE for it in items)
     return {"kind": "window", "label": f"Window {wn or number}", "where": "", "host": None, "items": items,
-            "wid": w.window_id, "new": f"New tab ({profile})" if profile else "New tab"}
+            "wid": w.window_id, "new": f"New tab ({profile})" if profile else "New tab", "pool": None if viewer else ""}
 
 
 async def layout_of(app):

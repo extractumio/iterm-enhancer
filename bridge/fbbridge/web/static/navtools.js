@@ -1,10 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-// The session list's tools (AC-52, AC-54): its width, "New window" with a profile, the banner
-// for dropped tmux integrations, and the pencil that names the shown pane.
+// The session list's tools (AC-52, AC-54): its width, "New window" with a profile, "Merge
+// windows", the banner for dropped tmux integrations, and the pencil that names the shown pane.
 
 import { profileDot } from "./nav.js";
 
 const $ = (id) => document.getElementById(id);
+
+/** Whether "Merge windows" would move a tab: two groups share a pool (the bridge's: "" for
+ *  iTerm2 windows, a tmux connection for its windows, null for a window that stays alone). */
+export function canMerge(groups) {
+  const seen = new Set();
+  for (const g of groups) {
+    if (g.pool == null) continue;
+    if (seen.has(g.pool)) return true;
+    seen.add(g.pool);
+  }
+  return false;
+}
 
 /** Wires the tools; `current()` is the shown pane's {group, item} or null, `onResize()` refits the terminal. */
 export function navTools({ send, store, current, onResize }) {
@@ -61,7 +73,23 @@ export function navTools({ send, store, current, onResize }) {
     $("newwin").setAttribute("aria-expanded", "true");
   }
   function hideProfiles() { $("profiles").hidden = true; $("newwin").setAttribute("aria-expanded", "false"); }
-  $("newwin").onclick = () => ($("profiles").hidden ? send({ t: "profiles" }) : hideProfiles());
+  $("newwin").onclick = () => { hideMerge(); $("profiles").hidden ? send({ t: "profiles" }) : hideProfiles(); };
+
+  // "Merge windows" asks first: iTerm2 cannot undo it, and a closing window's Files panel goes.
+  function showMerge(groups) {
+    $("mergewin").hidden = !canMerge(groups);
+    if ($("mergewin").hidden) hideMerge();
+  }
+  function hideMerge() { $("mergebox").hidden = true; $("mergewin").setAttribute("aria-expanded", "false"); }
+  $("mergewin").onclick = () => {
+    if (!$("mergebox").hidden) return hideMerge();
+    hideProfiles();
+    $("mergebox").hidden = false;
+    $("mergewin").setAttribute("aria-expanded", "true");
+    $("mergego").focus();
+  };
+  $("mergego").onclick = () => { hideMerge(); send({ t: "merge" }); };
+  $("mergecancel").onclick = hideMerge;
 
   // ---------- dropped tmux integrations (AC-54) ----------
   // The bridge detached a tmux client iTerm2 had let go of: the session keeps running on its
@@ -108,5 +136,5 @@ export function navTools({ send, store, current, onResize }) {
   });
   $("renamename").addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); endRename(true); } });
 
-  return { showProfiles, showDrops, endRename, renaming: () => !$("renamebox").hidden };
+  return { showProfiles, showMerge, showDrops, endRename, renaming: () => !$("renamebox").hidden };
 }

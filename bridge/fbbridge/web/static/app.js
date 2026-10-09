@@ -190,13 +190,14 @@ document.addEventListener("visibilitychange", () => send({ t: document.hidden ? 
 function onMessage(m) {
   if (m.sid && m.sid !== st.sid) return;            // a frame from the session we just left
   switch (m.t) {
-    case "layout": st.groups = m.groups; drawNav(); break;
+    case "layout": st.groups = m.groups; drawNav(); tools.showMerge(m.groups); break;
     case "theme": applyTheme(m.theme); break;
     case "hist": view.onHist(m); break;
     case "screen": view.onScreen(m); break;
     case "fit": st.resized = m.on; syncControls(); break;
     case "files": views.onFiles(m); break;
     case "error": status(m.msg); break;
+    case "note": toast(m.msg, 4000); break;
     case "drops": tools.showDrops(m.items); break;
     case "profiles": tools.showProfiles(m.items); break;
     case "build": checkBuild(m.id); break;

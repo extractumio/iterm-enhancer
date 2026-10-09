@@ -63,7 +63,7 @@ def run():
                     time.sleep(0.1)
                 else:
                     raise RuntimeError("Private bridge did not become ready")
-                for script in ("e2e_cwd.py", "e2e_terminal.py", "e2e_web_rename.py"):
+                for script in ("e2e_cwd.py", "e2e_terminal.py", "e2e_web_rename.py", "e2e_web_merge.py"):
                     subprocess.run([python, str(REPO / "scripts" / script)], env=env, check=True, timeout=240)
                     if bridge.poll() is not None:
                         print((private / "follower.log").read_text()[-3000:], file=sys.stderr)   # why, before it is deleted

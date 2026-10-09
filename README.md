@@ -169,7 +169,11 @@ and sign in:
 - **Sessions**: every window, tab and pane by title and host (blue laptop: this Mac; violet
   server: a remote host). **+** on a window opens a new tab with that window's current
   profile; on a tmux group, a new tmux tab. Each row has a dot in its profile's color; Claude
-  Code and Codex sessions show their state (working, needs you, failed, done).
+  Code and Codex sessions show their state (working, needs you, failed, done). **Merge
+  windows** under the list moves every tab into one iTerm2 window, and each tmux session's tabs
+  into one window of their own, without bringing iTerm2 to the front; iTerm2 cannot undo it
+  (drag a tab out of its tab bar to split it again), and a window that closes takes its Files
+  panel and any unsaved edits there along.
 - **Terminal**: the pane in its profile's colors and font, typing, a hot keys panel (Copy,
   Paste, Tab, ⇧Tab, ^C, Esc, Ctrl, Alt, ⇧←, ⇧↩, arrows…), scrollback, selection. On a phone
   two floating buttons open the keyboard and the hot keys. On a phone lines
