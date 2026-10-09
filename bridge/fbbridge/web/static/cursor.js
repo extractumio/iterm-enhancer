@@ -17,18 +17,21 @@ function charsBefore(row, node, offset) {
   return n;
 }
 
+/** The screen's rows, in order: a paragraph's rows are in a block of their own (term.js). */
+const rowsOf = (screen) => [...screen.querySelectorAll(".ln")];
+
 /** {row, col} of the screen cell at viewport point (x, y), or null (scrollback, or no text). */
 export function cellAt(screen, x, y) {
   const at = caretAt(x, y);
   if (!at || at.node.nodeType !== Node.TEXT_NODE) return null;
   const row = at.node.parentElement?.closest(".ln");
-  if (!row || row.parentElement !== screen) return null;
+  if (!row || !screen.contains(row)) return null;
   // the caret falls between characters: the one under the finger is the one it is on, or before it
   const r = document.createRange();
   r.setStart(at.node, at.offset);
   const box = at.offset < at.node.length ? (r.setEnd(at.node, at.offset + 1), r.getBoundingClientRect()) : null;
   const before = !box || x < box.left ? 1 : 0;
-  return { row: [...screen.children].indexOf(row), col: Math.max(0, charsBefore(row, at.node, at.offset) - before) };
+  return { row: rowsOf(screen).indexOf(row), col: Math.max(0, charsBefore(row, at.node, at.offset) - before) };
 }
 
 /** {row, col} of the cursor on the screen, or null. */
@@ -37,13 +40,13 @@ export function cursorCell(screen) {
   const row = cur?.closest(".ln");
   const first = cur && document.createTreeWalker(cur, NodeFilter.SHOW_TEXT).nextNode();
   if (!row || !first) return null;
-  return { row: [...screen.children].indexOf(row), col: charsBefore(row, first, 0) };
+  return { row: rowsOf(screen).indexOf(row), col: charsBefore(row, first, 0) };
 }
 
 /** Whether rows `a` and `b` of the screen lie inside one box drawn between two rules (an
  *  agent's input), so ↑ and ↓ move within it rather than recalling history. */
 export function inOneBox(screen, a, b) {
-  const rows = [...screen.children];
+  const rows = rowsOf(screen);
   const isRule = (i) => rows[i]?.classList.contains("rule");
   const lo = Math.min(a, b), hi = Math.max(a, b);
   for (let i = lo; i <= hi; i++) if (isRule(i)) return false;

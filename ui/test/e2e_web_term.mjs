@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-// AC-52 checks for e2e_panel.mjs, on the web app's terminal view: the history is kept in
-// blocks that end where a paragraph ends (iOS froze on a selection inside one huge block), the
-// newest lines loose, and on a touch screen about `keep` lines while following the output; the
+// AC-52 checks for e2e_panel.mjs, on the web app's terminal view: each paragraph of the history
+// and the screen is a block of its own (iOS 26.4+ selects nothing in a long run of inline lines;
+// older iOS froze), the paragraph that goes on into the screen loose, and on a touch screen about `keep` lines while following the output; the
 // Copy button for touch screens. The real term.js and touchcopy.js run in a blank page; the
 // messages are the ones the bridge sends.
 
@@ -19,6 +19,7 @@ const PAGE = `<!doctype html><link rel=stylesheet href="/style.css">
 <script type="module">
 import { TermView } from "/term.js";
 import { copyButton, copyByCommand } from "/touchcopy.js";
+import { cellAt } from "/cursor.js";
 const $ = (id) => document.getElementById(id);
 const view = new TermView({ term: $("term"), hist: $("hist"), screen: $("screen"), note: $("note"),
   bottomBtn: $("bottom"), paused: $("paused"), send: () => {}, keep: 2000 });
@@ -36,8 +37,12 @@ const line = (n) => {
 };
 const hist = (mode, first, count) => view.onHist({ mode, first, oldest: 0, truncated: false,
   lines: Array.from({ length: count }, (_, i) => line(first + i)) });
-const screen = (cols) => new Promise((done) => { view.onScreen({ full: true, n: 3, cols, rows: 3,
-  ch: [0, 1, 2].map((i) => [i, line(9000 + i)]) }); requestAnimationFrame(() => requestAnimationFrame(done)); });
+const screen = (cols, n = 3) => new Promise((done) => { view.onScreen({ full: true, n, cols, rows: n,
+  ch: Array.from({ length: n }, (_, i) => [i, line(9000 + i)]) }); requestAnimationFrame(() => requestAnimationFrame(done)); });
+const part = (n, ch) => new Promise((done) => { view.onScreen({ full: false, n, cols: 80, rows: n, ch });
+  requestAnimationFrame(() => requestAnimationFrame(done)); });
+const touch = (type, fingers) => { const e = new Event(type); Object.defineProperty(e, "touches", { value: { length: fingers } }); $("term").dispatchEvent(e); };
+const ends = (l) => l.classList.contains("eol") && !l.classList.contains("join");
 // The rules, as a list of broken ones.
 const broken = () => {
   const out = [], kids = [...$("hist").children];
@@ -47,17 +52,29 @@ const broken = () => {
   if (dom.length !== view.hist.length || dom.some((el, i) => el !== view.hist[i].el)) out.push("lines out of order");
   if (view.hist.some((r, i) => i && r.n !== view.hist[i - 1].n + 1)) out.push("missing lines");
   for (const b of kids.filter((c) => c.classList.contains("blk"))) {
-    const l = b.lastElementChild, ends = l.classList.contains("eol") && !l.classList.contains("join");
-    if (!ends && b.childElementCount < 400) out.push("a block ends inside a paragraph");
-    if (b.childElementCount > 800) out.push("a block of " + b.childElementCount);
+    // only a huge soft-wrapped line is cut, every 400 lines (older lines of it loaded before such a block are one more)
+    const cut = b.childElementCount === 400 || b.nextElementSibling?.childElementCount === 400;
+    if (!ends(b.lastElementChild) && !cut) out.push("a block ends inside a paragraph");
+    if ([...b.children].slice(0, -1).some(ends)) out.push("a block holds two paragraphs");
+    if (b.childElementCount > 400) out.push("a block of " + b.childElementCount);
   }
   if (view.hist.length && view.hist.at(-1).el.parentNode !== $("hist")) out.push("the last line is in a block");
+  // the screen: its first paragraph loose (it goes on from the history's), then one block each
+  const rows = view.screen.map((r) => r.el), first = rows.findIndex(ends) + 1 || rows.length;
+  if (rows.slice(0, first).some((el) => el.parentNode !== $("screen"))) out.push("the screen's first paragraph is in a block");
+  for (const el of rows.slice(first)) {
+    const b = el.parentNode;
+    if (b === $("screen") || !b.classList.contains("blk")) out.push("a screen line outside a block");
+    else if (!ends(b.lastElementChild) || [...b.children].slice(0, -1).some(ends)) out.push("a screen block that is not one paragraph");
+  }
+  if ([...$("screen").querySelectorAll(".ln")].some((el, i) => el !== rows[i])) out.push("screen lines out of order");
+  if ([...$("screen").children].some((c) => c.classList.contains("blk") && !c.childElementCount)) out.push("an empty screen block");
   return out;
 };
 window.copied = [];
 window.copyByCommand = copyByCommand;
 copyButton($("copyfab"), $("term"), (text) => { window.copied.push(text); });
-window.t = { view, hist, screen, broken, blocks: () => $("hist").querySelectorAll(".blk").length };
+window.t = { view, hist, screen, part, line, touch, broken, cellAt, blocks: () => $("hist").querySelectorAll(".blk").length };
 window.ready = true;
 </script>`;
 
@@ -104,16 +121,66 @@ export async function webTerm(browser) {
   s = await state();
   check("AC-52 web: a new width re-joins the lines and rebuilds the blocks", !s.broken.length, JSON.stringify(s));
 
+  // the screen: 12 rows, each paragraph a block; a tap finds its row through the blocks
+  await run(() => t.screen(80, 12));
+  s = await state();
+  const blocks = await run(() => document.querySelectorAll("#screen > .blk").length);
+  check("AC-52 web: each paragraph of the screen is a block of its own, but the first", !s.broken.length && blocks >= 5, JSON.stringify({ ...s, blocks }));
+  const tapped = await run(() => {
+    const el = t.view.screen[9].el, r = el.getClientRects()[0];
+    el.scrollIntoView();
+    const q = el.getClientRects()[0];
+    return { inBlock: el.parentNode.classList.contains("blk"), at: t.cellAt(document.getElementById("screen"), q.left + 2, q.top + q.height / 2), had: !!r };
+  });
+  check("AC-52 web: a tap on a screen row inside a block finds that row", tapped.inBlock && tapped.at?.row === 9, JSON.stringify(tapped));
+
+  // updates of some rows: the blocks stay while the paragraphs do, and follow them when they change
+  const changes = await run(async () => {
+    const blks = () => [...document.querySelectorAll("#screen > .blk")];
+    const out = {}, before = blks();
+    await t.part(12, [[9, { r: [["\u25cf Bash(npm run build)", null, null, 0]], e: true }]]);
+    out.same = { broken: t.broken(), kept: blks().length === before.length && blks().every((b, i) => b === before[i]) };
+    await t.part(12, [[2, { r: [["x".repeat(80), null, null, 0]], e: false }]]);   // row 2 now goes on in row 3
+    out.joined = { broken: t.broken(), fewer: blks().length < before.length };
+    await t.part(8, []);
+    out.shrunk = { broken: t.broken(), rows: document.querySelectorAll("#screen .ln").length };
+    await t.part(14, Array.from({ length: 6 }, (_, i) => [8 + i, t.line(9100 + i)]));
+    out.grown = { broken: t.broken(), rows: document.querySelectorAll("#screen .ln").length };
+    return out;
+  });
+  check("AC-52 web: a row's new text keeps the screen's blocks", !changes.same.broken.length && changes.same.kept, JSON.stringify(changes.same));
+  check("AC-52 web: a row whose line end goes away joins its paragraph's block", !changes.joined.broken.length && changes.joined.fewer, JSON.stringify(changes.joined));
+  check("AC-52 web: fewer and more screen rows keep one block per paragraph",
+    !changes.shrunk.broken.length && changes.shrunk.rows === 8 && !changes.grown.broken.length && changes.grown.rows === 14, JSON.stringify(changes));
+
+  // a finger lifted waits 400 ms before updates go on: not when another touch began meanwhile,
+  // nor while a second finger is still down
+  const held = await run(async () => {
+    const wait = () => new Promise((r) => setTimeout(r, 500));
+    t.touch("touchstart", 1); t.touch("touchend", 0); t.touch("touchstart", 1); await wait();
+    const next = t.view.touching;
+    t.touch("touchstart", 2); t.touch("touchend", 1); await wait();
+    const other = t.view.touching;
+    t.touch("touchend", 0); await wait();
+    return { next, other, lifted: t.view.touching };
+  });
+  check("AC-52 web: updates stay paused for a new touch and a finger still down, and go on after the lift",
+    held.next && held.other && !held.lifted, JSON.stringify(held));
+
   // one line iTerm soft-wrapped 900 times (lines 5000-5899) is cut into blocks of at most 400
   await run(async () => { t.hist("reset", 4900, 1100); });
   s = await state();
   check("AC-52 web: one huge soft-wrapped line is cut into bounded blocks", !s.broken.length, JSON.stringify(s));
+  // older lines that end inside such a line: a block of their own when the next one is full
+  await run(() => { t.hist("reset", 5500, 500); t.hist("prepend", 5200, 300); });
+  s = await state();
+  check("AC-52 web: older lines of a huge soft-wrapped line keep blocks bounded", !s.broken.length && s.first === 5200, JSON.stringify(s));
 
   // the Copy button: shown while terminal text is selected, copying it even when the tap
   // cleared the selection and the terminal then caught up (moving the selected line into a
   // block), then clearing it
   const fab = () => run(() => document.getElementById("copyfab").hidden);
-  await run(() => { window.picked = [...document.querySelectorAll("#hist > .ln")].at(-3); getSelection().selectAllChildren(window.picked); });
+  await run(() => { window.picked = [...document.querySelectorAll("#hist > .ln")].at(-1); getSelection().selectAllChildren(window.picked); });
   await page.waitForTimeout(100);
   const word = await run(() => String(getSelection()).trimEnd());
   check("AC-52 web: a Copy button appears while terminal text is selected", !(await fab()) && word.length > 0);

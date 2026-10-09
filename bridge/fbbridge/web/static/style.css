@@ -186,14 +186,14 @@ svg.lu circle { fill: none; stroke: currentColor; }
 #hist, #screen { display: contents; }
 /* Wrap: lines flow inline; only a hard line end breaks. Padding a program added up to iTerm's
    width is hidden (it would stick out of a narrow screen), prose the program wrapped at iTerm's
-   width is re-joined, and separator lines are cut to one row. A hard line end closes its
-   paragraph with an empty block (the zero-width space keeps a blank line one row high): iOS
-   Safari shows no Copy menu for a long press inside one huge paragraph of inline lines. */
+   width is re-joined, and separator lines are cut to one row. A hard line end breaks the line
+   (the zero-width space keeps a blank line one row high); each paragraph is a block of its own
+   (term.js), as iOS Safari selects nothing in a long run of inline lines. */
 #term.wrap { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; }
 #term.wrap .ln { display: inline; }
 #term.wrap .ln.eol::before { content: "\200B"; }
-#term.wrap .ln.eol::after { content: ""; display: block; }
-#term.wrap .ln.eol.join::after { content: " "; display: inline; }
+#term.wrap .ln.eol::after { content: "\A"; }
+#term.wrap .ln.eol.join::after { content: " "; }
 #term.wrap .ln.cont .lead { display: none; }
 #term.wrap .tail { display: none; }
 #term.wrap .ln.rule { display: block; white-space: pre; overflow: hidden; height: 1.25em; }

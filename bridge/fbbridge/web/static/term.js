@@ -3,8 +3,7 @@
 import { lineRec, palette } from "./render.js";
 
 const LOAD_OLDER_AT = 300;   // px from the top that triggers loading older lines
-const BLOCK = 100;           // fewest history lines in a block (see pack)
-const MAX_BLOCK = 4 * BLOCK; // most: a longer paragraph is cut (one huge soft-wrapped line)
+const MAX_BLOCK = 400;       // most lines in a paragraph's block: a longer one is cut (one huge soft-wrapped line)
 const BOXED = /^[│┃║╎┆|]|[│┃║╎┆|]$/; // rows of a drawn box: never re-joined
 
 // Programs such as Claude Code wrap prose themselves at iTerm's width, with hard line ends.
@@ -58,8 +57,12 @@ export class TermView {
     bottomBtn.addEventListener("click", () => this.toBottom());
     // While a finger is down or text is selected, the page must not change under it: a
     // re-drawn line drops the selection (and iOS's long-press). Updates wait and then catch up.
-    term.addEventListener("touchstart", () => { this.touching = true; }, { passive: true });
-    const lift = () => { setTimeout(() => { this.touching = false; this.resume(); }, 400); };
+    let lifting = 0;      // a lift's timer must not end the next touch
+    term.addEventListener("touchstart", () => { clearTimeout(lifting); this.touching = true; }, { passive: true });
+    const lift = (e) => {
+      if (e.touches.length) return;                                // another finger is still down
+      clearTimeout(lifting); lifting = setTimeout(() => { this.touching = false; this.resume(); }, 400);
+    };
     term.addEventListener("touchend", lift, { passive: true });
     term.addEventListener("touchcancel", lift, { passive: true });
     document.addEventListener("selectionchange", () => this.resume());
@@ -119,28 +122,58 @@ export class TermView {
     for (const r of this.hist) all.append(r.el);                   // (no spread: 10000s of arguments)
     this.histEl.replaceChildren(all);
     this.pack();
+    this.groupScreen();
   }
 
-  // iOS reads the whole block a selection lies in for its Copy menu, and in Wrap all lines flow
-  // in one: with thousands of lines a tap on a selection froze the page for seconds. So the
-  // history is kept in blocks that end where a paragraph ends (a hard line end not re-joined).
-  // The newest lines stay loose: they flow on into the screen, and the last one's end can still
-  // change with the screen's first line.
+  // Each paragraph (lines up to a hard line end not re-joined) is a block of its own. In Wrap
+  // the lines are inline, and iOS Safari 26.4+ shows no selection (no highlight, handles or
+  // Copy) in a long run of them; older iOS read the whole run for its Copy menu and froze. The
+  // paragraph the history's newest lines are in stays loose: it flows on into the screen, and
+  // its last line's end can still change with the screen's first line.
   wrapInBlocks(rows) {
     let start = 0;
-    for (const end of blockCuts(rows.map(endsParagraph), BLOCK, MAX_BLOCK)) {
-      const b = document.createElement("div");
-      b.className = "blk";
-      rows[start].el.before(b);
-      b.append(...rows.slice(start, end).map((r) => r.el));
+    for (const end of blockCuts(rows.map(endsParagraph), 1, MAX_BLOCK)) {
+      this.block(rows.slice(start, end));
       start = end;
     }
     return rows.slice(start);
   }
+  block(rows) {
+    const b = document.createElement("div");
+    b.className = "blk";
+    rows[0].el.before(b);
+    b.append(...rows.map((r) => r.el));
+  }
   pack() {
     let loose = 0;
     while (loose < this.hist.length && this.hist.at(-1 - loose).el.parentNode === this.histEl) loose++;
-    if (loose > BLOCK) this.wrapInBlocks(this.hist.slice(-loose, -1));
+    if (loose > 1) this.wrapInBlocks(this.hist.slice(-loose, -1));
+  }
+  // The screen's paragraphs in blocks too, but its first: that one goes on from the history's.
+  // The blocks are rebuilt only when the lines' paragraphs change.
+  groupScreen() {
+    const groups = [[]];
+    for (const r of this.screen) {
+      if (!r) continue;                                            // a row not received yet
+      groups.at(-1).push(r);
+      if (endsParagraph(r)) groups.push([]);
+    }
+    if (!groups.at(-1).length) groups.pop();
+    const box = this.screenEl, kept = groups.every((g, k) => {
+      const p = g[0].el.parentNode;
+      return k === 0 ? g.every((r) => r.el.parentNode === box)
+        : p !== box && p?.parentNode === box && p.childElementCount === g.length && g.every((r) => r.el.parentNode === p);
+    });
+    if (kept && box.childElementCount === (groups[0]?.length ?? 0) + Math.max(0, groups.length - 1)) return;
+    const all = new DocumentFragment();
+    all.append(...(groups[0] ?? []).map((r) => r.el));
+    for (const g of groups.slice(1)) {
+      const b = document.createElement("div");
+      b.className = "blk";
+      b.append(...g.map((r) => r.el));
+      all.append(b);
+    }
+    box.replaceChildren(all);
   }
 
   /** Typing: for 3 s, and at once, keep the cursor's row in sight (an agent's input box
@@ -182,6 +215,7 @@ export class TermView {
         for (let i = Math.max(0, from); i <= this.hist.length; i++) this.link(i);
         this.trim(follow);
         this.pack();
+        this.groupScreen();
       });
     } else {                                        // prepend older lines, keep the view still
       const first = this.hist.length ? this.hist[0].n : Infinity;
@@ -195,7 +229,10 @@ export class TermView {
       const last = this.hist.length === older.length ? 1 : 0;         // the last line stays loose (pack)
       const rest = older.length > last ? this.wrapInBlocks(older.slice(0, older.length - last)) : [];
       const next = rest.at(-1)?.el.nextElementSibling;              // their paragraph goes on there
-      if (next?.classList.contains("blk")) next.prepend(...rest.map((r) => r.el));
+      if (next?.classList.contains("blk")) {
+        if (rest.length + next.childElementCount <= MAX_BLOCK) next.prepend(...rest.map((r) => r.el));
+        else this.block(rest);                                      // cut, as a longer paragraph is
+      }
       this.term.scrollTop += this.term.scrollHeight - h;
     }
     this.showNote();
@@ -208,12 +245,14 @@ export class TermView {
     while (drop < this.hist.length && this.hist[drop].n < this.oldest) drop++;
     for (const l of this.hist.slice(0, drop)) l.el.remove();
     this.hist = this.hist.slice(drop);
+    let cut = 0;
     for (let b = this.histEl.firstElementChild; b?.classList.contains("blk"); b = this.histEl.firstElementChild) {
       const n = b.childElementCount;
-      if (n && !(follow && this.hist.length - n >= this.keep)) break;
+      if (n && !(follow && this.hist.length - cut - n >= this.keep)) break;
       b.remove();
-      this.hist = this.hist.slice(n);
+      cut += n;
     }
+    this.hist = this.hist.slice(cut);
   }
 
   showNote() {
@@ -244,7 +283,10 @@ export class TermView {
         else { this.screen[i] = this.make(data); this.screenEl.append(this.screen[i].el); }
       }
       if (p.full) this.relinkAll();
-      else for (const [i] of changed) { this.link(this.hist.length + i - 1); this.link(this.hist.length + i); }
+      else {
+        for (const [i] of changed) { this.link(this.hist.length + i - 1); this.link(this.hist.length + i); }
+        this.groupScreen();
+      }
     });
     if (performance.now() < (this.followUntil ?? 0)) this.showCursor();
     this.onDrawn?.();
