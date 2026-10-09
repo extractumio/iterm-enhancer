@@ -11,7 +11,7 @@ import {
 import { Binding } from "./binding";
 import { renderOffer } from "./host-offer";
 import { contextMenu } from "./context-menu";
-import { acceptFromPage, openOutside, PIN, PIN_CWD, PIN_HOST, pinKey, revealOutside, THEMED_BY_PAGE } from "./embed";
+import { acceptFromPage, emptiedOutside, openOutside, PIN, PIN_CWD, PIN_HOST, pinKey, revealOutside, THEMED_BY_PAGE } from "./embed";
 import { applyTheme } from "./theme";
 import { Tree, type EditMode } from "./tree";
 import { Viewer } from "./viewer";
@@ -354,6 +354,7 @@ const viewer = new Viewer($("tabs"), $("tools"), $("vbody"), {
   layout: (has) => $("app").classList.toggle("has-tabs", has),
   reveal: (p) => { if (!revealOutside(p)) revealInTree(p); },
   active: (p) => pathBar?.show(p),
+  emptied: () => { if (VIEW) emptiedOutside(); },
 });
 let pathBar: PathBar | null = null; // viewer window only
 function revealInTree(p: string) { tree.selected = new Set([p]); void tree.reveal(p); scheduleSave(); }

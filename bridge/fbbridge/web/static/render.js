@@ -100,6 +100,11 @@ export function lineRec(data, theme, pal) {
   const txt = el.textContent.replace(/[\ufe0e\ufe0f]/g, "").replace(/\s+$/, "");
   markEdge(el, false, "lead");
   if (data.e) markEdge(el, true, "tail");
-  if (RULE.test(txt.trim())) el.classList.add("rule");
+  if (RULE.test(txt.trim())) {
+    el.classList.add("rule");
+    // drawn across the view when it is long (term.js): in the color and weight of its characters
+    el.style.setProperty("--rule-color", el.querySelector("span[style*=color]")?.style.color || "currentColor");
+    el.style.setProperty("--rule-width", /[━═]/.test(txt) ? "2px" : "1px");
+  }
   return { data, el, txt };
 }

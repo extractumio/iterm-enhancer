@@ -113,6 +113,8 @@ export class TermView {
     if (!a) return;
     const join = wrappedHere(a, b, this.cols);
     a.el.classList.toggle("join", join);
+    // a separator at least half of iTerm's width is a line across the whole view
+    a.el.classList.toggle("full", a.el.classList.contains("rule") && a.txt.trim().length * 2 >= this.cols);
     if (b) b.el.classList.toggle("cont", join);
   }
   relinkAll() {

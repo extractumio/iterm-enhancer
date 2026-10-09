@@ -72,21 +72,24 @@ svg.lu circle { fill: none; stroke: currentColor; }
 .item:hover { background: color-mix(in srgb, var(--t-fg) 8%, var(--chrome)); }
 .item.on { background: color-mix(in srgb, var(--accent) 16%, var(--chrome)); }
 .pdot { width: 8px; height: 8px; margin: 5px 1px 0; border-radius: 50%; background: var(--dot); flex: 0 0 auto; }
-.pdot.focus { box-shadow: 0 0 0 2px var(--chrome), 0 0 0 3.5px var(--dot); }
+/* a session's bar, as tall as its two lines: full for the shown session, half for the others;
+   it breathes while the session's agent works */
+.pbar { width: 4px; align-self: stretch; min-height: 30px; margin: 1px 3px; border-radius: 2px; background: var(--dot); opacity: .5; }
+.pbar.on { opacity: 1; }
+.pbar.busy { animation: breathe 1.6s ease-in-out infinite; }
+.pbar.on.busy { animation-name: breathe-on; }
+@keyframes breathe { 50% { opacity: .15; } }
+@keyframes breathe-on { 50% { opacity: .45; } }
 /* a working agent: a ring of the dot's color grows from it and fades, as a radar ping */
-.pdot.busy { position: relative; }
-.pdot.busy::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--dot);
-  animation: ping 1.6s cubic-bezier(0, 0, .2, 1) infinite; }
-@keyframes ping { from { transform: scale(1); opacity: .7; } 75%, to { transform: scale(2.6); opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .pdot.busy::after { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .pbar.busy { animation: none; } }
 .item .txt { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .item .head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .item .idx { flex: 0 0 auto; width: 14px; text-align: right; color: var(--muted); font: 11px ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
 .item .t { min-width: 0; font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .s { display: flex; gap: 6px; min-width: 0; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; }
 .s > span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.s > .sep, .s > .host, .s > .pdot { flex: none; }
-.s > .last { flex-shrink: 1000; min-width: 6ch; }   /* the folder gives way first, down to a few letters */
+.s > .sep, .s > .host, .s > .pdot, .s > .prog { flex: none; }
+.s > .last { flex-shrink: 1000; min-width: 6ch; }   /* the title (else the folder) gives way first, down to a few letters */
 .s .sep { color: color-mix(in srgb, var(--t-fg) 25%, var(--t-bg)); }
 .item .s { padding-left: 20px; }
 .host { color: var(--remote); font-weight: 500; }
@@ -97,10 +100,11 @@ svg.lu circle { fill: none; stroke: currentColor; }
 /* agent states (Lucide): amber hourglass, orange question (pulsing), red alert, green check */
 .state { display: inline-grid; place-items: center; flex: 0 0 auto; }
 .state.working { color: #e0af68; }
-.state.waiting { color: #ff9e64; animation: ask 1.6s ease-in-out infinite; }
+.state.waiting { color: #1a1b26; background: #ffb020; border-radius: 50%; box-shadow: 0 0 0 2px color-mix(in srgb, #ffb020 35%, transparent), 0 0 10px #ffb020;
+  animation: ask 1s steps(2, jump-none) infinite; }
 .state.failed { color: #f7768e; }
 .state.done { color: #9ece6a; }
-@keyframes ask { 50% { opacity: .35; } }
+@keyframes ask { 50% { opacity: .25; } }
 @media (prefers-reduced-motion: reduce) { .state.waiting { animation: none; } }
 
 /* drag handles: in the gutter, shown on hover; a finger long-presses the row's grip */
@@ -153,13 +157,18 @@ svg.lu circle { fill: none; stroke: currentColor; }
 #rename { flex: 0 0 auto; width: 28px; height: 28px; margin: -3px 0 -3px -4px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); }
 #rename:hover { color: var(--t-fg); background: var(--chrome-2); }
 /* the header's details: one line of text that ends in an ellipsis, so the folder at its end
-   gives way first; the dot is centered under the state, the text starts with the title's */
-#cursub { display: block; height: 16px; line-height: 16px; text-overflow: ellipsis; }
+   gives way first; it starts with the title, after the state's column */
+#curbar { flex: 0 0 auto; display: flex; height: 40px; margin-right: 6px; }
+#curbar:empty { display: none; }
+#curbar .pbar { margin: 0; }
+#cursub { display: block; height: 16px; line-height: 16px; text-overflow: ellipsis; padding-left: 24px; }
 #cursub > span { display: inline; }
 #cursub > .sep { margin: 0 6px; }
-#cursub .pdot { display: inline-block; vertical-align: 1px; margin: 0 12.5px 0 4.5px; width: 7px; height: 7px; }
 #cursub:empty { display: none; }
 #term.onlink { cursor: pointer; }
+/* addresses and paths that open (linkmarks.js) */
+::highlight(lnk) { text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent); }
+#term.dropping { outline: 2px dashed var(--accent); outline-offset: -6px; }
 #renamebox { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; }
 #renamebox input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--accent);
   background: var(--chrome-2); color: inherit; font: inherit; font-size: 16px; outline: 0; }
@@ -177,6 +186,28 @@ svg.lu circle { fill: none; stroke: currentColor; }
 #drops { background: color-mix(in srgb, #c98a1b 80%, var(--t-bg)); color: #fff; padding: 4px 12px; }
 #drops p { margin: 4px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 #drops button { padding: 3px 10px; border-radius: 6px; background: rgba(255,255,255,.18); color: inherit; font-weight: 600; }
+/* other sessions waiting for an answer: cards at the terminal's top right; on a phone, slim
+   lines across it under the header */
+#asks { position: absolute; top: calc(64px + env(safe-area-inset-top)); right: 12px; z-index: 7; width: min(340px, calc(100% - 24px));
+  display: flex; flex-direction: column; gap: 6px; }
+#asks[hidden] { display: none; }
+#asks .ask { display: flex; align-items: center; border-radius: 10px; background: var(--chrome-2); color: var(--t-fg);
+  border: 1px solid color-mix(in srgb, #ffb020 60%, var(--line)); box-shadow: 0 8px 24px color-mix(in srgb, #000 40%, transparent); }
+#asks .go { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 9px 4px 9px 12px; text-align: left; font-size: 13px; }
+#asks .what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#asks .state { flex: 0 0 18px; height: 18px; }
+#asks .more { flex: none; color: var(--muted); font-size: 12px; }
+#asks .more:empty { display: none; }
+#asks .x { flex: 0 0 auto; width: 32px; height: 32px; margin-right: 4px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); }
+#asks .ask[hidden] { display: none; }
+#asks .go:hover .what { text-decoration: underline; }
+#asks .x:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 10%, transparent); }
+@media (max-width: 860px) {
+  #asks { position: static; margin: 6px 8px 0; width: auto; gap: 4px; }   /* under the header and its view tabs, not over them */
+  #asks .ask { border-radius: 8px; }
+  #asks .go { padding: 5px 4px 5px 10px; font-size: 12.5px; gap: 8px; }
+  #asks .x { width: 30px; height: 28px; }
+}
 
 /* ---------- terminal ---------- */
 #term { flex: 1; overflow: auto; padding: 4px 8px; background: var(--t-bg); color: var(--t-fg); outline: none;
@@ -198,6 +229,9 @@ svg.lu circle { fill: none; stroke: currentColor; }
 #term.wrap .tail { display: none; }
 #term.wrap .ln.rule { display: block; white-space: pre; overflow: hidden; height: 1.25em; }
 #term.wrap .ln.rule::after { content: none; }
+/* a long separator: its characters hidden (copied as they are), a line across the view instead */
+#term .ln.rule.full { display: block; width: auto; height: 1.25em; overflow: hidden; white-space: pre; -webkit-text-fill-color: transparent;
+  background: linear-gradient(var(--rule-color), var(--rule-color)) center / 100% var(--rule-width) no-repeat; }
 #term.grid { white-space: pre; }
 #term.grid .ln { display: block; min-height: 1.25em; width: max-content; }
 #term .c1, #term .c2 { display: inline-block; text-align: center; white-space: pre; }
@@ -332,7 +366,12 @@ body.wide #views button[aria-selected="true"] { border-color: color-mix(in srgb,
 
 /* ---------- views: Terminal, Files, File ---------- */
 #main > iframe.view, #filewin > iframe { flex: 1; width: 100%; min-height: 0; border: 0; background: var(--t-bg); }
-#filewin { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#filewin { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+/* below 1400px View fills the page: a way back to the terminal where the thumb is */
+#backterm { position: absolute; left: 12px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 2; height: 40px;
+  display: flex; align-items: center; gap: 4px; padding: 0 14px 0 8px; border-radius: 20px; font-weight: 600; font-size: 13px;
+  background: var(--accent); color: var(--t-bg); box-shadow: 0 6px 18px color-mix(in srgb, #000 45%, transparent); }
+body.wide #backterm { display: none; }
 #viewnote { flex: 1; margin: 0; padding: 24px 16px; color: var(--muted); }
 body:not([data-shown="term"]) .term-only, body:not([data-shown="term"]) #hotkeys,
 body:not([data-shown="term"]) #bottom, body:not([data-shown="term"]) #paused { display: none !important; }
@@ -348,7 +387,7 @@ body.wide #drops { grid-row: 3; }
 body.wide #term { grid-row: 4; }
 body.wide #hotkeys { grid-row: 5; }
 /* Positioned children are placed in the terminal's column, not over the docked Files. */
-body.wide #toast, body.wide #paused, body.wide #bottom, body.wide #fabs { grid-row: 1 / -1; }
+body.wide #toast, body.wide #paused, body.wide #bottom, body.wide #fabs, body.wide #asks { grid-row: 1 / -1; }
 body.docked #sidehead { display: flex; grid-column: 2; grid-row: 1; min-height: 56px; border-left: 1px solid var(--line); }
 body.docked #files, body.docked #viewnote { grid-column: 2; grid-row: 2 / -1; width: var(--side-w);
   height: auto; align-self: stretch; border-left: 1px solid var(--line); }

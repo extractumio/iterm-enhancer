@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-// Terminal, Files and File (the session list is the drawer). Files is iterm-enhancer's panel
-// pinned to the shown session; File is its viewer and editor, where every file opened from Files
-// gets a tab. Below WIDE they are three views in the same place; at WIDE and up Files is docked
-// on the right and File is a window over the terminal, each closed with its own [x].
+// Terminal, Files and View (the session list is the drawer). Files is iterm-enhancer's panel
+// pinned to the shown session; View (internally "file") is its viewer and editor, where every
+// file opened from Files gets a tab. Below WIDE they are three views in the same place, and View
+// has a button back to the terminal; at WIDE and up Files is docked on the right and View is a
+// window over the terminal, each closed with its own [x]. Closing View's last file goes back to
+// the terminal.
 
 const $ = (id) => document.getElementById(id);
 const NAMES = ["term", "files", "file"];
 const WIDE = matchMedia("(min-width: 1400px)");
 
 export class Views {
-  constructor({ send, store, onShow }) {
+  constructor({ send, store, onShow, onBack }) {
     Object.assign(this, { send, store });
     this.onShow = onShow;          // the terminal was shown or changed width: it may need a redraw
+    this.onBack = onBack;          // View closed its last file: the terminal may take the keys
     this.current = "term";         // the view in the main column below WIDE
     this.docked = store.get("filesDocked", true);   // Files is open on the right at WIDE
     this.floating = false;         // File is open over the terminal at WIDE
@@ -23,7 +26,8 @@ export class Views {
     for (const f of ["files", "file"]) $(f).addEventListener("load", () => this.tellTheme($(f)));
     for (const b of document.querySelectorAll("button[data-view]")) b.addEventListener("click", () => this.show(b.dataset.view, true));
     $("sideclose").addEventListener("click", () => this.setDocked(false));
-    $("fileclose").addEventListener("click", () => { this.floating = false; this.layout(); });
+    $("fileclose").addEventListener("click", () => this.show("term"));
+    $("backterm").addEventListener("click", () => this.show("term"));
     WIDE.addEventListener("change", () => {
       // The open view moves between the main column and its wide place.
       if (WIDE.matches && this.current === "file") this.floating = true;
@@ -138,9 +142,17 @@ export class Views {
     this.show("file");
   }
 
-  /** Files asks to open a file; File asks to reveal one in Files. Nothing else is listened to. */
+  /** Files asks to open a file; View asks to reveal one in Files, or says its last file was
+   *  closed. Nothing else is listened to. */
   onMessage(e) {
     if (e.origin !== location.origin || typeof e.data?.path !== "string") return;
+    if (e.source === $("file").contentWindow && e.data.type === "fb-empty") {
+      document.querySelector('button[data-view="file"]').disabled = true;
+      if (!this.floating && this.current !== "file") return;
+      if (document.activeElement === $("file")) $("file").blur();   // the keys leave the closed View
+      this.show("term");
+      this.onBack();
+    }
     if (e.source === $("files").contentWindow && e.data.type === "fb-open") this.open(e.data.path, e.data.host ?? null);
     if (e.source === $("file").contentWindow && e.data.type === "fb-reveal") {
       this.show("files");

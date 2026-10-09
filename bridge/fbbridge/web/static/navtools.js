@@ -19,7 +19,7 @@ export function canMerge(groups) {
 }
 
 /** Wires the tools; `current()` is the shown pane's {group, item} or null, `onResize()` refits the terminal. */
-export function navTools({ send, store, current, onResize }) {
+export function navTools({ send, store, current, onResize, onRenamed }) {
   // The session list's width, dragged at its border (wide screens), remembered per browser.
   const NAV_MIN = 200, NAV_MAX = 640;
   function setNavWidth(px, save) {
@@ -121,11 +121,13 @@ export function navTools({ send, store, current, onResize }) {
     $("renamename").focus();
     $("renamename").select();
   }
+  // Done or cancelled: the keys go back to the terminal (on a touch screen the keyboard closes).
   function endRename(refocus = false) {
+    $("renamename").blur();
     $("renamebox").hidden = true;
     $("current").hidden = false;
     $("rename").hidden = !current();
-    if (refocus && !$("rename").hidden) $("rename").focus();     // the field's focus is not lost to the page
+    if (refocus) onRenamed();
   }
   $("rename").onclick = (e) => { e.stopPropagation(); startRename(); };   // not the header's own click
   $("renamecancel").onclick = () => endRename(true);

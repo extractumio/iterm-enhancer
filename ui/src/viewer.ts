@@ -18,6 +18,7 @@ export interface ViewerCallbacks {
   layout(hasTabs: boolean): void;  // show or hide the viewer area
   reveal(path: string): void;      // select the file in the tree
   active?(path: string | null): void; // the active tab changed (the viewer window's path bar)
+  emptied?(): void;                // the user closed the last tab
 }
 
 interface Doc {
@@ -138,6 +139,7 @@ export class Viewer {
     if (this.active != null && (at < this.active || this.active >= this.tabs.length)) this.active--;
     if (!this.tabs.length) this.active = null;
     this.tabsChanged();
+    if (!this.tabs.length) this.cb.emptied?.();
     return true;
   }
 

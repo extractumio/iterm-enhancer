@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-import { Input, shellWord } from "./input.js";
-import { findItem, metaLine, profileDot, renderNav, stateIcon } from "./nav.js";
+import { Input } from "./input.js";
+import { findItem, metaLine, profileBar, renderNav, stateIcon } from "./nav.js";
 import { textForm } from "./render.js";
-import { arrowsTo, cellAt, cursorCell, inOneBox } from "./cursor.js";
+import { arrowsTo, cellAt, cursorCell, inOneBox, typedEnd } from "./cursor.js";
 import { navTools } from "./navtools.js";
 import { bindReorder, ordered } from "./reorder.js";
+import { linkMarks } from "./linkmarks.js";
 import { bindLinks } from "./termlinks.js";
 import { copyButton } from "./touchcopy.js";
 import { TermView } from "./term.js";
 import { Views } from "./views.js";
+import { uploads } from "./upload.js";
+import { waitingCards } from "./waiting.js";
 
 const $ = (id) => document.getElementById(id);
 const narrow = matchMedia("(max-width: 860px)");
@@ -26,18 +29,30 @@ const st = {
   appCursor: false, bracketed: store.get("bracketed", true), showInIterm: store.get("showInIterm", true),
 };
 
+// Pasted images, uploaded and dropped files: saved for the shown pane, their paths pasted.
+const files = uploads({ sid: () => st.sid, paste: (text) => input.paste(text), toast, hideToast: () => { $("toast").hidden = true; } });
+
 // A phone keeps fewer lines on the page: each one costs on every touch (AC-52).
 const view = new TermView({ term: $("term"), hist: $("hist"), screen: $("screen"), note: $("note"),
   bottomBtn: $("bottom"), paused: $("paused"), send, keep: touch.matches ? 2000 : Infinity });
 const input = new Input({ kbd: $("kbd"), kbdButton: $("kbdbtn"), term: $("term"), panel: $("hotkeys"), pasteDialog: $("pastebox"),
   send: (data) => { send({ t: "in", data }); if (data.includes("\r")) views.commandSent(); },
-  options: { appCursor: () => st.appCursor, bracketed: () => st.bracketed, onTyped: () => view.typed(), status: toast, pasteImage, pickFile,
+  options: { appCursor: () => st.appCursor, bracketed: () => st.bracketed, onTyped: () => view.typed(), status: toast, pasteImage: files.pasteImage, pickFile,
     tapLink: (x, y) => tapLink(x, y), tapMove: (x, y) => tapMove(x, y) } });
 copyButton($("copyfab"), $("term"), (text) => input.copySelection(text));
 
-const views = new Views({ send, store, onShow: () => view.keepBottom(applyFit) });
+// Addresses and paths get a dotted underline (linkmarks.js).
+const marks = linkMarks($("term"), [$("hist"), $("screen")]);
+const views = new Views({ send, store, onShow: () => { view.keepBottom(applyFit); marks(); }, onBack: () => focusTerminal() });
 // Addresses open in a new tab here, paths in File (on the pane's host).
-const tapLink = bindLinks($("term"), { paneInfo: () => views.paneInfo(), openFile: (p, host) => views.open(p, host), toast });
+const openAt = bindLinks($("term"), { paneInfo: () => views.paneInfo(), openFile: (p, host) => views.open(p, host), toast });
+// Where a tap moves the cursor (a shell or a coding agent), on the cursor's row it does so, also
+// over a path typed there; elsewhere a tap there opens a link.
+function tapLink(x, y) {
+  const it = st.sid && findItem(st.groups, st.sid)?.item;
+  const cur = (it?.agent || it?.shell) && cursorCell($("screen")), at = cur && cellAt($("screen"), x, y);
+  return !(at && cur.row === at.row) && openAt(x, y);
+}
 
 // A tap (or ⌥-click) on the input moves the cursor there with arrow keys; across rows only in
 // a coding agent's pane, where ↑ and ↓ move in the input instead of recalling shell history.
@@ -48,6 +63,8 @@ function tapMove(x, y) {
   const found = st.sid && findItem(st.groups, st.sid);
   if (!found?.item.agent && !found?.item.shell) return;
   const from = cursorCell($("screen")), to = cellAt($("screen"), x, y);
+  // right of the cursor only as far as the typed text: → over a suggestion would take it
+  if (from && to && to.row === from.row && to.col > from.col) to.col = Math.max(from.col, Math.min(to.col, typedEnd(view.screen[to.row]?.data)));
   const vertical = !!found.item.agent && !!from && !!to && inOneBox($("screen"), from.row, to.row);
   const seq = arrowsTo(from, to, { vertical, appCursor: st.appCursor });
   if (seq) send({ t: "in", data: seq });
@@ -58,12 +75,12 @@ $("term").addEventListener("click", (e) => { if (e.altKey && !String(getSelectio
 // On a touch screen the invisible keyboard field lies over the cursor's row, so a long press
 // there gets iOS's own Paste (text, or an image); elsewhere it is out of the way.
 function placeKbd() {
-  const k = $("kbd"), cur = touch.matches && $("screen").querySelector(".cur");
+  const k = $("kbd"), cur = touch.matches ? $("screen").querySelector(".cur") : null;
   const t = $("term").getBoundingClientRect(), r = cur?.getBoundingClientRect();
   if (!r || r.bottom < t.top || r.top > t.bottom) { k.style.cssText = ""; return; }
   k.style.cssText = `left:${t.left}px;top:${r.top}px;width:${t.width}px;height:${r.height}px`;   // the cursor's row only
 }
-view.onDrawn = placeKbd;
+view.onDrawn = () => { placeKbd(); marks(); };
 let kbdFrame = 0;
 $("term").addEventListener("scroll", () => { if (!kbdFrame) kbdFrame = requestAnimationFrame(() => { kbdFrame = 0; placeKbd(); }); }, { passive: true });
 
@@ -73,28 +90,9 @@ function toast(text, ms = 1800) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { $("toast").hidden = true; }, ms);
 }
 
-// A pasted image is saved where the shown pane's shell runs (this Mac or its host), and its
-// path is pasted as text: programs such as Claude Code take an image by its path.
-// "Upload" on the hot keys does the same for a file of any kind, keeping its name.
-function pasteImage(blob) { return sendFile(blob, "image", "/paste?sid="); }      // declared: Input takes it before this line runs
-function uploadFile(file) { return sendFile(file, "file", `/upload?name=${encodeURIComponent(file.name)}&sid=`); }
 function pickFile() { $("upload").value = ""; $("upload").click(); }
-$("upload").addEventListener("change", () => { const f = $("upload").files[0]; if (f) uploadFile(f); });
-
-async function sendFile(blob, what, url) {
-  const sid = st.sid;
-  if (!sid) return toast("Open a session first.");
-  toast(`Uploading the ${what}…`, 60000);
-  const r = await fetch(url + encodeURIComponent(sid), { method: "POST", headers: { "Content-Type": blob.type || "application/octet-stream" }, body: blob })
-    .catch(() => null);
-  const text = r ? await r.text().catch(() => "") : "";
-  let m = {};
-  try { m = JSON.parse(text); } catch { m = { error: text.trim() || undefined }; }   // the server's own refusals are plain text
-  if (!r?.ok || !m.path) return toast(m.error ?? (r ? `The ${what} was not uploaded (${r.status}).` : "The Mac does not answer."), 6000);
-  if (st.sid !== sid) return toast(`The ${what} was saved, but another session is shown now: nothing was pasted.`, 6000);
-  $("toast").hidden = true;
-  input.paste(shellWord(m.path));
-}
+$("upload").addEventListener("change", () => { const f = $("upload").files[0]; if (f) files.uploadFile(f); });
+files.bindDrop($("term"));
 
 // ---------- connection and sign-in ----------
 // The sign-in is an HttpOnly cookie: this script never holds it. The WebSocket and the Files
@@ -136,12 +134,13 @@ $("login").addEventListener("submit", async (e) => {
 });
 
 const tools = navTools({ send, store, current: () => (st.sid && findItem(st.groups, st.sid)) || null,
-  onResize: () => view.keepBottom(applyFit) });
+  onResize: () => view.keepBottom(applyFit), onRenamed: () => (computer.matches ? focusTerminal() : document.activeElement?.blur()) });
 
 function signedIn() {
   $("login").hidden = true; $("app").hidden = false;
   send({ t: "prefs", showInIterm: st.showInIterm });
   if (st.sid) select(st.sid, true);
+  focusTerminal();                                 // a computer types into the chat at once; a phone opens no keyboard
 }
 
 // ---------- updates ----------
@@ -179,7 +178,7 @@ function focusTerminal() {
 addEventListener("blur", () => { termHadKeys = document.activeElement === $("kbd"); });   // leaving: who had the keys
 addEventListener("focus", () => { if (termHadKeys) focusTerminal(); });
 document.addEventListener("visibilitychange", () => { if (!document.hidden && termHadKeys) focusTerminal(); });
-document.querySelector('button[data-view="term"]').addEventListener("click", () => focusTerminal());
+for (const b of [document.querySelector('button[data-view="term"]'), $("backterm"), $("fileclose")]) b.addEventListener("click", () => focusTerminal());
 
 // A page Safari brings back from memory connects again, and so learns the current build.
 addEventListener("pageshow", (e) => { if (e.persisted && st.ws?.readyState !== WebSocket.OPEN) connect(); });
@@ -190,7 +189,7 @@ document.addEventListener("visibilitychange", () => send({ t: document.hidden ? 
 function onMessage(m) {
   if (m.sid && m.sid !== st.sid) return;            // a frame from the session we just left
   switch (m.t) {
-    case "layout": st.groups = m.groups; drawNav(); tools.showMerge(m.groups); break;
+    case "layout": st.groups = m.groups; reminders.layout(m.groups); drawNav(); tools.showMerge(m.groups); break;
     case "theme": applyTheme(m.theme); break;
     case "hist": view.onHist(m); break;
     case "screen": view.onScreen(m); break;
@@ -201,7 +200,7 @@ function onMessage(m) {
     case "drops": tools.showDrops(m.items); break;
     case "profiles": tools.showProfiles(m.items); break;
     case "build": checkBuild(m.id); break;
-    case "created": select(m.id); closeDrawer(); if (m.note) toast(m.note, 6000); break;
+    case "created": pick(m.id); if (m.note) toast(m.note, 6000); break;
   }
 }
 
@@ -213,9 +212,12 @@ const reorder = bindReorder($("sessions"), (kind, parent, ids) => {
   else send({ t: "reorder", group: parent.dataset.wid, ids });
 }, () => drawNav());                                // a layout may have come while dragging
 
+function pick(id) { select(id); closeDrawer(); focusTerminal(); }
+const reminders = waitingCards($("asks"), pick);
 function drawNav() {
+  reminders.show(st.sid);
   if (reorder.dragging()) return;                  // the next layout redraws it
-  renderNav($("sessions"), ordered(st.groups, store.get("groupOrder", [])), st.sid, $("filter").value, (id) => { select(id); closeDrawer(); focusTerminal(); }, st.collapsed, toggleGroup,
+  renderNav($("sessions"), ordered(st.groups, store.get("groupOrder", [])), st.sid, $("filter").value, pick, st.collapsed, toggleGroup,
     (wid) => send({ t: "new", group: wid }));
   const found = st.sid && findItem(st.groups, st.sid);
   if (!found) {
@@ -234,18 +236,19 @@ function toggleGroup(key) {
   drawNav();
 }
 
-// The header: the agent's state, the title and the pencil; then one line that only shortens at
-// its end (the folder): the profile's dot, profile, where the tab is, host, program, folder.
+// The header: the profile's bar beside two lines: the agent's state, the title and the pencil;
+// then one line that only shortens at its end: profile, where the tab is, host, program, folder.
 function showCurrent(found) {
   $("current").querySelector(".t").textContent = found ? textForm(found.item.title) : "Choose a session";
   $("curstate").replaceChildren(...[found && stateIcon(found.item.state)].filter(Boolean));
-  if (!found) $("cursub").replaceChildren();
+  if (!found) { $("cursub").replaceChildren(); $("curbar").replaceChildren(); }
   else {
     const { group: g, item: it } = found;
     const where = (g.session ? `${g.label} ${g.session}` : g.label) + (it.index ? `, tab ${it.index}` : "");
     const line = metaLine([it.profile || "", where, ...(it.host ? [it.host] : []), ...it.sub].filter(Boolean), false);
     if (it.host) [...line.children].find((c) => c.textContent === it.host)?.classList.add("host");
-    $("cursub").replaceChildren(profileDot(it.profile, false, it.state === "working"), ...line.childNodes);
+    $("cursub").replaceChildren(...line.childNodes);
+    $("curbar").replaceChildren(profileBar(it.profile, true, it.state === "working"));
   }
   document.title = found ? `${found.item.title} – iTerm2 Web` : "iTerm2 Web";
   if (!tools.renaming()) $("rename").hidden = !found;

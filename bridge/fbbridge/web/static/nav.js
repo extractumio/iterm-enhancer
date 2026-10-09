@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Session navigator: iTerm2 windows (or tmux sessions) as groups, their tabs and panes as rows.
-// A row: the profile's dot (ringed when the session is focused in iTerm2), the tab number and
-// title, then host · program · folder, and a coding agent's state in a column of its own.
+// A row: the profile's bar (full for the session shown, pulsing while its agent works), the tab
+// number and title, then host · program · folder · titles, and a coding agent's state in a
+// column of its own.
 import { icon, profileColor } from "./icons.js";
 import { textForm } from "./render.js";
 
@@ -24,23 +25,33 @@ export function stateIcon(state, size = 16) {
   return wrap;
 }
 
-/** The profile's dot; ringed when the session is the one focused in iTerm2, pulsing while a
- *  coding agent in it works. */
-export function profileDot(profile, focused = false, busy = false) {
-  const d = el("span", "pdot" + (focused ? " focus" : "") + (busy ? " busy" : ""));
+/** The profile's dot, in the profile menu. */
+export function profileDot(profile) {
+  const d = el("span", "pdot");
   d.style.setProperty("--dot", profileColor(profile));
-  d.title = (profile ? `Profile ${profile}` : "Profile unknown") + (focused ? ", focused in iTerm2" : "");
+  d.title = profile ? `Profile ${profile}` : "Profile unknown";
+  return d;
+}
+
+/** The profile's bar beside a session's two lines: at full strength for the session the page
+ *  shows, half otherwise, pulsing while a coding agent in it works. (A dot read as "unread".) */
+export function profileBar(profile, shown = false, busy = false) {
+  const d = el("span", "pbar" + (shown ? " on" : "") + (busy ? " busy" : ""));
+  d.style.setProperty("--dot", profileColor(profile));
+  d.title = (profile ? `Profile ${profile}` : "Profile unknown") + (busy ? ", working" : "");
   return d;
 }
 
 const AGENT_WORDS = { claude: "ag-claude", codex: "ag-codex" };   // the program's own name, in its color
 
-/** "a · b · c" as spans; the last part (a folder) is the one that shortens. */
+/** "a · b · c" as spans: the last part (a title, else the folder) shortens first, a program's
+ *  name (a word right after the host) never. */
 export function metaLine(parts, hostFirst) {
   const s = el("span", "s");
+  const prog = hostFirst ? 1 : 0;
   parts.forEach((p, i) => {
     if (i) s.append(el("span", "sep", "·"));
-    const cls = i === 0 && hostFirst ? "host" : i === parts.length - 1 ? "last" : "";
+    const cls = i === 0 && hostFirst ? "host" : i === parts.length - 1 ? "last" : i === prog && /^[\w.+-]+$/.test(p) ? "prog" : "";
     s.append(el("span", [cls, AGENT_WORDS[p]].filter(Boolean).join(" "), p));
   });
   return s;
@@ -89,7 +100,7 @@ function row(item, current, onPick, movable) {
   const st = el("span", "st");
   const mark = stateIcon(item.state);
   if (mark) st.append(mark);
-  b.append(profileDot(item.profile, item.focused, item.state === "working"), txt, st);
+  b.append(profileBar(item.profile, item.id === current, item.state === "working"), txt, st);
   b.addEventListener("click", () => onPick(item.id));
   li.append(b);
   return li;

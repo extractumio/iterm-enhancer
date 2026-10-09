@@ -1,7 +1,7 @@
 // The web app's links in terminal text (AC-52): which address or path a click is on.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { absolutePath, tokenAt } from "../../bridge/fbbridge/web/static/links.js";
+import { absolutePath, tokenAt, tokens } from "../../bridge/fbbridge/web/static/links.js";
 
 const at = (text, word) => tokenAt(text, text.indexOf(word) + 1);
 
@@ -35,4 +35,12 @@ test("a printed path as an absolute one, from the pane's folder and home", () =>
   assert.equal(absolutePath("/etc/../etc/hosts", null, null), "/etc/hosts");
   assert.equal(absolutePath("~/notes.md", "/x", null), null);
   assert.equal(absolutePath("a.md", null, "/h"), null);
+});
+
+test("every address and path of a text, where each is named: what is underlined is what opens", () => {
+  const text = "Edit src/db/pool.rs:42, then see https://devbox.example/a. Or ~/notes.md and/or 1.2.3";
+  const found = tokens(text);
+  assert.deepEqual(found.map((t) => text.slice(t.start, t.end)), ["src/db/pool.rs:42", "https://devbox.example/a", "~/notes.md"]);
+  for (const t of found) assert.deepEqual(tokenAt(text, t.start), { kind: t.kind, value: t.value, ...(t.line ? { line: t.line } : {}) });
+  assert.equal(tokenAt(text, text.indexOf("and/or")), null);
 });

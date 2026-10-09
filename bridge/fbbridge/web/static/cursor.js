@@ -56,6 +56,23 @@ export function inOneBox(screen, a, b) {
   return above >= 0 && below < rows.length && below - above <= 12;
 }
 
+const FAINT = 2, CURSOR = 256;
+
+/** The column after the last character the user typed on a row ({r: runs} as render.js gets
+ *  it): faint text is a program's suggestion (Claude Code shows its next prompt so, and → takes
+ *  it), and the cursor's own cell is where the next character goes, so neither counts. */
+export function typedEnd(data) {
+  let col = 0, end = 0;
+  for (const [text, , , flags] of data?.r ?? []) {
+    const cells = Array.isArray(text) ? text : [...text];
+    for (const c of cells) {
+      col++;
+      if (c !== "" && c.trim() && !(flags & (FAINT | CURSOR))) end = col;
+    }
+  }
+  return end;
+}
+
 /** The arrow keys from one cell to another: "" when the move is not one to make. Rows only
  *  when `vertical` (a coding agent's input; in a shell ↑ and ↓ recall history), at most 10. */
 export function arrowsTo(from, to, { vertical = false, appCursor = false } = {}) {

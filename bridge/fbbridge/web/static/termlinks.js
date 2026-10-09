@@ -73,16 +73,22 @@ export async function openLink(tok, { paneInfo, openFile, toast }) {
   openFile(path, pane.host ?? null);
 }
 
+// With a mouse a link opens with ⌘ (Ctrl elsewhere; on a Mac Ctrl+click is the context menu):
+// a plain click is for the terminal (the keyboard, selecting).
+const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
+const held = (e) => (MAC ? e.metaKey : e.ctrlKey);
+
 /** Pointer feedback and clicks for a terminal element; `tap(x, y)` is for touch screens. */
 export function bindLinks(term, actions) {
   let frame = 0;
   term.addEventListener("mousemove", (e) => {
     if (frame) return;
-    frame = requestAnimationFrame(() => { frame = 0; term.classList.toggle("onlink", !!linkAt(e.clientX, e.clientY)); });
+    frame = requestAnimationFrame(() => { frame = 0; term.classList.toggle("onlink", held(e) && !!linkAt(e.clientX, e.clientY)); });
   });
   term.addEventListener("mouseleave", () => term.classList.remove("onlink"));
+  addEventListener("keyup", (e) => { if (!held(e)) term.classList.remove("onlink"); });
   term.addEventListener("click", (e) => {
-    if (e.button !== 0 || String(getSelection())) return;   // a click that ends a selection opens nothing
+    if (e.button !== 0 || !held(e) || String(getSelection())) return;   // a click that ends a selection opens nothing
     const tok = linkAt(e.clientX, e.clientY);
     if (tok) { e.preventDefault(); void openLink(tok, actions); }
   });

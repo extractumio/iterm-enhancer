@@ -49,6 +49,7 @@
         <svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:18px"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
       </button>
       <div id="current" title="Show all sessions">
+        <span id="curbar"></span>
         <span class="lines">
           <span class="tline"><span id="curstate"></span><span class="t">Choose a session</span>
             <button id="rename" type="button" title="Name this session" aria-label="Name this session" hidden><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:14px"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg></button></span>
@@ -72,13 +73,14 @@
         <div id="views" class="seg" role="tablist" aria-label="View">
           <button data-view="term" role="tab" type="button" aria-selected="true" title="Terminal"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:14px"><path d="M12 19h8"/><path d="m4 17 6-6-6-6"/></svg><span>Terminal</span></button>
           <button data-view="files" role="tab" type="button" aria-selected="false" title="Files"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:14px"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg><span>Files</span></button>
-          <button data-view="file" role="tab" type="button" aria-selected="false" title="File (open one from Files)" disabled><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:14px"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/></svg><span>File</span></button>
+          <button data-view="file" role="tab" type="button" aria-selected="false" title="View (open a file from Files)" disabled><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:14px"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/></svg><span>View</span></button>
         </div>
         <button id="menubtn" class="icon" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="menu" title="Settings"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:18px"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></button>
       </div>
     </header>
     <div id="status" role="status" hidden></div>
     <div id="drops" role="alert" hidden></div>
+    <div id="asks" aria-live="polite" hidden></div>
     <!-- No whitespace inside: the terminal uses white-space: pre. -->
     <main id="term" class="wrap view"><p id="note" hidden>Older lines are not loaded. The browser keeps the most recent part of long histories to stay fast.</p><div id="hist"></div><div id="screen"></div></main>
     <!-- At 1400px and wider Files is docked on the right and File floats over the terminal. -->
@@ -87,10 +89,11 @@
     </div>
     <iframe id="files" class="view" title="Files" hidden></iframe>
     <div id="filewin" class="view" hidden>
-      <div class="winhead"><span>File</span>
+      <div class="winhead"><span>View</span>
         <button id="fileclose" class="icon" type="button" aria-label="Close the file window"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
       </div>
-      <iframe id="file" title="File"></iframe>
+      <iframe id="file" title="View"></iframe>
+      <button id="backterm" type="button" title="Back to the terminal"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="m15 18-6-6 6-6"/></svg><span>Terminal</span></button>
     </div>
     <p id="viewnote" class="view" hidden></p>
     <p id="toast" role="status" hidden></p>

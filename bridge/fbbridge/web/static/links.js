@@ -13,25 +13,40 @@ const EXTENSIONS = new Set(`
 const NAMED = new Set(["Makefile", "Dockerfile", "Gemfile", "Rakefile", "Procfile", "LICENSE", "README", "CHANGELOG", "Justfile"]);
 
 const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+/g;
-const PATH_CHARS = /[\w.~/@+\-%=,:]/;        // what a printed path is made of (no spaces, quotes or brackets)
+const PATH_RUN = /[\w.~/@+\-%=,:]+/g;      // what a printed path is made of (no spaces, quotes or brackets)
 const TRAIL = /[.,;:!?)\]}>'"`]+$/;           // sentence punctuation after an address or a path
+
+/** Every web address and file path in `text`, in order: {kind: "url"|"path", value, line?,
+ *  start, end}, where start..end is the text that names it (a path with its line number). The
+ *  page underlines these and opens the one clicked, so the two never disagree. */
+export function tokens(text) {
+  const found = [];
+  for (const m of text.matchAll(URL_RE)) {
+    const value = m[0].replace(TRAIL, "");
+    found.push({ kind: "url", value, start: m.index, end: m.index + value.length });
+  }
+  const urls = [...found];
+  for (const m of text.matchAll(PATH_RUN)) {
+    const a = m.index, b = a + m[0].length;
+    if (urls.some((u) => a < u.end && b > u.start)) continue;
+    const trimmed = m[0].replace(TRAIL, "");
+    let word = trimmed.replace(/^[:=,]+/, "");
+    const start = a + trimmed.length - word.length, end = start + word.length;
+    let line = null;
+    const at = word.match(/^(.*?):(\d+)(?::\d+)?$/);           // path:line or path:line:col
+    if (at) { word = at[1]; line = Number(at[2]); }
+    if (!looksLikePath(word)) continue;
+    found.push(line ? { kind: "path", value: word, line, start, end } : { kind: "path", value: word, start, end });
+  }
+  return found.sort((x, y) => x.start - y.start);
+}
 
 /** The web address or file path at `offset` of `text`, or null: {kind: "url"|"path", value, line?}. */
 export function tokenAt(text, offset) {
-  for (const m of text.matchAll(URL_RE)) {
-    const value = m[0].replace(TRAIL, "");
-    if (offset >= m.index && offset < m.index + value.length) return { kind: "url", value };
-  }
-  if (offset < 0 || offset >= text.length || !PATH_CHARS.test(text[offset])) return null;
-  let a = offset, b = offset;
-  while (a > 0 && PATH_CHARS.test(text[a - 1])) a--;
-  while (b < text.length && PATH_CHARS.test(text[b])) b++;
-  let word = text.slice(a, b).replace(TRAIL, "").replace(/^[:=,]+/, "");
-  let line = null;
-  const at = word.match(/^(.*?):(\d+)(?::\d+)?$/);           // path:line or path:line:col
-  if (at) { word = at[1]; line = Number(at[2]); }
-  if (!looksLikePath(word)) return null;
-  return line ? { kind: "path", value: word, line } : { kind: "path", value: word };
+  const t = tokens(text).find((k) => offset >= k.start && offset < k.end);
+  if (!t) return null;
+  const { start, end, ...tok } = t;
+  return tok;
 }
 
 // A path is anchored (/, ~/, ./, ../) or ends in a known name or extension; a slash alone is

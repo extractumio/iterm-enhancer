@@ -168,8 +168,10 @@ and sign in:
 
 - **Sessions**: every window, tab and pane by title and host (blue laptop: this Mac; violet
   server: a remote host). **+** on a window opens a new tab right after the selected
-  session, with its profile and in its folder; on a tmux group, a new tmux window there. Each row has a dot in its profile's color; Claude
-  Code and Codex sessions show their state (working, needs you, failed, done). **Merge
+  session, with its profile and in its folder; on a tmux group, a new tmux window there. Each row has a bar in its profile's color
+  (full for the shown session, breathing while its agent works), then program · folder · title; Claude
+  Code and Codex sessions show their state (working, needs you, failed, done), and a session that
+  needs you while another is shown gets a reminder over the terminal, which opens it. **Merge
   windows** under the list moves every tab into one iTerm2 window, and each tmux session's tabs
   into one window of their own, without bringing iTerm2 to the front; iTerm2 cannot undo it
   (drag a tab out of its tab bar to split it again), and a window that closes takes its Files
@@ -181,14 +183,16 @@ and sign in:
   width, **Resize iTerm to this screen** (⋯) changes the Mac's window until you restore it.
 - **Names**: the pencil beside the title names the session: its iTerm2 tab and session, and in
   tmux its window and pane title. Clear the name to give it back to iTerm2 and tmux.
-- **Links**: click or tap a web address to open it in a new tab, or a file path or name the
-  terminal printed (`src/main.rs:42`, `~/notes.md`, `README.md`) to open it in File.
+- **Links**: web addresses and file paths or names the terminal printed (`src/main.rs:42`,
+  `~/notes.md`, `README.md`) have a dotted underline; ⌘-click (Ctrl-click off a Mac) or tap one
+  to open an address in a new tab, a file in View.
+- **Drop files** on the page to upload them, as the Upload hot key does: their paths are pasted.
 - **Images**: paste one (PNG, JPEG, GIF, WebP, up to 20 MB) and it is saved where the pane's
   shell runs, in `$TMPDIR/iterm-enhancer-paste/` on this Mac or `~/.cache/iterm-enhancer/paste/`
   on a host with the helper; its path is pasted, which Claude Code takes as an image. Files go
   after 7 days.
-- **Files** and **File**: this panel for the pane's folder (remote hosts too) and its editor
-  (at 1400 px and wider, Files docked on the right and File a window over the terminal);
+- **Files** and **View**: this panel for the pane's folder (remote hosts too) and its editor
+  (at 1400 px and wider, Files docked on the right and View a window over the terminal);
   web links open in your browser; Finder, apps and typing into a terminal are not offered.
 
 It is plain HTTP: on a network you do not trust, use HTTPS through Tailscale —

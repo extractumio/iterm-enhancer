@@ -13,6 +13,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { manyPanels } from "./e2e_sockets.mjs";
+import { webApp } from "./e2e_web_app.mjs";
 import { webTerm } from "./e2e_web_term.mjs";
 import { webMerge } from "./e2e_web_merge.mjs";
 import { sessionTools } from "./e2e_session_tools.mjs";
@@ -456,6 +457,7 @@ try {
 
   await manyPanels(browser, row);
   await webTerm(browser);
+  await webApp(browser);
   await webMerge(browser);
 
   // AC-28 an outdated link says so and stops retrying

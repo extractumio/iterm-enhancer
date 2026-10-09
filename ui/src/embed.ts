@@ -25,6 +25,12 @@ export const THEMED_BY_PAGE = !!around;
 // are hidden in the web app; the proxy refuses what they would ask anyway.
 if (PROXIED) document.documentElement.classList.add("web-app");
 
+// Files dropped here are not taken (the page uploads files dropped on its terminal), but the
+// browser must not open them either: it would leave the page, and unsaved edits with it.
+if (around) for (const type of ["dragover", "drop"]) {
+  addEventListener(type, (e) => { if ((e as DragEvent).dataTransfer?.types.includes("Files")) e.preventDefault(); });
+}
+
 function tell(message: { type: string; path: string; host?: string | null }): boolean {
   if (!around) return false;
   around.postMessage(message, location.origin);
@@ -35,6 +41,8 @@ function tell(message: { type: string; path: string; host?: string | null }): bo
 export const openOutside = (path: string, host: string | null) => tell({ type: "fb-open", path, host });
 /** "Reveal in tree" in the File view shows the file in the page's Files view. */
 export const revealOutside = (path: string) => tell({ type: "fb-reveal", path });
+/** The last file of the File view was closed: the page goes back to the terminal. */
+export const emptiedOutside = () => tell({ type: "fb-empty", path: "" });
 
 /** Take what the page around sends (files to open or reveal, its theme), and nothing from anywhere else. */
 export function acceptFromPage(handlers: { open: (path: string) => void; reveal: (path: string) => void; theme: (t: Theme) => void }) {

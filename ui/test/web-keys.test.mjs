@@ -58,3 +58,16 @@ test("a tap never moves the cursor far: at most 120 columns", async () => {
   assert.equal(arrowsTo({ row: 1, col: 0 }, { row: 1, col: 121 }), "");
   assert.equal(arrowsTo({ row: 1, col: 0 }, { row: 1, col: 120 }).length, 120 * 3);
 });
+
+test("a tap right of the cursor stops where the typed text ends: a faint suggestion is not typed", async () => {
+  const { typedEnd } = await import("../../bridge/fbbridge/web/static/cursor.js");
+  // "❯ fix it" typed, the cursor after it, then Claude Code's faint suggestion
+  assert.equal(typedEnd({ r: [["❯ fix it", null, null, 0], [" ", null, null, 256], ["run the tests", 8, null, 2]] }), 8);
+  // nothing typed: the cursor sits on the suggestion's first letter
+  assert.equal(typedEnd({ r: [["❯ ", null, null, 0], ["r", null, null, 256 | 2], ["un the tests", null, null, 2]] }), 1);
+  // the cursor moved back into the text: what follows it was typed
+  assert.equal(typedEnd({ r: [["❯ fix ", null, null, 0], ["i", null, null, 256], ["t now", null, null, 0]] }), 12);
+  // a wide character takes two columns, its right half an empty cell
+  assert.equal(typedEnd({ r: [[["❯", " ", "日", "", "x"], null, null, 0]] }), 5);
+  assert.equal(typedEnd(undefined), 0);
+});

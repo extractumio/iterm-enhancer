@@ -60,7 +60,8 @@ class TmuxPaneTest(unittest.TestCase):
 
             async def async_send_command(self, cmd):
                 assert cmd.startswith("list-panes -a")
-                return "%97 claude\n%99 mc\n"
+                assert "#{automatic-rename}" in cmd
+                return "%97 0 claude Demo stand preparation and fixes\n%99 1 mc mc\n%5  zsh zsh\n"
 
         async def conns(connection):
             return [Tc()]
@@ -80,10 +81,45 @@ class TmuxPaneTest(unittest.TestCase):
         tv = {"titleOverride": "", "tmuxWindowName": "Demo stand preparation and fixes", "tmuxWindowTitle": "main:5"}
         with mock.patch.object(layout.iterm2, "async_get_tmux_connections", conns, create=True):
             progs = asyncio.run(layout.tmux_programs(types.SimpleNamespace(connection=None)))
-            item = asyncio.run(layout.session_item(Session(), tab, tv, None, 1, 1, 1, progs))
-        self.assertEqual(progs, {("c1", "%97"): "claude", ("c1", "%99"): "mc"})
+            item = asyncio.run(layout.session_item(Session(), tab, tv, 1, 1, 1, progs))
+        self.assertEqual(progs, {("c1", "%97"): ("claude", False, "Demo stand preparation and fixes"), ("c1", "%99"): ("mc", True, "mc"),
+                                 ("c1", "%5"): ("zsh", None, "zsh")}, "an older tmux leaves the flag empty")
         self.assertEqual((item["agent"], item["state"]), ("claude", "done"))
         self.assertIn("claude", item["sub"])
+
+    def test_the_line_below_names_program_folder_then_titles(self):
+        import asyncio
+        from fbbridge.web import layout
+
+        def session(**v):
+            class S:
+                session_id = "s1"
+
+                async def async_get_variable(self, name):
+                    return v.get(name, "")
+
+                async def async_get_screen_contents(self):
+                    return types.SimpleNamespace(number_of_lines=0, line=lambda i: None)
+            return S()
+        plain = types.SimpleNamespace(tmux_window_id=None)
+        tv = {"titleOverride": "web app", "tmuxWindowName": "", "tmuxWindowTitle": ""}
+        item = asyncio.run(layout.session_item(session(terminalWindowName="\u2733 Fix the list", jobName="claude", path="/Users/alex/p"),
+                                               plain, tv, 1, 1, 1))
+        self.assertEqual(item["sub"], ["claude", "~/p", "Fix the list"])
+        # a tmux pane whose title is still "ssh" from before, now running claude: no "ssh"
+        tmux = types.SimpleNamespace(tmux_window_id="5", tmux_connection_id="c1")
+        tv = {"titleOverride": "", "tmuxWindowName": "Build the databases", "tmuxWindowTitle": "main:5"}
+        item = asyncio.run(layout.session_item(session(name="ssh", jobName="ssh", path="/home/alex/p", tmuxWindowPane="101"),
+                                               tmux, tv, 1, 1, 1, {("c1", "%101"): ("claude", False, "Build the databases")}))
+        self.assertEqual(item["sub"], ["claude", "~/p"])
+        # a one-word name the user gave stays the title; tmux's own name (the program) is not repeated
+        tv = {"titleOverride": "", "tmuxWindowName": "ssh", "tmuxWindowTitle": "main:5"}
+        named = asyncio.run(layout.session_item(session(name="Fix the list", path="/home/alex/p", tmuxWindowPane="101"),
+                                                tmux, tv, 1, 1, 1, {("c1", "%101"): ("claude", False, "api")}))
+        self.assertEqual((named["title"], named["sub"]), ("api", ["claude", "~/p", "Fix the list"]), "the live name, not iTerm2's old one")
+        auto = asyncio.run(layout.session_item(session(name="Fix the list", path="/home/alex/p", tmuxWindowPane="101"),
+                                               tmux, tv, 1, 1, 1, {("c1", "%101"): ("claude", True, "claude")}))
+        self.assertEqual((auto["title"], auto["sub"]), ("Fix the list", ["claude", "~/p"]))
 
 
 if __name__ == "__main__":
