@@ -167,8 +167,8 @@ Open one of the addresses (default port 8765, every network of this Mac; `--port
 and sign in:
 
 - **Sessions**: every window, tab and pane by title and host (blue laptop: this Mac; violet
-  server: a remote host). **+** on a window opens a new tab with that window's current
-  profile; on a tmux group, a new tmux tab. Each row has a dot in its profile's color; Claude
+  server: a remote host). **+** on a window opens a new tab right after the selected
+  session, with its profile and in its folder; on a tmux group, a new tmux window there. Each row has a dot in its profile's color; Claude
   Code and Codex sessions show their state (working, needs you, failed, done). **Merge
   windows** under the list moves every tab into one iTerm2 window, and each tmux session's tabs
   into one window of their own, without bringing iTerm2 to the front; iTerm2 cannot undo it

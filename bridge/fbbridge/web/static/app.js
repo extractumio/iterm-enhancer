@@ -201,7 +201,7 @@ function onMessage(m) {
     case "drops": tools.showDrops(m.items); break;
     case "profiles": tools.showProfiles(m.items); break;
     case "build": checkBuild(m.id); break;
-    case "created": select(m.id); closeDrawer(); break;
+    case "created": select(m.id); closeDrawer(); if (m.note) toast(m.note, 6000); break;
   }
 }
 

@@ -378,20 +378,22 @@ class Client:
                 self.stream_task = asyncio.create_task(self.guard(self.stream(self.session)))
 
     async def create(self, window_id, profile=None):
-        """[+]: a new session in that group, or "New window" with `profile`; the list has it
-        before the page is told to show it."""
+        """[+]: a new session in that group after the shown pane, or "New window" with
+        `profile`; the list has it before the page is told to show it."""
         now = asyncio.get_running_loop().time()
         if now - self.last_new < NEW_EVERY:
             return await self.send({"t": "error", "msg": "One new session a second: press + again."})
         self.last_new = now
         try:
-            sid = await (new_session(self.conn, self.app, window_id) if window_id is not None
-                         else new_window(self.conn, self.app, profile))
+            if window_id is None:
+                sid, note = await new_window(self.conn, self.app, profile), None
+            else:
+                sid, note = await new_session(self.conn, self.app, window_id, self.session.session_id if self.session else None)
         except NewSessionError as e:
             return await self.send({"t": "error", "msg": str(e)})
         await self.hub.refresh()
         await self.send({"t": "layout", "groups": self.hub.layout})    # in order: the list has it, then show it
-        await self.send({"t": "created", "id": sid})
+        await self.send({"t": "created", "id": sid, "note": note})
 
     async def type_into(self, session, data):
         """Text as it is; special keys for a tmux pane by tmux's names, which tmux encodes for
