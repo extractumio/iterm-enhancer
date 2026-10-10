@@ -114,8 +114,24 @@ export class TermView {
     });
   }
 
-  make(data, n) { const r = lineRec(data, this.theme, this.pal); r.n = n; return r; }
+  // a line the bridge folded comes as null (AC-56): an empty row until the user shows it
+  make(data, n) { const r = lineRec(data ?? { r: [], e: true, gone: true }, this.theme, this.pal); r.n = n; r.gone = !!r.data.gone; return r; }
   swap(old, data, n) { const r = this.make(data, n); old.el.replaceWith(r.el); return r; }
+
+  /** Folded lines the bridge sent when asked (AC-56): they take the place of their empty rows. */
+  refill(first, lines) {
+    if (!this.hist.length) return;
+    const base = this.hist[0].n;
+    this.keepBottom(() => {
+      lines.forEach((data, k) => {
+        const i = first + k - base;
+        if (i >= 0 && i < this.hist.length && this.hist[i].gone) this.hist[i] = this.swap(this.hist[i], data, first + k);
+      });
+      const a = Math.max(0, first - base - 1), b = Math.min(this.hist.length, first - base + lines.length + 1);
+      for (let i = a; i < b; i++) this.link(i);
+      this.onRows?.(false);
+    });
+  }
 
   // Neighbors across the history/screen boundary, for re-joining.
   at(i) { return i < this.hist.length ? this.hist[i] : this.screen[i - this.hist.length]; }

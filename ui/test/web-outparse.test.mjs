@@ -122,13 +122,3 @@ test("Starship's prompt: a colored line, then a clock and ❯; the next one a mi
   const got = regions(lines, lines.length).map(({ kind, from, to }) => ({ kind, from, to }));
   assert.deepEqual(got, [{ kind: "markdown", from: 3, to: 6 }, { kind: "mermaid", from: 10, to: 11 }, { kind: "markdown", from: 16, to: 21 }]);
 });
-
-test("blobs: rows of base64 or hex, at least three in a row; the rows around them stay", async () => {
-  const { blobRuns, isBlobRow } = await import("../../bridge/fbbridge/web/static/outparse.js");
-  const b64 = "iVBORw0KGgoAAAANSUhEUgAAALgAAABQCAQAAAAALXejAAAAAmJLR0QA/4ePzL8AAAAHdEl";
-  const text = ["     --tf-brand-logo-letters: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUg", ...Array(5).fill("     " + b64), "     ErkJggg==');", "done"];
-  assert.deepEqual(blobRuns(rows(text.join("\n"))), [{ from: 1, to: 5, chars: 5 * b64.length, kind: "base64" }]);
-  assert.deepEqual(blobRuns(rows(Array(4).fill("0123456789abcdef0123456789abcdef0123456789abcdef").join("\n")))[0].kind, "hex");
-  for (const t of ["=".repeat(60), "a".repeat(60), "AbstractSingletonProxyFactoryBean", "the quick brown fox jumps over the lazy dog again"]) assert.equal(isBlobRow(t), false, t);
-  assert.deepEqual(blobRuns(rows([b64, b64, "text", b64].join("\n"))), [], "two rows are not enough");
-});

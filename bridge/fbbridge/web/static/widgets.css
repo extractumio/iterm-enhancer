@@ -86,10 +86,10 @@ figcaption { display: flex; align-items: center; justify-content: center; gap: 4
 figcaption button { padding: 0 3px; min-height: 0; }
 figcaption .err { flex-basis: auto; }
 
-/* a blob of encoded data (blobs.js): one line in place of its rows */
-:host(.wg-blob) slot { display: none; }
-.blob { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; vertical-align: 0.05em;
+/* a fold of the history (folds.js): one line in place of its rows */
+:host(.wg-fold) slot { display: none; }
+.fold { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; vertical-align: 0.05em;
   font: 11.5px/1.3 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; -webkit-user-select: none; user-select: none; }
-.blob button { min-height: 0; height: 1.5em; padding: 0 7px; border-color: color-mix(in srgb, var(--t-fg) 22%, transparent);
+.fold button { min-height: 0; height: 1.5em; padding: 0 7px; border-color: color-mix(in srgb, var(--t-fg) 22%, transparent);
   color: color-mix(in srgb, var(--t-fg) 70%, var(--t-bg)); }
-:host(:not(.wg-blob)) .blob { margin-right: .6ch; }
+:host(:not(.wg-fold)) .fold { margin-right: .6ch; }

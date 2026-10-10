@@ -194,8 +194,10 @@ and sign in:
   Mermaid diagram is drawn. An image file the output names gets a button after it that shows the
   image below the line. Click a diagram or an image to see it full screen: pinch, scroll or drag
   to zoom and move, double-click for 1:1, Esc to close. Output a program colored itself (`bat`,
-  `glow`, Claude Code) stays as it is. Rows of base64 or hex a tool printed (an image embedded in
-  a file) are one line, "⋯ 3.2 KB of base64 · 41 lines", with **Show** and **Copy**.
+  `glow`, Claude Code) stays as it is. The history is compacted before it is
+  sent: a coding agent's edit diffs, long commands and long tool output, rows of base64 or hex
+  and long runs of nearly equal lines are one line each ("⋯ 26 lines of diff") with **Show**
+  and **Copy**, which fetch the lines when asked (about 40% less to send for an agent's pane).
 - **Drop files** on the page to upload them, as the Upload hot key does: their paths are pasted.
 - **Images**: paste one (PNG, JPEG, GIF, WebP, up to 20 MB) and it is saved where the pane's
   shell runs, in `$TMPDIR/iterm-enhancer-paste/` on this Mac or `~/.cache/iterm-enhancer/paste/`

@@ -4,7 +4,7 @@
 // widget is a shadow root on its region's first row (widgetui.js); in its rendered form the
 // region's other rows are hidden (wg-hid), in Raw they show as before. Nothing is added to the
 // history's or the screen's children: term.js counts them as rows and blocks.
-import { Blobs } from "./blobs.js";
+import { Folds } from "./folds.js";
 import { nearRows } from "./linkmarks.js";
 import { imagePaths, scan } from "./outparse.js";
 import { figure, hostOf, imageButtons, loadImage, loadStyles, regionWidget, zoomDiagram, zoomImage } from "./widgetui.js";
@@ -45,8 +45,8 @@ function dark(bg = "") {
 export class Widgets {
   /** view: the TermView; boxes: #hist and #screen; resolve(path): {url, path} or {error} for
    *  an image path as printed; exists(path): whether that file is there; copy(text);
-   *  onZoomClosed(): the viewer closed. */
-  constructor({ view, term, boxes, resolve, exists, copy, onZoomClosed }) {
+   *  send(msg) to the bridge (folded lines); notify(text); onZoomClosed(): the viewer closed. */
+  constructor({ view, term, boxes, resolve, exists, copy, send, notify, onZoomClosed }) {
     Object.assign(this, { view, term, boxes, resolve, exists, copy, onZoomClosed });
     this.modes = new Map();      // region key -> "raw" or "on", as the user chose
     this.cache = new Map();      // region key + theme -> its widget element
@@ -57,7 +57,7 @@ export class Widgets {
     this.styled = false;         // widgets wait for their style sheet
     this.reset();
     this.click = (b, root) => this.onClick(b, root);
-    this.blobs = new Blobs({ view, click: this.click, skip: (el) => this.inRegion.has(el) || this.hosts.has(el) });
+    this.folds = new Folds({ view, click: this.click, send, copy, notify });
     loadStyles().then(() => { this.styled = true; this.keepPlace(() => this.update(true)); });
     // scrolled, or shown again (Files, View), or another size: regions come near the view
     let timer = 0;
@@ -83,8 +83,7 @@ export class Widgets {
     this.hosts = new Map();      // a region's first row -> {key, raw, rows, live}: what is attached
     this.imageHosts = new Set();
     this.found = new Map();      // printed image path -> {ok, at}: whether the pane's file is there
-    this.inRegion = new WeakSet(); // rows a widget has (no blob line there: the widget shows them)
-    this.blobs?.reset();
+    this.folds?.reset();
     clearTimeout(this.steady); clearTimeout(this.later);
   }
 
@@ -115,10 +114,12 @@ export class Widgets {
    *  them again), which is put right at once, or `now` (the user's own change). */
   update(full = false, now = false) {
     const v = this.view;
-    if (!v.theme || !this.styled) return;
+    if (!v.theme) return;
+    this.folds.apply();                           // at once: a folded line not sent is an empty row
+    if (!this.styled) return;
     clearTimeout(this.later);
     // the screen drew a row with image buttons again: they come back now, not a moment later
-    if ([...this.imageHosts].some((el) => !el.isConnected) || this.blobs.torn()) this.markImages(true);
+    if ([...this.imageHosts].some((el) => !el.isConnected)) this.markImages(true);
     const wait = this.lastScan + THROTTLE - performance.now();
     const torn = [...this.hosts.values()].some((h) => h.live && h.rows.some((el) => !el.isConnected));
     if (!full && !now && wait > 0 && !torn) { this.later = setTimeout(() => this.keepPlace(() => this.update()), wait); return; }
@@ -178,11 +179,11 @@ export class Widgets {
     const show = (els, keep = new Set()) => { for (const el of els) if (!keep.has(el)) el.classList.remove("wg-hid"); };
     const detach = (anchor, was) => {
       show(was.rows);
-      for (const el of was.rows) this.inRegion.delete(el);
       anchor.classList.remove("wg-host", "wg-raw");
       anchor.shadowRoot?.replaceChildren(document.createElement("slot"));
     };
-    list = list.filter(({ rows }) => rows.length && !rows.some((r) => !r));
+    // a part the bridge folded is the fold's, not a widget's
+    list = list.filter(({ rows }) => rows.length && !rows.some((r) => !r || this.folds.has(r.el)));
     // positions first, then changes: a read after a change would lay out the whole history again
     const away = new Set(list.filter((l) => !l.live && !this.hosts.has(l.rows[0].el) && !near(l.rows.map((r) => r.el))));
     for (const item of list) {
@@ -191,7 +192,6 @@ export class Widgets {
       const was = this.hosts.get(anchor);
       if (away.has(item)) { this.far = true; continue; }
       hosts.set(anchor, { key, raw, rows: els, live });
-      for (const el of els) this.inRegion.add(el);
       const root = hostOf(anchor, this.click);
       let mine = root.firstElementChild;
       if (!live && was?.key === key && was.raw === raw && was.rows.length === els.length && was.rows.at(-1) === els.at(-1)
@@ -264,8 +264,8 @@ export class Widgets {
       return this.keepPlace(() => this.update(false, true), root.host);
     }
     if (act === "copy") return this.copy(this.sources.get(wg) ?? "");
-    if (act === "blob") return this.keepPlace(() => this.blobs.toggle(root.host), root.host);
-    if (act === "blobcopy") return this.copy(this.blobs.text(root.host));
+    if (act === "fold") return this.keepPlace(() => this.folds.toggle(root.host), root.host);
+    if (act === "foldcopy") return this.folds.copyOf(root.host);
     if (act === "zoom") return zoomDiagram(b, this.onZoomClosed);
     if (act === "zoomimg") return zoomImage(b, this.onZoomClosed);
     if (act === "img") return this.openImage(root.host, b.dataset.path);
@@ -313,8 +313,6 @@ export class Widgets {
   markImages(now = false) {
     if (!this.styled) return;
     if (!now) { clearTimeout(this.imgTimer); this.imgTimer = setTimeout(() => this.keepPlace(() => this.markImages(true)), 60); return; }
-    // blobs first: the rows they hide get no image buttons
-    this.blobs.pass(nearRows(this.term, this.boxes));
     const rows = nearRows(this.term, this.boxes), hosts = new Set();
     let line = [];
     const flush = () => {
@@ -322,7 +320,7 @@ export class Widgets {
       const text = line.map((el) => el.textContent.replace(/[︎️]/g, "")).join("");
       line = [];
       // not a widget's own row, a drawn table's or an agent's input box and footer
-      if (!last || this.hosts.has(last) || this.blobs.has(last) || last.closest(".inbox, .foot") || BOXED.test(text)) return;
+      if (!last || this.hosts.has(last) || this.folds.has(last) || last.closest(".inbox, .foot") || BOXED.test(text)) return;
       const paths = imagePaths(text).filter((p) => this.there(p.value));
       if (!paths.length) return;
       hosts.add(last);
@@ -346,7 +344,7 @@ export class Widgets {
       if (el.classList.contains("eol")) flush();
     }
     flush();
-    for (const el of this.imageHosts) if (!hosts.has(el) && !this.hosts.has(el) && !this.blobs.has(el)) el.shadowRoot?.replaceChildren(document.createElement("slot"));
+    for (const el of this.imageHosts) if (!hosts.has(el) && !this.hosts.has(el) && !this.folds.has(el)) el.shadowRoot?.replaceChildren(document.createElement("slot"));
     this.imageHosts = hosts;
   }
 }

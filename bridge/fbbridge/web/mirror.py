@@ -18,6 +18,7 @@ from .tmuxkeys import type_into
 from .hub import encode, gone
 from .trace import Tracer
 from .screen import enc_line, line_key
+from .fold import History
 
 FIRST_HISTORY = 1000   # scrollback lines sent when a session opens; older ones load on scroll
 PAGE = 1000            # lines per "load older" request
@@ -36,7 +37,9 @@ DROPPED = "iTerm2 dropped this tmux connection; its raw output is not shown. Use
 NEW_EVERY = 1.0        # seconds between two new sessions from one browser
 ACTIONS = {"sub": "open the session", "in": "type into the session", "files": "show the session's files",
            "more": "load older lines", "fit": "resize iTerm", "unfit": "restore iTerm's size",
-           "new": "open a new session", "rename": "name the session", "merge": "merge the windows"}
+           "new": "open a new session", "rename": "name the session", "merge": "merge the windows",
+           "unfold": "show folded lines"}
+UNFOLD_MAX = 20000     # lines one "unfold" may ask for
 
 
 def screen_key(screen):
@@ -70,6 +73,7 @@ class Client:
         self.encoded = {}        # (line key, cursor x) -> encoded line, from the last frame
         self.prev_size = None
         self.prev_cursor = None
+        self.history = History(self.max_history)   # what this browser has, for folding (AC-56)
 
     async def send(self, msg):
         """A message (or its encoded text). A stalled browser must not hold up its session's
@@ -103,11 +107,38 @@ class Client:
     async def send_hist(self, session, mode, first, upto):
         """Lines first..upto as a reset, an append or a prepend of the browser's history."""
         t = time.perf_counter()
+        history = self.history
         lines = await self.lines(session, first, upto - first) if first < upto else []
+        if history is not self.history:
+            return                                 # the scrollback was cleared meanwhile: these lines are stale
         self.trace.hist(mode, len(lines), t)
+        # folded lines are not sent (None) until the browser asks; lines that scrolled off were (AC-56)
+        lines, folds = self.history.take(first, lines, bulk=mode != "append")
         oldest = self.oldest()
         await self.send({"t": "hist", "mode": mode, "sid": session.session_id, "first": first, "oldest": oldest,
-                         "truncated": oldest > self.overflow, "lines": lines})
+                         "truncated": oldest > self.overflow, "lines": lines, **({"folds": folds} if folds else {})})
+
+    async def send_folds(self, session, now):
+        """Folds among the lines that scrolled off the screen, at most every second."""
+        if self.history.due(now) and (found := self.history.scan(now)):
+            await self.send({"t": "folds", "sid": session.session_id, "items": found})
+
+    async def unfold(self, a, b):
+        """A fold's lines, when the browser shows it: only lines of a fold it was told of, still in
+        iTerm (its top may have gone); else why not, which the page shows."""
+        session, history = self.session, self.history
+        if not session or self.top is None:
+            return
+        self.overflow = (await session.async_get_line_info()).overflow
+        a = max(a, self.oldest())
+        why = ("These lines are no longer in iTerm's history." if a > b or b >= self.top else
+               "These lines are not a fold of this session." if not history.told(a, b) else
+               f"More than {UNFOLD_MAX} lines: open them in iTerm." if b - a >= UNFOLD_MAX else None)
+        if why:
+            return await self.send({"t": "lines", "sid": session.session_id, "first": a, "lines": [], "error": why})
+        lines = await self.lines(session, a, b - a + 1)
+        if self.history is history and self.session is session:   # not cleared or switched meanwhile
+            await self.send({"t": "lines", "sid": session.session_id, "first": a, "lines": lines})
 
     async def send_older(self, before):
         session = self.session
@@ -127,6 +158,8 @@ class Client:
         self.shown = key
         top = screen.windowed_coord_range.coordRange.start.y  # absolute; the cursor uses it too
         if self.top is None or top < self.top:                 # first frame or scrollback cleared
+            if self.top is not None:
+                self.history = History(self.max_history)        # its line numbers mean other lines now
             self.top = top
             self.overflow = (await session.async_get_line_info()).overflow
             await self.send_hist(session, "reset", max(self.oldest(), top - FIRST_HISTORY), top)
@@ -182,6 +215,7 @@ class Client:
                 if await self.send_screen(session, screen):
                     self.active_until = loop.time() + ACTIVE_FOR
                     await asyncio.sleep(FRAME_GAP)
+                await self.send_folds(session, loop.time())
                 busy = loop.time() < self.active_until
                 try:
                     await asyncio.wait_for(changed.wait(), POLL_ACTIVE if busy else POLL_IDLE)
@@ -278,6 +312,8 @@ class Client:
             await self.send({"t": "files", "sid": self.session.session_id, **await self.files_of(self.session)})
         elif t == "more":
             await self.send_older(int(msg["before"]))
+        elif t == "unfold":
+            await self.unfold(int(msg["n"]), int(msg["to"]))
         elif t == "fit" and self.session:
             await self.hub.fit(self, self.session, int(msg["cols"]), int(msg["rows"]))
             await self.send({"t": "fit", "on": True})

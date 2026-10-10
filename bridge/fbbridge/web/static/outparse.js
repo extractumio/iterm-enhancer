@@ -194,29 +194,3 @@ function markdownRun(lines, i) {
 export function imagePaths(text) {
   return tokens(text).filter((t) => t.kind === "path" && IMAGE.test(t.value)).map(({ value, start, end }) => ({ value, start, end }));
 }
-
-// A row of encoded data (base64, base64url, hex): one unbroken run of their characters, with
-// digits and letters mixed (a separator "=====" or a word is not one).
-const BLOB_ROW = /^[A-Za-z0-9+/=_-]{40,}$/;
-export function isBlobRow(text) {
-  const t = text.trim();
-  return BLOB_ROW.test(t) && /\d/.test(t) && /[A-Za-z]/.test(t) && new Set(t).size >= 12;
-}
-
-/** Runs of at least `min` rows of encoded data (a blob a tool printed, wrapped over rows):
- *  [{from, to, chars, kind: "base64"|"hex"}]. A row with other text (the start of a data: URL,
- *  its end) is not part of one and stays in sight. */
-export function blobRuns(rows, min = 3) {
-  const out = [];
-  for (let i = 0; i < rows.length; i++) {
-    if (!isBlobRow(rows[i].text)) continue;
-    let j = i;
-    while (j + 1 < rows.length && isBlobRow(rows[j + 1].text)) j++;
-    if (j - i + 1 >= min) {
-      const text = rows.slice(i, j + 1).map((r) => r.text.trim()).join("");
-      out.push({ from: i, to: j, chars: text.length, kind: /^[0-9a-fA-F]+$/.test(text) ? "hex" : "base64" });
-    }
-    i = j;
-  }
-  return out;
-}

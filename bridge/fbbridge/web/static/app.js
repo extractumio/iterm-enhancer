@@ -90,7 +90,7 @@ view.onDrawn = () => { placeKbd(); marks(); trace.drawn(); };
 // relative path taken from the pane's folder as a clicked path is.
 const images = imageFiles(() => views.paneInfo());
 const widgets = new Widgets({ view, term: $("term"), boxes: [$("hist"), $("screen")], resolve: images.resolve, exists: images.exists,
-  copy: (text) => input.copySelection(text), onZoomClosed: () => focusTerminal() });
+  copy: (text) => input.copySelection(text), send, notify: (text) => toast(text, 3000), onZoomClosed: () => focusTerminal() });
 view.onRows = (full, keep) => (keep ? widgets.keepPlace(() => widgets.update(full)) : widgets.update(full));
 view.onReset = () => { widgets.reset(); images.forget(); };
 trace.watch(view);
@@ -226,7 +226,13 @@ function onMessage(m) {
   switch (m.t) {
     case "layout": st.groups = m.groups; reminders.layout(m.groups); drawNav(); tools.showMerge(m.groups); break;
     case "theme": applyTheme(m.theme); break;
-    case "hist": view.onHist(m); break;
+    case "hist":                                    // a reset: another pane, or its scrollback cleared
+      if (m.mode === "reset") widgets.folds.reset();
+      widgets.folds.add(m.folds); view.onHist(m); break;
+    case "folds": widgets.folds.add(m.items); widgets.keepPlace(() => widgets.update(false, true)); break;   // lines that scrolled off
+    case "lines":
+      if (m.error) { widgets.folds.failed(m.first); toast(m.error, 5000); break; }
+      view.refill(m.first, m.lines); widgets.keepPlace(() => widgets.folds.filled(m.first, m.lines.length)); break;
     case "screen": view.onScreen(m); break;
     case "fit": st.resized = m.on; syncControls(); break;
     case "files": views.onFiles(m); break;
