@@ -48,8 +48,21 @@ export class Input {
 
   bind() {
     const k = this.kbd;
+    // macOS's press-and-hold sends no repeat for a held character key in a text field (iTerm2
+    // turns it off for itself): the page repeats it, after HOLD ms every REPEAT ms, until it
+    // is let go. A repeat from the system takes over, so no key comes twice.
+    let char = null;
+    const stopChar = () => { if (char) { clearTimeout(char.timer); clearInterval(char.timer); char = null; } };
     k.addEventListener("keydown", (e) => {
       if (e.isComposing) return;
+      if (e.repeat) { if (char?.code === e.code) stopChar(); }
+      else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        stopChar();
+        const held = char = { code: e.code, key: e.key };
+        held.timer = setTimeout(() => {
+          if (char === held) held.timer = setInterval(() => this.type(held.key, "keydown"), REPEAT);
+        }, HOLD);
+      } else stopChar();
       const seq = encodeKey(e, this.options.appCursor());
       if (seq !== null) { e.preventDefault(); this.type(this.withMods(seq), "keydown", e); }
     });
@@ -59,7 +72,9 @@ export class Input {
       k.value = "";
       this.type(this.withMods(text.replace(/\n/g, "\r")), "input", e);
     });
-    k.addEventListener("compositionstart", composing);
+    k.addEventListener("keyup", (e) => { if (char?.code === e.code) stopChar(); });
+    k.addEventListener("blur", stopChar);
+    k.addEventListener("compositionstart", (e) => { stopChar(); composing(e); });
     k.addEventListener("compositionend", (e) => { this.type(k.value, "compose", e); k.value = ""; });
     // The field may lie over the cursor's row (for iOS's long-press Paste): a short tap on it
     // still moves the cursor like a tap on the terminal.

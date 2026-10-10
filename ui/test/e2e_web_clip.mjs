@@ -94,5 +94,21 @@ export async function webClip(browser) {
   await hold("Enter", 1000);
   check("AC-52 web app: a hot key held down repeats (after 400 ms, about 30 a second) and stops when let go; a short press types once; Enter does not repeat",
     held >= 12 && held <= 25 && after === held && count("\x1b[A") === 1 && count("\r") === 1, JSON.stringify({ held, after, up: count("\x1b[A"), enter: count("\r") }));
+  // a character key held on a keyboard: macOS's press-and-hold sends no repeat in a text field,
+  // so the page repeats it; a repeat the system sends takes over
+  await keys.page.focus("#kbd");
+  await keys.page.keyboard.down("k");                      // the system sends no repeat here
+  await keys.page.waitForTimeout(1000);
+  await keys.page.keyboard.up("k");
+  await keys.page.waitForTimeout(200);
+  const ks = keys.sent.filter((m) => m.t === "in" && m.data === "k").length;
+  const ksAfter = (await keys.page.waitForTimeout(300), keys.sent.filter((m) => m.t === "in" && m.data === "k").length);
+  await keys.page.keyboard.down("j");
+  await keys.page.evaluate(() => document.getElementById("kbd").dispatchEvent(new KeyboardEvent("keydown", { key: "j", code: "KeyJ", repeat: true, bubbles: true })));
+  await keys.page.waitForTimeout(800);
+  await keys.page.keyboard.up("j");
+  const js = keys.sent.filter((m) => m.t === "in" && m.data === "j").length;
+  check("AC-52 web app: a character key held on a keyboard repeats though the system sends no repeat (macOS press-and-hold), stops when let go, and leaves repeating to the system when it does",
+    ks >= 12 && ks <= 25 && ksAfter === ks && js === 1, JSON.stringify({ ks, ksAfter, js }));
   await keys.page.close();
 }
