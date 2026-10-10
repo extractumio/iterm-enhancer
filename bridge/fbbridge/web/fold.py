@@ -10,6 +10,7 @@ OUT_KEEP, OUT_MIN = 8, 8        # a long tool output: likewise
 DIFF_MIN = 6                    # an edit's diff folds from this many lines
 SAME_MIN, SAME_HEAD, SAME_TAIL = 20, 3, 2   # nearly equal lines: from 20, the first 3 and last 2 stay
 BLOB_MIN = 3                    # rows of encoded data
+REPEAT_MIN = 5                  # one line again and again (an input box redrawn into the history)
 
 TOOL = re.compile(r"^⏺ [\w.-]+\(")                 # Claude Code's tool call: "⏺ Bash(…"
 RESULT = re.compile(r"^ {2}⎿ ")                     # its result's first line
@@ -117,6 +118,23 @@ def _folds(text, newest):
                 fold(i + 1, j - 1, f"⋯ {k} lines {what}")
             elif not m and k >= OUT_KEEP + OUT_MIN:
                 fold(i + 1 + OUT_KEEP, j - 1, f"⋯ {k - OUT_KEEP} more lines of output")
+
+    i = 0                                                    # one line again and again, maybe with
+    while i < n:                                             # blank or 1-3 character lines between
+        t = text[i].strip()
+        if len(t) <= 3 or taken[i] or text[i].startswith("⏺"):
+            i += 1
+            continue
+        j, last, copies = i + 1, i, 1
+        while j < n and not taken[j] and (text[j].strip() == t or len(text[j].strip()) <= 3):
+            if text[j].strip() == t:
+                copies, last = copies + 1, j
+            j += 1
+        if copies >= REPEAT_MIN and (j < n or not newest):
+            fold(i + 1, last, f"⋯ {copies - 1} more copies of this line")
+            i = last + 1
+        else:
+            i += 1
 
     i = 0                                                    # nearly equal lines: a listing, a log
     while i < n:

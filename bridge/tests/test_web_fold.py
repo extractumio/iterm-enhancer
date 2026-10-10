@@ -61,6 +61,13 @@ class FoldTest(unittest.TestCase):
         found = folds(log)
         self.assertTrue(found and all(not (f["from"] <= 12 <= f["to"]) for f in found), found)
 
+    def test_an_input_box_redrawn_into_the_history_folds_to_one_copy(self):
+        rule = "─" * 30 + " @critic-rebound ─"
+        r = rows("Done.", rule, rule, "-", rule, "", rule, rule, rule, "-", rule, "What is sound", "")
+        self.assertEqual(spans(folds(r), r), [(2, 10, "⋯ 6 more copies of this line")])
+        few = rows("build", "ok", "build", "ok", "build", "done")
+        self.assertEqual(folds(few), [], "three copies stay")
+
     def test_what_does_not_fold(self):
         unfinished = rows("⏺ Update(a.ts)", "  ⎿  Updated a.ts with 9 additions", *[f"      {k} +  x" for k in range(9)])
         self.assertEqual(folds(unfinished), [], "it may go on after the last row")
