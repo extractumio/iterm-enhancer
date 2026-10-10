@@ -172,9 +172,8 @@ class Follower:
                     remotes.status(key, target, (agentctl.entry(key) or {}).get("name", key))
             except Exception as e:  # never at the cost of following the focused pane
                 log(f"open hosts: {type(e).__name__}: {e}")
-        win = app.current_terminal_window
-        sess = win.current_tab.current_session if win and win.current_tab else None
-        if await is_terminal(sess, windows):
+        win, sess = await self.target()
+        if sess:
             if sess.session_id != self.theme_session or self.tick % THEME_EVERY == 0:
                 self.theme, self.theme_session = await theme_of(app, sess), sess.session_id
             r = await resolve(self.conn, sess)
@@ -204,10 +203,26 @@ class Follower:
             if state != last or time.monotonic() - self.last_sent > HEARTBEAT:
                 await self.push(state)
                 backend.failures = 0
-        elif (self.last and app.get_session_by_id(self.last.get("session"))
-              and app.get_window_by_id(self.last.get("window"))
-              and time.monotonic() - self.last_sent > HEARTBEAT):
-            await self.push(self.last)  # stay "connected"
+
+    async def target(self):
+        """The window and pane to follow: the focused pane; with no terminal pane in focus (its
+        window closed and none took the focus, a viewer window in front), the pane followed
+        last while it is open, else the current pane of an open terminal window. So the panels
+        follow on, and fbd sees the bridge connected, while any terminal window is open (AC-30)."""
+        app = self.app
+        win = app.current_terminal_window
+        sess = win.current_tab.current_session if win and win.current_tab else None
+        if await is_terminal(sess, self.windows):
+            return win, sess
+        last = self.last and app.get_session_by_id(self.last.get("session"))
+        panes = [last] if last else []
+        panes += [w.current_tab.current_session for w in app.terminal_windows if w.current_tab]
+        for sess in panes:
+            if sess and await is_terminal(sess, self.windows):
+                win, _ = app.get_window_and_tab_for_session(sess)
+                if win:
+                    return win, sess
+        return None, None
 
 
 _registered = {"url": None}

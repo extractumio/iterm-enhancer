@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Version | 0.34.3 |
+| Version | 0.34.4 |
 | Date | 2026-10-10 |
 | Status | draft |
 | Author | Project maintainers |
@@ -13,6 +13,7 @@ Change log:
 
 | Version | Date | Change |
 |---|---|---|
+| 0.34.4 | 2026-10-10 | AC-30, from the owner: after the isolated iTerm2 checks closed their window, no iTerm2 window had the focus, the bridge pushed nothing and fbd showed it not connected until the owner clicked a window ("it shall recover automatically"). The bridge pushed only the focused pane's state, or the last pane's while its window was open. With no terminal pane in focus it now follows the pane it followed last, while it is open, else the current pane of an open terminal window. Checked live: with no window in focus the restarted bridge was connected within 3 s; `bridge/tests/test_follow.py` 3 |
 | 0.34.3 | 2026-10-10 | AC-56, from the owner: a Markdown file a coding agent's tool printed was a widget that showed it as one block of code: the agent indents its tools' output by 5 spaces, and Markdown takes text indented 4 for code. A region's text is now taken without the indentation all its lines share, an indented "## heading" counts as a heading, and a coding agent's next message or tool result (⏺, ⎿) ends a region |
 | 0.34.2 | 2026-10-10 | AC-56, from the owner: a coding agent's subagent pane showed its input box's top rule ("──── @critic-rebound ─") over and over. iTerm2's own history holds 151 copies of it (Claude Code redrew the box in a narrow pane and each copy scrolled off), with blank and "-" lines between, so no run of nearly equal lines reached 20. One line repeated 5 or more times, with only blank or 1-3 character lines between, now folds to its first copy and "⋯ 64 more copies of this line": 132 of the 151 folded in that pane |
 | 0.34.1 | 2026-10-10 | AC-56, from the owner: the 4,391-line file listing in the owner's ssh pane folded only about 20%. Two causes: names with "error" in them (errors.js) were taken for lines saying something failed and cut the run into 50 pieces, and a run going on across the 1000-line pages the page asks for overlapped the fold told with the newer page, so the older part was dropped, and looked unfinished at the end of its look-ahead window. Now only words outside paths count, the older part of such a run folds by itself, a run of data or nearly equal lines is whole at the end of a window that newer lines follow, and the page shows back-to-back folds of nearly equal lines as one (the bridge sends their lines together). The listing: 99% folded, 441 KB to 32 KB; all the owner's panes: 45% fewer bytes of history (5.5 MB to 3.0 MB), a coding agent's pane as before |
@@ -1004,6 +1005,13 @@ Scenario: AC-30 failure — nothing follows the terminal
   And the tree, tabs and file operations keep working
   When a bridge pushes state again
   Then the note disappears within 1 s
+
+Scenario: AC-30 edge — no iTerm2 window has focus
+  Given the bridge follows a pane, and its window closes while no other iTerm2 window takes the focus (a script's window, iTerm2 behind another app)
+  When iTerm2 still has a terminal window open
+  Then within 5 s the bridge follows the pane it followed last, while it is open, else the current pane of an open terminal window, and keeps pushing its state: "bridge_connected" stays true and no panel shows "Not following iTerm2"
+  And when a window takes the focus again, its pane is followed as before
+  But with no terminal window open there is nothing to follow, and the panels say so after 10 s as before
 
 Scenario: AC-30 edge — fbd left without its bridge
   Given fbd was started by a bridge (FB_BRIDGE_SECRET set)
