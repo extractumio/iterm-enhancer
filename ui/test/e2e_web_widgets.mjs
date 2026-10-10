@@ -312,6 +312,18 @@ export async function webWidgets(browser, name = "") {
   check(`${at} … no page errors with folds`, !fo.errors.length, JSON.stringify(fo.errors));
   await fo.page.close();
 
+  // a long listing comes in pages, folded each by itself: back-to-back folds of nearly equal lines are one
+  const listing = Array.from({ length: 60 }, (_, k) => line(`vpatch/ws/pkg${k}/file${k}.js`));
+  const pages = await open(browser, { history: [...listing, line("$ ")], screen: [],
+    folds: [{ n: 3, to: 29, label: "⋯ 27 similar lines" }, { n: 30, to: 56, label: "⋯ 27 similar lines" }] });
+  await pages.page.waitForFunction(() => document.querySelector("#hist .ln.wg-fold"), null, { timeout: 5000 }).catch(() => {});
+  const one = await pages.page.evaluate(() => [...document.querySelectorAll("#hist .ln.wg-fold")].map((h) => h.shadowRoot.querySelector('[data-act="fold"]').textContent));
+  await pages.page.evaluate(() => document.querySelector("#hist .ln.wg-fold").shadowRoot.querySelector('[data-act="fold"]').click());
+  await pages.page.waitForFunction(() => [...document.querySelectorAll("#hist .ln")].some((el) => el.textContent === "vpatch/ws/pkg40/file40.js" && el.offsetParent), null, { timeout: 5000 }).catch(() => {});
+  check(`${at} back-to-back folds of nearly equal lines (a listing's pages) are one line, shown together`,
+    JSON.stringify(one) === JSON.stringify(["⋯ 54 similar lines"]) && pages.sent.some((m) => m.t === "unfold" && m.n === 3 && m.to === 56), JSON.stringify(one));
+  await pages.page.close();
+
   // lines the bridge cannot send say why; a cleared scrollback takes its folds along
   const gone = await open(browser, { history: ["a", "b", "c", "d", "e"].map((t) => line(t)), screen: [],
     folds: [{ n: 1, to: 3, label: "⋯ 3 similar lines", fail: true }] });

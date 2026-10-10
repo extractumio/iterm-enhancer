@@ -104,6 +104,19 @@ class HistoryTest(unittest.TestCase):
         self.assertEqual(h.scan(SCAN_EVERY), [{"n": 502, "to": 513, "label": "⋯ 12 lines of diff"}])
         self.assertFalse(h.due(SCAN_EVERY + 0.1), "nothing new since")
 
+    def test_a_long_listing_loaded_in_pages_folds_whole(self):
+        listing = enc(*["$ ls -R"], *[f"vpatch/ws/pkg{k}/lib/file{k}.js" for k in range(4500)], *["vpatch/ws/x/errors.js"], "$ ")
+        h, n = History(10000), len(listing)
+        first = n - 1000
+        out = h.take(first, listing[first:], bulk=True)[0]
+        while first > 0:                                  # the page asks for older pages, newest first
+            a = max(0, first - 1000)
+            out = h.take(a, listing[a:first], bulk=True)[0] + out
+            first = a
+        self.assertGreater(sum(line is None for line in out), 4400, "a name with 'error' in it is one of many")
+        self.assertTrue(h.told(10, 4400), "back-to-back folds may be asked for together")
+        self.assertFalse(h.told(0, 4400), "but not lines outside them")
+
     def test_it_keeps_only_what_the_browser_keeps(self):
         h = History(100)
         h.take(0, enc(*["x"] * 3000), bulk=False)

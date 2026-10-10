@@ -26,7 +26,21 @@ export class Folds {
     this.waiting = new Map();    // first line -> "show" | "again" | {resolve, reject}: its lines are asked for
   }
 
-  add(items) { for (const f of items ?? []) this.items.set(f.n, f); }
+  /** Folds told by the bridge. Back-to-back folds of nearly equal lines (a long listing comes
+   *  in pages of 1000 lines, each folded by itself) are one. */
+  add(items) {
+    for (const f of items ?? []) {
+      const similar = (g) => /similar lines$/.test(g.label);
+      let merged = { ...f };
+      for (const g of [...this.items.values()]) {
+        if (!similar(g) || !similar(merged) || (g.to + 1 !== merged.n && merged.to + 1 !== g.n)) continue;
+        this.items.delete(g.n);
+        const n = Math.min(g.n, merged.n), to = Math.max(g.to, merged.to);
+        merged = { n, to, label: `⋯ ${(to - n + 1).toLocaleString("en-US")} similar lines` };
+      }
+      this.items.set(merged.n, merged);
+    }
+  }
   has(el) { return this.hosts.has(el) || this.rows.has(el); }
 
   /** Every fold drawn on the rows the history has; quick when nothing changed. A fold whose

@@ -35,22 +35,23 @@ NOTEWORTHY = re.compile(r"error|fail|fatal|exception|panic|denied|refused|warn",
 
 
 def shape(text):
-    mark = "!" + text if NOTEWORTHY.search(text) else ""
     for rx, to in SHAPE:
         text = rx.sub(to, text)
-    return text.strip() + mark
+    # said in words, not in a name: ".../errors.js" in a file listing is one of many
+    return text.strip() + ("!" + text if NOTEWORTHY.search(text) else "")
 
 
 def _size(n):
     return f"{n} B" if n < 1024 else f"{n / 1024:.1f} KB"
 
 
-def folds(rows):
+def folds(rows, newest=True):
     """Folds of `rows` (a run of a pane's history, oldest first: [(text, hard_eol)]), as
     [{"from", "to", "label"}] with row indexes, inclusive, in order. Rows iTerm wrapped are one
     line. Only a part that is whole is folded: one that may go on after the last row is left for
-    when more has come."""
-    out = _blobs([t.rstrip() for t, _ in rows])              # rows of data: counted as rows (a long
+    when more has come. newest False: newer rows exist past `rows` (a window of a long history),
+    so a run of data or of nearly equal lines ends there for now (its rest folds by itself)."""
+    out = _blobs([t.rstrip() for t, _ in rows], newest)              # rows of data: counted as rows (a long
     spans, cur = [], None                                    # line iTerm wrapped is many); the rest
     for k, (t, eol) in enumerate(rows):                      # by lines: rows joined to their hard end
         cur = [cur[0], k, cur[2] + t] if cur else [k, k, t]
@@ -59,21 +60,21 @@ def folds(rows):
             cur = None
     if cur:
         spans.append(cur)
-    for f in _folds([s[2] for s in spans]):
+    for f in _folds([s[2] for s in spans], newest):
         a, b = spans[f["from"]][0], spans[f["to"]][1]
         if not any(x["from"] <= b and a <= x["to"] for x in out):
             out.append({"from": a, "to": b, "label": f["label"]})
     return sorted(out, key=lambda f: f["from"])
 
 
-def _blobs(text):
+def _blobs(text, newest):
     """Runs of BLOB_MIN or more rows of encoded data, the next row after them come."""
     out, n, i = [], len(text), 0
     while i < n:
         j = i
         while j < n and is_blob(text[j]):
             j += 1
-        if j - i >= BLOB_MIN and j < n:
+        if j - i >= BLOB_MIN and (j < n or not newest):
             data = sum(len(text[k].strip()) for k in range(i, j))
             kind = "hex" if all(re.fullmatch(r"[0-9a-fA-F]+", text[k].strip()) for k in range(i, j)) else "base64"
             out.append({"from": i, "to": j - 1, "label": f"⋯ {_size(data)} of {kind} · {j - i} lines"})
@@ -81,7 +82,7 @@ def _blobs(text):
     return out
 
 
-def _folds(text):
+def _folds(text, newest):
     text = [t.rstrip() for t in text]
     n = len(text)
     out, taken = [], [False] * n
@@ -123,7 +124,7 @@ def _folds(text):
         j = i + 1
         while s and j < n and not taken[j] and text[j].strip() and shape(text[j]) == s:
             j += 1
-        if s and j - i >= SAME_MIN and j < n and not text[i].startswith("⏺"):
+        if s and j - i >= SAME_MIN and (j < n or not newest) and not text[i].startswith("⏺"):
             fold(i + SAME_HEAD, j - 1 - SAME_TAIL, f"⋯ {j - i - SAME_HEAD - SAME_TAIL} similar lines")
         i = j if s else i + 1
     return sorted(out, key=lambda f: f["from"])
@@ -186,14 +187,28 @@ class History:
             elif ns:
                 break
         found = []
-        for f in folds([self.text[n] for n in ns]):
+        for f in folds([self.text[n] for n in ns], newest=not ns or ns[-1] == max(self.text)):
             a, b = ns[f["from"]], ns[f["to"]]
-            if any(x <= b and a <= y for x, y in self.folds.items()):
-                continue                                     # told already (or part of one told)
+            label = f["label"]
+            told = [x for x, y in self.folds.items() if x <= b and a <= y]
+            if told:                                         # told already, or part of one told
+                # nearly equal lines going on into a fold told with newer lines (an older page
+                # of a long listing): the older part folds by itself
+                b = min(told) - 1
+                if not label.endswith("similar lines") or b - a + 1 < SAME_HEAD + SAME_TAIL or any(
+                        x <= b and a <= y for x, y in self.folds.items()):
+                    continue
+                label = f"⋯ {b - a + 1} similar lines"
             self.folds[a] = b
-            found.append({"n": a, "to": b, "label": f["label"]})
+            found.append({"n": a, "to": b, "label": label})
         return found
 
     def told(self, a, b):
-        """a..b lies in a fold the browser was told of (it may ask only for such lines)."""
-        return any(x <= a and b <= y for x, y in self.folds.items())
+        """a..b lies in folds the browser was told of, one after another (it may ask only for
+        such lines; it shows back-to-back folds of nearly equal lines as one)."""
+        while a <= b:
+            ends = [y for x, y in self.folds.items() if x <= a <= y]
+            if not ends:
+                return False
+            a = ends[0] + 1
+        return True
