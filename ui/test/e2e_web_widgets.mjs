@@ -31,7 +31,8 @@ const HISTORY = [`${PROMPT}cat README.md`, "# App", "", "A small **tool**.", "",
 const SCREEN = ["Here is the fix:", "```python", "def main():", "    return 1", "```", "Saved /tmp/shots/shot.png and ./b.png"];
 
 /** The page against a fake bridge; renderers: false makes /fb/renderers.js fail. */
-export async function open(browser, { renderers = true, agent = false, device = { viewport: { width: 1200, height: 800 } } } = {}) {
+export async function open(browser, { renderers = true, agent = false, history = HISTORY, screen = SCREEN, cwd = "/tmp/shots",
+  device = { viewport: { width: 1200, height: 800 } } } = {}) {
   const opts = { renderers };
   const page = await browser.newPage(device);
   const errors = [], sent = [];
@@ -61,17 +62,17 @@ export async function open(browser, { renderers = true, agent = false, device = 
       sent.push(msg);
       if (msg.t === "sub") {
         say({ t: "theme", sid: "S1", theme: THEME });
-        say({ t: "hist", mode: "reset", sid: "S1", first: 0, oldest: 0, truncated: false, lines: HISTORY });
-        const rows = [...SCREEN.map((t) => line(t)), { r: [[PROMPT, null, null, 0], [" ", null, null, 256]], e: true }];
+        say({ t: "hist", mode: "reset", sid: "S1", first: 0, oldest: 0, truncated: false, lines: history });
+        const rows = [...screen.map((t) => (typeof t === "string" ? line(t) : t)), { r: [[PROMPT, null, null, 0], [" ", null, null, 256]], e: true }];
         say({ t: "screen", sid: "S1", full: true, n: rows.length, cols: 80, rows: rows.length, ch: rows.map((r, i) => [i, r]) });
       }
-      if (msg.t === "files") say({ t: "files", sid: "S1", key: "S1", cwd: "/tmp/shots", home: "/Users/alex", host: null });
+      if (msg.t === "files") say({ t: "files", sid: "S1", key: "S1", cwd, home: "/Users/alex", host: null });
     });
     say({ t: "build", id: "test" });
     say({ t: "layout", groups: agent ? [{ ...LAYOUT[0], items: [{ ...LAYOUT[0].items[0], agent: "claude", shell: false }] }] : LAYOUT });
   });
   await page.goto(`${ORIGIN}/`);
-  await page.waitForFunction(() => document.querySelectorAll("#screen .ln").length === 7, null, { timeout: 10000 });
+  await page.waitForFunction((n) => document.querySelectorAll("#screen .ln").length === n, screen.length + 1, { timeout: 10000 });
   return { page, errors, sent, say: (m) => say(m), setRenderers: (on) => { opts.renderers = on; } };
 }
 

@@ -20,8 +20,13 @@ const CODEISH = new RegExp([
   String.raw`[;{}\\]\s*$`, String.raw`^\s*(?:def|class|import|from|function|const|let|var|return|fi|done|esac|then|export|local)\b`,
   String.raw`^\s*[a-z_][\w.-]*:(?:\s+\S|$)`, String.raw`^\s*[\w.$\[\]]+\s*[-+*/]?=\s`, String.raw`\$\{?\w|\$\(|&&|\|\|`,
 ].join("|"));
-// a shell prompt, by its common shapes: "alex@devbox ~ %", "$ ", "❯ ", "➜ dir", "(venv) …$"
-const PROMPT = /^(?:\S+@[\w.-]+[:\s].*?[$#%>](?:\s|$)|[$%❯➜λ»›](?:\s|$)|\(\S+\)\s.*?[$%#❯](?:\s|$))/;
+// a shell prompt, by its common shapes: "alex@devbox ~ %", "$ ", "❯ ", "➜ dir", "(venv) …$", and
+// a prompt mark after a short lead (Starship's "at 12:21 ❯ ", "[main] ❯ ")
+const PROMPT = /^(?:\S+@[\w.-]+[:\s].*?[$#%>](?:\s|$)|[$%❯➜λ»›](?:\s|$)|\(\S+\)\s.*?[$%#❯](?:\s|$)|[^❯➜›]{1,40}[❯➜›](?:\s|$))/;
+// the end of the output: a prompt, or a line a program colored (a prompt's other lines usually are)
+const ends = (l) => l.styled || PROMPT.test(l.text);
+// prompts compared without their numbers: a clock, a counter or an exit code changes
+const shape = (t) => t.replace(/\d/g, "0");
 // a command that prints one file: the output after it is that file, up to the next prompt
 const PRINT = /(?:^|\s)(?:cat|bat|batcat|head|tail|less|more|nl)\s+(?:-\S+\s+)*([^\s|;&<>'"`]+\.([A-Za-z0-9]+))\s*$/;
 // a diagram without a fence starts with a line that is only its keyword ("pie", "timeline" are prose too)
@@ -87,7 +92,7 @@ export function scan(rows, end = rows.length) {
     }
     if (DIAGRAM.test(lines[i].text) && !lines[i - 1]?.text.trim()) {
       let j = i;
-      while (j + 1 < lines.length && lines[j + 1].text.trim() && !PROMPT.test(lines[j + 1].text)) j++;
+      while (j + 1 < lines.length && lines[j + 1].text.trim() && !ends(lines[j + 1])) j++;
       if (j > i) { add("mermaid", i, j, "mermaid", body(lines, i, j), true); i = j; }
     }
   }
@@ -102,19 +107,24 @@ export function scan(rows, end = rows.length) {
 const body = (lines, a, b) => lines.slice(a, b + 1).map((l) => l.text).join("\n");
 
 // A command line that prints one file ("alex@devbox ~ % cat README.md"): the lines after it up
-// to the next line that starts with the same prompt (the cursor's row too). A prompt of one or
-// two characters ("$ ") is too common in files to end one. Else undefined: the lines are
-// looked at one by one, as any output; null when its prompt has not come back yet.
+// to the next line that starts with the same prompt, numbers aside (the cursor's row too),
+// without the blank and colored lines just before it (a prompt of two lines, Starship's). A
+// prompt of one or two characters ("$ ") is too common in files to end one. Else undefined:
+// the lines are looked at one by one, as any output; null when its prompt has not come back yet.
 function printedFile(lines, i, next) {
   const m = lines[i].text.match(PRINT);
   if (!m) return undefined;
   const prompt = lines[i].text.slice(0, m.index + (m[0].startsWith(" ") ? 1 : 0)).trimEnd();
-  if (prompt.length < 3 || !PROMPT.test(prompt + " ")) return undefined;
+  if (prompt.trim().length < 3 || !(PROMPT.test(prompt + " ") || /[❯➜›λ»$%#>]$/.test(prompt))) return undefined;
   const ext = m[2];
   const kind = MARKDOWN_EXT.test(ext) ? "markdown" : MERMAID_EXT.test(ext) ? "mermaid" : "code";
-  const found = (to) => ({ kind, lang: kind === "code" ? m[1].split("/").pop() : kind, from: i + 1, to });
-  for (let j = i + 1; j < lines.length; j++) if (lines[j].text.startsWith(prompt)) return found(j - 1);
-  return next?.startsWith(prompt) ? found(lines.length - 1) : lines.length - i <= MAX_LINES ? null : undefined;
+  const found = (to) => {
+    while (to > i && (!lines[to].text.trim() || lines[to].styled)) to--;
+    return { kind, lang: kind === "code" ? m[1].split("/").pop() : kind, from: i + 1, to };
+  };
+  const same = shape(prompt);
+  for (let j = i + 1; j < lines.length; j++) if (shape(lines[j].text).startsWith(same)) return found(j - 1);
+  return next != null && shape(next).startsWith(same) ? found(lines.length - 1) : lines.length - i <= MAX_LINES ? null : undefined;
 }
 
 // A fence opened at line i: {lang, text, to} when closed, null when not closed yet.
@@ -159,7 +169,7 @@ function markdownRun(lines, i) {
   let last = i, signs = 0, codeish = 0, filled = 0, j = i, open = false;
   for (; j < lines.length && j - last <= GAP && j - i < MAX_LINES; j++) {
     const t = lines[j].text;
-    if (PROMPT.test(t)) break;
+    if (ends(lines[j])) break;
     const s = sign(lines, j);
     if (s === "fence") {
       const f = fenced(lines, j);
@@ -174,7 +184,7 @@ function markdownRun(lines, i) {
   const strong = kinds.has("heading") || kinds.has("table") || kinds.has("fence");
   if (!strong || kinds.size < 2 || signs < 3 || codeish > filled * 0.3) return { ok: false, to: last, open };
   let to = last;                                                  // the paragraph after the last sign
-  const prose = (k) => k < lines.length && lines[k].text.trim() && !PROMPT.test(lines[k].text);
+  const prose = (k) => k < lines.length && lines[k].text.trim() && !ends(lines[k]);
   if (!prose(to + 1) && prose(to + 2)) to++;                      // after a blank line
   while (prose(to + 1)) to++;
   return { ok: true, to, open };

@@ -111,3 +111,14 @@ test("settled never stays far behind: a log with a list item on every line, a fi
   const tail = rows("alex@devbox ~ % tail -f app.log\n" + Array.from({ length: 3000 }, (_, i) => `line ${i}`).join("\n"));
   assert.ok(scan(tail).settled >= 3001 - 2000, String(scan(tail).settled));
 });
+
+test("Starship's prompt: a colored line, then a clock and ❯; the next one a minute later", () => {
+  const lines = [["", false], ["~/app via 🦀 v1.98", true], ["at 12:21 ❯ cat guide.md", false], ["# Guide", false], ["", false],
+    ["- one", false], ["- **two**", false], ["", false], ["~/app via 🦀 v1.98", true], ["at 12:22 ❯ cat flow.mmd", false],
+    ["flowchart LR", false], ["  A --> B", false], ["", false], ["~/app via 🦀 v1.98", true], ["at 12:22 ❯ sh answer.sh", false],
+    ["## Plan", false], ["", false], ["1. Read the **config**", false], ["2. Run `make`", false], ["", false], ["That is all.", false],
+    ["", false], ["~/app via 🦀 v1.98", true]].map(([text, styled]) => ({ text, eol: true, styled }));
+  lines.splice(15, 0, { text: "", eol: true, styled: false });   // a blank line before the heading
+  const got = regions(lines, lines.length).map(({ kind, from, to }) => ({ kind, from, to }));
+  assert.deepEqual(got, [{ kind: "markdown", from: 3, to: 6 }, { kind: "mermaid", from: 10, to: 11 }, { kind: "markdown", from: 16, to: 21 }]);
+});

@@ -25,7 +25,10 @@ export async function mermaidSvg(source: string, dark: boolean): Promise<string>
   const mermaid = await mermaidLib;
   const theme = dark ? "dark" : "default";
   if (theme !== shownTheme) {
-    mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme, htmlLabels: false,
+    // Mermaid's dark pie slices are near black on a dark terminal: readable ones instead
+    const pies = ["#5b8def", "#d0679d", "#3fb5a3", "#e0a240", "#9b7be0", "#e06c5b", "#6bbf59", "#56b3d9"];
+    const themeVariables = dark ? Object.fromEntries(pies.map((c, i) => [`pie${i + 1}`, c])) : {};
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme, themeVariables, htmlLabels: false,
       flowchart: { htmlLabels: false }, fontFamily: "-apple-system, BlinkMacSystemFont, Helvetica, sans-serif" });
     shownTheme = theme;
   }
