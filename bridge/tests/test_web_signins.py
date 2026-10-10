@@ -60,7 +60,9 @@ class SignInsTest(unittest.TestCase):
     def test_an_unreadable_file_starts_empty(self):
         for raw in ("{not json", "[]", json.dumps({"salt": "s1", "sessions": {"a": "soon"}})):
             self.file.write_text(raw)
-            a = self.auth()
+            with mock.patch.object(auth, "log") as logged:      # said in the log (not the real one)
+                a = self.auth()
+            self.assertTrue(logged.called, raw)
             self.assertFalse(a.check_session("a"))
             self.assertTrue(a.check_session(a.check_password("right one", "10.0.0.5")), raw)
 

@@ -5,6 +5,8 @@ application cursor keys (mc, vim) gets the wrong ones. tmux's own key names are 
 tmux for the pane's current mode, so keys the page sends go to tmux by name."""
 import re
 
+import iterm2
+
 BASE = {"A": "Up", "B": "Down", "C": "Right", "D": "Left", "H": "Home", "F": "End",
         "P": "F1", "Q": "F2", "R": "F3", "S": "F4"}
 TILDE = {"2": "IC", "3": "DC", "5": "PPage", "6": "NPage", "15": "F5", "17": "F6", "18": "F7",
@@ -33,3 +35,18 @@ def key_names(data):
         names.append(name)
         i = m.end()
     return names or None
+
+
+async def type_into(conn, session, data):
+    """Text as it is; special keys for a tmux pane by tmux's names, which tmux encodes for the
+    pane's cursor mode (mc and vim switch to application cursor keys). Says which way it went."""
+    names = key_names(data)
+    tab = session.tab
+    if names and tab and tab.tmux_window_id not in (None, "-1"):
+        pane = await session.async_get_variable("tmuxWindowPane")
+        tc = await iterm2.async_get_tmux_connection_by_connection_id(conn, tab.tmux_connection_id)
+        if tc and pane not in (None, ""):
+            await tc.async_send_command(f"send-keys -t %{str(pane).lstrip('%')} {' '.join(names)}")
+            return "keys"
+    await session.async_send_text(data, suppress_broadcast=True)
+    return "text"

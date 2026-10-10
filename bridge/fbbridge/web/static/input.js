@@ -3,6 +3,7 @@
 import { ctrlChar, encodeKey } from "./keys.js";
 import { selectedText } from "./seltext.js";
 import { copyByCommand, keepSelectionAt } from "./touchcopy.js";
+import { composing } from "./trace.js";
 
 // Four rows of six keys, grouped by what they do: text and the clipboard (with Upload), control
 // keys, the arrows with their modifiers, and moving around. Fn swaps the last two rows for the
@@ -29,7 +30,8 @@ export class Input {
     this.bind();
   }
 
-  type(text) { if (text) { this.send(text); this.options.onTyped(); } }
+  // path and e: how it was typed and when, for the latency trace (trace.js)
+  type(text, path = "other", e = null) { if (text) { this.send(text, path, e); this.options.onTyped(); } }
 
   withMods(text) {
     let out = text;
@@ -44,15 +46,16 @@ export class Input {
     k.addEventListener("keydown", (e) => {
       if (e.isComposing) return;
       const seq = encodeKey(e, this.options.appCursor());
-      if (seq !== null) { e.preventDefault(); this.type(this.withMods(seq)); }
+      if (seq !== null) { e.preventDefault(); this.type(this.withMods(seq), "keydown", e); }
     });
     k.addEventListener("input", (e) => {
       if (e.isComposing) return;
       const text = e.inputType === "insertLineBreak" ? "\r" : k.value;
       k.value = "";
-      this.type(this.withMods(text.replace(/\n/g, "\r")));
+      this.type(this.withMods(text.replace(/\n/g, "\r")), "input", e);
     });
-    k.addEventListener("compositionend", () => { this.type(k.value); k.value = ""; });
+    k.addEventListener("compositionstart", composing);
+    k.addEventListener("compositionend", (e) => { this.type(k.value, "compose", e); k.value = ""; });
     // The field may lie over the cursor's row (for iOS's long-press Paste): a short tap on it
     // still moves the cursor like a tap on the terminal.
     let down = null;
@@ -72,13 +75,36 @@ export class Input {
     k.addEventListener("blur", () => typing(false));
     // The button never takes focus itself; iOS opens the keyboard for a focus() made in its click.
     this.kbdButton.addEventListener("mousedown", (e) => e.preventDefault());
-    this.kbdButton.addEventListener("click", () => (document.activeElement === k ? k.blur() : this.focus()));
+    this.kbdButton.addEventListener("click", () => { this.wasTyping = false; document.activeElement === k ? k.blur() : this.focus(); });
     // Terminal text copies with its line ends (the page draws them with CSS, which never copies).
     document.addEventListener("copy", (e) => {
       const text = selectedText(this.term);
       if (text === null) return;
       e.clipboardData.setData("text/plain", text);
       e.preventDefault();
+    });
+    // A hardware keyboard on a phone or a tablet: iOS gives its keys (⌘V too) only to a focused
+    // field, and a long press to select takes the focus away; so after a copy from the terminal
+    // the keyboard field gets it back when the user was typing before the selection, or a
+    // hardware keyboard is known (a modifier pressed alone, which an on-screen keyboard never
+    // sends). Without one, that only brings back the keyboard that was up. (A computer keeps its
+    // selection.)
+    // ⌘C with terminal text selected copies it whatever has the focus: iOS may keep the focus in
+    // the keyboard field, whose own (empty) selection it would copy.
+    this.hardKbd = this.wasTyping = false;
+    const touchable = (this.touchable = navigator.maxTouchPoints > 0);
+    const field = (el) => !!el?.closest?.("input, textarea:not(#kbd), select, [contenteditable]");
+    k.addEventListener("keydown", (e) => { if (touchable && ["Meta", "Control", "Alt", "Shift"].includes(e.key)) this.hardKbd = true; });
+    document.addEventListener("keydown", (e) => {
+      if (!e.metaKey || e.ctrlKey || e.altKey || e.key.toLowerCase() !== "c" || !touchable || field(e.target)) return;
+      const text = selectedText(this.term);
+      if (!text) return;
+      e.preventDefault();
+      this.copySelection(text);
+    }, true);
+    document.addEventListener("copy", () => {
+      const at = document.activeElement;
+      if (at !== k && !field(at)) this.afterCopy(true);
     });
     document.addEventListener("paste", (e) => {
       if (e.target.closest?.("input, textarea:not(#kbd, #pastetext)")) return;   // let fields paste normally
@@ -104,8 +130,12 @@ export class Input {
       const t = e.touches[0];
       start = e.touches.length === 1 ? { x: t.clientX, y: t.clientY, at: Date.now() } : null;
       release();
-      if (start && document.activeElement === this.kbd) hold = setTimeout(() => { if (start) { selectWordAt(this.kbd, this.term, start.x, start.y); start.held = true; } }, 450);
+      if (start && document.activeElement === this.kbd) {
+        this.wasTyping = true;                     // a copy of what gets selected gives the focus back (bind)
+        hold = setTimeout(() => { if (start) { selectWordAt(this.kbd, this.term, start.x, start.y); start.held = true; } }, 450);
+      }
     }, { passive: true });
+    k.addEventListener("blur", () => { if (!start) this.wasTyping = false; });   // closed by the user, not by a selection
     this.term.addEventListener("touchmove", (e) => {
       const t = e.touches[0];
       if (start && Math.hypot(t.clientX - start.x, t.clientY - start.y) > 10) { start = null; release(); }
@@ -142,7 +172,15 @@ export class Input {
 
   paste(text) {
     const clean = text.replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "").replace(/\n/g, "\r");
-    this.type(this.options.bracketed() ? `\x1b[200~${clean}\x1b[201~` : clean);
+    this.type(this.options.bracketed() ? `\x1b[200~${clean}\x1b[201~` : clean, "paste");
+  }
+
+  // After a copy from the terminal on a touch screen the keyboard field takes the keys back when a
+  // hardware keyboard is known or the user was typing before the selection (bind).
+  afterCopy(later = false) {
+    if (!this.touchable || !(this.hardKbd || this.wasTyping)) return;
+    this.wasTyping = false;
+    if (later) setTimeout(() => this.focus(), 0); else this.focus();
   }
 
   // Copies the selection, or `given` text (the Copy button's, taken while it was selected). The
@@ -151,7 +189,11 @@ export class Input {
     const text = given ?? selectedText(this.term) ?? String(getSelection());
     if (!text) return this.options.status("Select text first, then press Copy.");
     if (window.isSecureContext && navigator.clipboard?.writeText) {
-      try { await navigator.clipboard.writeText(text); return this.options.status("Copied."); } catch { /* fall through */ }
+      try {
+        await navigator.clipboard.writeText(text);
+        this.afterCopy();                          // ⌘V next
+        return this.options.status("Copied.");
+      } catch { /* fall through */ }
     }
     const ok = given ? copyByCommand(text) : document.execCommand("copy");
     this.options.status(ok ? "Copied." : "Copying is blocked here; use the system Copy menu.");
@@ -210,7 +252,7 @@ export class Input {
       if (a === "copy") return this.copySelection();
       let seq = a;
       if (a.startsWith("arrow:")) seq = (this.options.appCursor() ? "\x1bO" : "\x1b[") + a.slice(6);
-      this.type(this.withMods(seq));
+      this.type(this.withMods(seq), "hotkey", e);
     });
   }
 

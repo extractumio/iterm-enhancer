@@ -1,19 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
-"""The terminal mirror: one shared poll of iTerm's windows and titles (Hub), and per browser
-the shown session's screen, history and input (Client), over the page's WebSocket."""
+"""The terminal mirror, per browser: the shown session's screen, history and input (Client),
+over the page's WebSocket. The poll of iTerm's windows they share is in hub.py."""
 import asyncio
 import json
+import math
+import time
 
 import iterm2
 
 from ..common import UserError, log
 from ..resolve import theme_of
 from .httpd import ConnectionClosed
-from .layout import layout_of
 from .merge import MergeError, merge_windows
 from .newsession import NewSessionError, new_session, new_window, profiles, reorder_tabs
 from .rename import RenameError, rename
-from .tmuxkeys import key_names
+from .tmuxkeys import type_into
+from .hub import encode, gone
+from .trace import Tracer
 from .screen import enc_line, line_key
 
 FIRST_HISTORY = 1000   # scrollback lines sent when a session opens; older ones load on scroll
@@ -27,7 +30,6 @@ FRAME_GAP = 0.03       # shortest gap between two screen frames (max ~30 fps)
 POLL_ACTIVE = 0.05     # seconds between polls while busy
 POLL_IDLE = 0.25       # seconds between polls when nothing changed for ACTIVE_FOR
 ACTIVE_FOR = 3.0
-LAYOUT_EVERY = 2       # seconds between window/tab/title polls
 SEND_TIMEOUT = 10      # a browser that takes longer to accept a message is dropped
 CLOSED = "This session has closed. Pick another one."
 DROPPED = "iTerm2 dropped this tmux connection; its raw output is not shown. Use Reattach above, or pick another session."
@@ -37,100 +39,10 @@ ACTIONS = {"sub": "open the session", "in": "type into the session", "files": "s
            "new": "open a new session", "rename": "name the session", "merge": "merge the windows"}
 
 
-def gone(e):
-    """iTerm2's answer for a session that has closed (its RPCException names it)."""
-    return "SESSION_NOT_FOUND" in str(e)
-
-
-def encode(msg):
-    return json.dumps(msg, separators=(",", ":"), ensure_ascii=False)
-
-
 def screen_key(screen):
     """Identity of a whole screen (cells, styles, cursor, position), to skip an unchanged one."""
     proto = getattr(screen, "_ScreenContents__proto", None)
     return proto.SerializeToString() if proto is not None else None
-
-
-class Hub:
-    """One poll of iTerm's windows, tabs and titles, shared by every signed-in browser; and
-    the original size of each session a browser resized (Fit iTerm), shared too."""
-
-    def __init__(self, app, tmux=None):
-        self.app, self.tmux = app, tmux      # tmux: the bridge's watch for dropped integrations (AC-54)
-        self.clients = set()
-        if tmux:
-            tmux.listeners.append(self.drops_changed)
-        self.layout = None
-        self.fitted = {}         # session id -> [original (cols, rows), browsers that fitted it]
-        self.merging = asyncio.Lock()   # two browsers merging at once would move tabs of closed windows
-
-    async def run(self):
-        while True:
-            if any(not c.paused for c in self.clients):     # nobody looking: nothing to ask iTerm2
-                await self.refresh()
-            await asyncio.sleep(LAYOUT_EVERY)
-
-    def stop(self):
-        if self.tmux and self.drops_changed in self.tmux.listeners:
-            self.tmux.listeners.remove(self.drops_changed)
-
-    def drops(self):
-        return {"t": "drops", "items": self.tmux.items() if self.tmux else []}
-
-    def suspect(self, sid):
-        return bool(self.tmux and self.tmux.suspect(sid))
-
-    def drops_changed(self):
-        text = encode(self.drops())
-        for c in list(self.clients):
-            asyncio.create_task(c.send_quietly(text))
-            if c.session and self.suspect(c.session.session_id):
-                asyncio.create_task(c.leave_dropped())
-
-    async def refresh(self):
-        """Ask iTerm2 for its windows now and tell every browser what changed."""
-        try:
-            lay = await layout_of(self.app)
-        except Exception as e:       # surface, keep polling
-            log(f"web: layout: {e!r}")
-            return
-        if lay != self.layout:
-            self.layout = lay
-            text = encode({"t": "layout", "groups": lay})       # once, for every browser
-            for c in list(self.clients):
-                asyncio.create_task(c.send_quietly(text))     # a stalled browser holds up nobody
-
-    async def fit(self, client, session, cols, rows):
-        sid = session.session_id
-        if sid not in self.fitted:
-            g = session.grid_size  # a live protobuf that iTerm2 updates in place: copy the numbers
-            self.fitted[sid] = [(g.width, g.height), set()]
-        self.fitted[sid][1].add(client)
-        await session.async_set_grid_size(iterm2.util.Size(max(20, cols), max(5, rows)))
-
-    async def release(self, client):
-        """client no longer wants its fits; the last browser to let go restores iTerm's size."""
-        for sid, (size, owners) in list(self.fitted.items()):
-            if client not in owners:
-                continue
-            owners.discard(client)
-            if not owners:
-                del self.fitted[sid]
-                session = self.app.get_session_by_id(sid)
-                try:
-                    if session:
-                        await session.async_set_grid_size(iterm2.util.Size(*size))
-                except Exception as e:
-                    if not gone(e):          # a closed session has no size to give back
-                        raise
-
-    async def join(self, client):
-        self.clients.add(client)
-        if self.layout is None:
-            self.layout = await layout_of(self.app)
-        await client.send({"t": "layout", "groups": self.layout})
-        await client.send(self.drops())
 
 
 class Client:
@@ -146,6 +58,8 @@ class Client:
         self.active_until = 0.0  # loop time until which the screen is polled fast
         self.paused = False      # the page is hidden
         self.last_new = -NEW_EVERY   # loop time of this browser's last new session
+        self.typed_at = -math.inf    # loop time of its last key (the window poll waits)
+        self.trace = Tracer(self)    # ?trace=1 (AC-55)
         self.reset_screen()
 
     def reset_screen(self):
@@ -155,15 +69,18 @@ class Client:
         self.prev = []           # per screen line: (line key, cursor x)
         self.encoded = {}        # (line key, cursor x) -> encoded line, from the last frame
         self.prev_size = None
+        self.prev_cursor = None
 
     async def send(self, msg):
         """A message (or its encoded text). A stalled browser must not hold up its session's
         stream, or the bridge: it is dropped."""
+        text, t = msg if isinstance(msg, str) else encode(msg), time.perf_counter()
         try:
-            await asyncio.wait_for(self.ws.send(msg if isinstance(msg, str) else encode(msg)), SEND_TIMEOUT)
+            await asyncio.wait_for(self.ws.send(text), SEND_TIMEOUT)
         except TimeoutError:
             await self.ws.close()
             raise ConnectionClosed()
+        self.trace.sent(msg, t, len(text))
 
     async def send_quietly(self, msg):
         try:
@@ -185,7 +102,9 @@ class Client:
 
     async def send_hist(self, session, mode, first, upto):
         """Lines first..upto as a reset, an append or a prepend of the browser's history."""
+        t = time.perf_counter()
         lines = await self.lines(session, first, upto - first) if first < upto else []
+        self.trace.hist(mode, len(lines), t)
         oldest = self.oldest()
         await self.send({"t": "hist", "mode": mode, "sid": session.session_id, "first": first, "oldest": oldest,
                          "truncated": oldest > self.overflow, "lines": lines})
@@ -229,10 +148,11 @@ class Client:
             enc = encoded.get(k) if k[0] is not None else None
             self.encoded[k] = enc = enc or enc_line(line, k[1])
             changes.append([i, enc])
-        if full or changes:
+        if full or changes:     # with the keys it shows, when tracing: the cursor moved or its row changed
+            moved = (cx, cy) != self.prev_cursor or any(i == cy for i, _ in changes)
             await self.send({"t": "screen", "sid": session.session_id, "full": full, "n": screen.number_of_lines,
-                             "cols": size[0], "rows": size[1], "ch": changes})
-        self.prev_size = size
+                             "cols": size[0], "rows": size[1], "ch": changes, **self.trace.frame(moved)})
+        self.prev_size, self.prev_cursor = size, (cx, cy)
         return bool(full or changes)
 
     async def stream(self, session):
@@ -245,6 +165,7 @@ class Client:
         loop = asyncio.get_running_loop()
 
         async def on_update(_conn, _msg):
+            self.trace.woken("notify")
             changed.set()
 
         sub = await iterm2.notifications.async_subscribe_to_screen_update_notification(
@@ -255,14 +176,17 @@ class Client:
                 changed.clear()
                 if self.hub.suspect(session.session_id):      # raw tmux protocol: not mirrored (AC-54)
                     return await self.send({"t": "error", "msg": DROPPED, "sid": session.session_id})
-                if await self.send_screen(session, await session.async_get_screen_contents()):
+                t = time.perf_counter()
+                screen = await session.async_get_screen_contents()
+                self.trace.read(t)
+                if await self.send_screen(session, screen):
                     self.active_until = loop.time() + ACTIVE_FOR
                     await asyncio.sleep(FRAME_GAP)
                 busy = loop.time() < self.active_until
                 try:
                     await asyncio.wait_for(changed.wait(), POLL_ACTIVE if busy else POLL_IDLE)
                 except TimeoutError:
-                    pass
+                    self.trace.woken("poll")
                 ticks += 1
                 if ticks % 40 == 0 and not busy:        # follow light/dark and profile switches
                     new = await theme_of(self.app, session)
@@ -283,11 +207,14 @@ class Client:
             self.stream_task = None
 
     async def subscribe(self, sid):
+        t = time.perf_counter()
         await self.stop_stream()
         await self.restore_sizes()       # "Fit" applies to the shown session only
         self.session = self.app.get_session_by_id(sid)
         self.reset_screen()
-        if not self.session:
+        if self.session:
+            self.trace.opening(self.session, t)
+        else:
             await self.send({"t": "error", "msg": CLOSED, "sid": sid})   # the page drops it once it shows another pane
             return
         if self.hub.suspect(sid):
@@ -334,12 +261,19 @@ class Client:
         elif t == "in" and self.session and self.hub.suspect(self.session.session_id):
             await self.send({"t": "error", "msg": DROPPED, "sid": self.session.session_id})   # it would reach tmux as commands
         elif t == "in" and self.session:
+            key = self.trace.key(msg)              # timed step by step when tracing (AC-55)
             if self.show_in_iterm:
                 await self.bring_tab_forward()
-            await self.type_into(self.session, msg["data"])
-            self.active_until = asyncio.get_running_loop().time() + ACTIVE_FOR
+            self.trace.step(key, "fwd")
+            self.trace.step(key, "type", via=await type_into(self.conn, self.session, msg["data"]))
+            self.trace.typed(key)
+            self.typed_at = asyncio.get_running_loop().time()
+            self.active_until = self.typed_at + ACTIVE_FOR
             if self.wake:
+                self.trace.woken("wake")
                 self.wake.set()                    # show the echo now, not at the next poll
+        elif t == "trace":
+            await self.trace.handle(msg)
         elif t == "files" and self.session:
             await self.send({"t": "files", "sid": self.session.session_id, **await self.files_of(self.session)})
         elif t == "more":
@@ -395,19 +329,6 @@ class Client:
         await self.send({"t": "layout", "groups": self.hub.layout})    # in order: the list has it, then show it
         await self.send({"t": "created", "id": sid, "note": note})
 
-    async def type_into(self, session, data):
-        """Text as it is; special keys for a tmux pane by tmux's names, which tmux encodes for
-        the pane's cursor mode (mc and vim switch to application cursor keys)."""
-        names = key_names(data)
-        tab = session.tab
-        if names and tab and tab.tmux_window_id not in (None, "-1"):
-            pane = await session.async_get_variable("tmuxWindowPane")
-            tc = await iterm2.async_get_tmux_connection_by_connection_id(self.conn, tab.tmux_connection_id)
-            if tc and pane not in (None, ""):
-                await tc.async_send_command(f"send-keys -t %{str(pane).lstrip('%')} {' '.join(names)}")
-                return
-        await session.async_send_text(data, suppress_broadcast=True)
-
     async def leave_dropped(self):
         """The shown gateway turned out dropped: stop mirroring it."""
         sid = self.session.session_id
@@ -458,8 +379,9 @@ class Client:
             async for raw in self.ws:
                 msg = {}
                 try:
-                    msg = json.loads(raw)
+                    msg, t = json.loads(raw), time.perf_counter()
                     await self.handle(msg)
+                    self.trace.handled(msg.get("t"), t)
                 except ConnectionClosed:
                     raise
                 except Exception as e:  # fail loud: in words on the page, and in the log
@@ -472,5 +394,6 @@ class Client:
             pass        # a phone that sleeps or switches network drops the socket without a goodbye
         finally:
             self.hub.clients.discard(self)
+            self.trace.close()
             await self.stop_stream()
             await self.hub.release(self)     # a phone that goes away must not leave iTerm shrunk

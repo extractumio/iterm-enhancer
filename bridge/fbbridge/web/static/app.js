@@ -12,6 +12,7 @@ import { TermView } from "./term.js";
 import { Views } from "./views.js";
 import { uploads } from "./upload.js";
 import { waitingCards } from "./waiting.js";
+import * as trace from "./trace.js";
 
 const $ = (id) => document.getElementById(id);
 const narrow = matchMedia("(max-width: 860px)");
@@ -36,7 +37,7 @@ const files = uploads({ sid: () => st.sid, paste: (text) => input.paste(text), t
 const view = new TermView({ term: $("term"), hist: $("hist"), screen: $("screen"), note: $("note"),
   bottomBtn: $("bottom"), paused: $("paused"), send, keep: touch.matches ? 2000 : Infinity });
 const input = new Input({ kbd: $("kbd"), kbdButton: $("kbdbtn"), term: $("term"), panel: $("hotkeys"), pasteDialog: $("pastebox"),
-  send: (data) => { send({ t: "in", data }); if (data.includes("\r")) views.commandSent(); },
+  send: (data, path, e) => { send({ t: "in", data, ...trace.keyFields(data, path, e) }); if (data.includes("\r")) views.commandSent(); },
   options: { appCursor: () => st.appCursor, bracketed: () => st.bracketed, onTyped: () => view.typed(), status: toast, pasteImage: files.pasteImage, pickFile,
     tapLink: (x, y) => tapLink(x, y), tapMove: (x, y) => tapMove(x, y) } });
 copyButton($("copyfab"), $("term"), (text) => input.copySelection(text));
@@ -67,7 +68,7 @@ function tapMove(x, y) {
   if (from && to && to.row === from.row && to.col > from.col) to.col = Math.max(from.col, Math.min(to.col, typedEnd(view.screen[to.row]?.data)));
   const vertical = !!found.item.agent && !!from && !!to && inOneBox($("screen"), from.row, to.row);
   const seq = arrowsTo(from, to, { vertical, appCursor: st.appCursor });
-  if (seq) send({ t: "in", data: seq });
+  if (seq) send({ t: "in", data: seq, ...trace.keyFields(seq, "tap") });
   if (seq) view.typed();
 }
 $("term").addEventListener("click", (e) => { if (e.altKey && !String(getSelection())) tapMove(e.clientX, e.clientY); });
@@ -80,7 +81,8 @@ function placeKbd() {
   if (!r || r.bottom < t.top || r.top > t.bottom) { k.style.cssText = ""; return; }
   k.style.cssText = `left:${t.left}px;top:${r.top}px;width:${t.width}px;height:${r.height}px`;   // the cursor's row only
 }
-view.onDrawn = () => { placeKbd(); marks(); };
+view.onDrawn = () => { placeKbd(); marks(); trace.drawn(); };
+trace.watch(view);
 let kbdFrame = 0;
 $("term").addEventListener("scroll", () => { if (!kbdFrame) kbdFrame = requestAnimationFrame(() => { kbdFrame = 0; placeKbd(); }); }, { passive: true });
 
@@ -111,8 +113,8 @@ let retry = 500;
 function connect() {
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws`);
   st.ws = ws;
-  ws.onopen = () => { retry = 500; status(""); signedIn(); };
-  ws.onmessage = (ev) => onMessage(JSON.parse(ev.data));
+  ws.onopen = () => { retry = 500; status(""); signedIn(); trace.connected(send, ws); };
+  ws.onmessage = (ev) => onMessage(trace.parse(ev.data));
   ws.onclose = async () => {
     if (st.ws !== ws) return;
     const check = await fetch("/auth/check").then((r) => r.status, () => 0);
@@ -150,6 +152,8 @@ function signedIn() {
   send({ t: "prefs", showInIterm: st.showInIterm });
   if (st.sid) select(st.sid, true);
   focusTerminal();                                 // a computer types into the chat at once; a phone opens no keyboard
+  active = true;                                   // a new connection streams until told otherwise
+  syncActive();
 }
 
 // ---------- updates ----------
@@ -192,11 +196,22 @@ for (const b of [document.querySelector('button[data-view="term"]'), $("backterm
 // A page Safari brings back from memory connects again, and so learns the current build.
 addEventListener("pageshow", (e) => { if (e.persisted && st.ws?.readyState !== WebSocket.OPEN) connect(); });
 
-// A hidden page (another app, a locked phone) costs the Mac nothing: its stream pauses.
-document.addEventListener("visibilitychange", () => send({ t: document.hidden ? "pause" : "resume" }));
+// A hidden page (another app, a locked phone) costs the Mac nothing: its stream pauses, and the
+// window poll with it when no page is left. On a computer so does a page out of focus (the user
+// works in another window, iTerm2 itself say); focus in the Files frame is still this page's.
+let active = true;                             // as the bridge takes a page that connects
+function syncActive() {
+  const now = !document.hidden && (!computer.matches || document.hasFocus());
+  if (now !== active) send({ t: now ? "resume" : "pause" });
+  active = now;
+}
+document.addEventListener("visibilitychange", syncActive);
+addEventListener("focus", syncActive);
+addEventListener("blur", () => setTimeout(syncActive, 0));   // the focus may have gone into the Files frame
 
 function onMessage(m) {
   if (m.sid && m.sid !== st.sid) return;            // a frame from the session we just left
+  trace.received(m);
   switch (m.t) {
     case "layout": st.groups = m.groups; reminders.layout(m.groups); drawNav(); tools.showMerge(m.groups); break;
     case "theme": applyTheme(m.theme); break;
@@ -209,6 +224,7 @@ function onMessage(m) {
     case "drops": tools.showDrops(m.items); break;
     case "profiles": tools.showProfiles(m.items); break;
     case "build": checkBuild(m.id); break;
+    case "trace": trace.onMessage(m); break;
     case "created": pick(m.id); if (m.note) toast(m.note, 6000); break;
   }
 }
@@ -270,6 +286,7 @@ function select(id, force = false) {
   status("");                                      // an error about the pane shown before
   if (tools.renaming()) tools.endRename();         // a name being typed was for that pane
   view.reset();
+  trace.opening(id);
   send({ t: "sub", id });                          // first: the server answers "files" for the subscribed pane
   views.sessionChanged();
   drawNav(); syncControls();

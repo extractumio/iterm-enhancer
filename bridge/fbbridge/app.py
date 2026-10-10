@@ -12,7 +12,7 @@ import urllib.error
 import iterm2
 
 from .backend import Backend
-from . import agentctl, settings
+from . import agentctl, profiler, settings
 from .common import APP_DIR, BASE, HEARTBEAT, HOSTS_EVERY, POLL, POLL_TIMEOUT, SHELLS, THEME_EVERY, TOOL_ID, UserError, log
 from .lifecycle import LockError, bounded, connection_closed, take_lock, watch
 from .inventory import Inventory
@@ -53,6 +53,7 @@ def stop(reason, code=0):
 
 atexit.register(backend.stop)
 signal.signal(signal.SIGTERM, lambda *_: stop("SIGTERM"))  # Script Console, a newer bridge
+profiler.install()   # kill -USR1: where the bridge spends its time (AC-55)
 
 
 def typable(text):

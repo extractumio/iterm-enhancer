@@ -96,6 +96,12 @@ svg.lu circle { fill: none; stroke: currentColor; }
 .s .ag-claude { color: #f0b48a; }     /* pale orange */
 .s .ag-codex { color: #c9b8ff; }      /* pale violet */
 .item .st { display: grid; place-items: center; padding-top: 2px; }
+/* a tab's other panes (a coding agent's subagents) under its first, shifted in as children */
+#sessions .kids { margin: 0 0 2px 22px; padding: 0 0 0 6px; list-style: none; border-left: 1px solid var(--line); }
+.item.child { padding-top: 4px; padding-bottom: 4px; }
+.item.child .t { font-size: 12.5px; font-weight: 400; }
+.item.child .idx { display: none; }
+.item.child .s { padding-left: 0; }                         /* no tab number to line up with */
 
 /* agent states (Lucide): amber hourglass, orange question (pulsing), red alert, green check */
 .state { display: inline-grid; place-items: center; flex: 0 0 auto; }
@@ -252,6 +258,11 @@ svg.lu circle { fill: none; stroke: currentColor; }
   background: var(--chrome-2); border: 1px solid var(--line); color: var(--t-fg); }
 #bottom { position: absolute; right: 16px; bottom: calc(16px + var(--keys-h, 0px)); width: 40px; height: 40px;
   border-radius: 50%; display: grid; place-items: center; background: var(--chrome-2); border: 1px solid var(--line); }
+
+/* the latency trace's badge (trace.js, AC-55): small, out of the terminal's way */
+#tracebadge { position: fixed; top: calc(4px + env(safe-area-inset-top)); right: 8px; z-index: 30; padding: 2px 8px;
+  border-radius: 10px; border: 1px solid var(--line); background: var(--chrome-2); color: var(--muted);
+  font: 500 11px/16px ui-monospace, Menlo, monospace; opacity: .9; }
 
 /* ---------- floating keyboard and hot keys buttons (touch screens and narrow windows) ---------- */
 #fabs { display: none; position: absolute; right: 12px; z-index: 6; gap: 10px;

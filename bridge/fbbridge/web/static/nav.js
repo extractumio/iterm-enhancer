@@ -82,17 +82,17 @@ function grip(kind, label) {
   return g;
 }
 
-function row(item, current, onPick, movable) {
+function row(item, current, onPick, movable, child = false) {
   const li = document.createElement("li");
   if (movable) li.append(grip("row", "this tab"));
-  const b = el("button", "item" + (item.id === current ? " on" : ""));
+  const b = el("button", "item" + (child ? " child" : "") + (item.id === current ? " on" : ""));
   b.type = "button";
   b.dataset.id = item.id;
   if (item.id === current) b.setAttribute("aria-current", "true");
   const txt = el("span", "txt");
   const head = el("span", "head");
-  const idx = el("span", "idx", item.index || "");
-  if (item.index) idx.title = `Tab ${item.index}`;
+  const idx = el("span", "idx", child ? "" : item.index || "");
+  if (item.index && !child) idx.title = `Tab ${item.index}`;
   head.append(idx, el("span", "t", item.title));
   txt.append(head);
   const parts = [...(item.host ? [item.host] : []), ...item.sub];
@@ -147,7 +147,17 @@ export function renderNav(list, groups, current, query, onPick, collapsed, onTog
     if (!closed) {
       const ul = el("ul");
       if (g.wid) ul.dataset.wid = g.wid;
-      for (const it of items) ul.append(row(it, current, onPick, !!g.wid && !q));
+      // a tab's panes after its first (a coding agent's subagents) go under it; a filter shows them flat
+      let parent = null;
+      for (const it of items) {
+        if (!q && it.pane > 1 && parent) {
+          if (!parent.kids) parent.append(parent.kids = el("ul", "kids"));
+          parent.kids.append(row(it, current, onPick, false, true));
+          continue;
+        }
+        parent = row(it, current, onPick, !!g.wid && !q);
+        ul.append(parent);
+      }
       sec.append(ul);
     }
     frag.append(sec);

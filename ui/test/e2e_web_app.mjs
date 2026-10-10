@@ -243,6 +243,36 @@ export async function webApp(browser) {
   check("AC-52 web app: a new terminal shows its prompt, not the empty rows below it, also when the prompt comes later",
     fresh.shown === 4 && fresh.inView, JSON.stringify(fresh));
 
+  // a tab's other panes (a coding agent's subagents) go under its first one, as children
+  const pane = (id, title, n) => ({ ...item(id, title, "working"), index: "3", pane: n });
+  tell({ t: "layout", groups: [{ ...layout("done")[0], items: [item("S1", "Shown", "working"), pane("P1", "Orange notes", 1),
+    pane("P2", "pragmatic", 2), pane("P3", "general-purpose", 3), item("S4", "Deploy", "done")] }] });
+  await page.waitForTimeout(150);
+  const tree = await $eval(() => ({
+    top: [...document.querySelectorAll("#sessions .grp > ul > li > .item")].map((b) => b.dataset.id),
+    kids: [...document.querySelectorAll('#sessions .item[data-id="P1"] ~ .kids .item.child')].map((b) => b.dataset.id),
+    kidGrips: document.querySelectorAll("#sessions .kids .grip").length,
+    kidIdx: [...document.querySelectorAll("#sessions .kids .idx")].map((i) => i.textContent).join(""),
+    indent: document.querySelector("#sessions .kids .item").getBoundingClientRect().left - document.querySelector('#sessions .item[data-id="P1"]').getBoundingClientRect().left }));
+  await page.fill("#filter", "pragmatic");
+  const flat = await $eval(() => [...document.querySelectorAll("#sessions .item")].map((b) => b.dataset.id + (b.classList.contains("child") ? "*" : "")));
+  await page.fill("#filter", "");
+  check("AC-52 web app: a tab's other panes go under its first one, shifted in, with no tab number or grip; a filter shows them flat",
+    tree.top.join() === "S1,P1,S4" && tree.kids.join() === "P2,P3" && !tree.kidGrips && !tree.kidIdx && tree.indent > 10 && flat.join() === "P2",
+    JSON.stringify({ tree, flat }));
+
+  // on a computer a page out of focus pauses its stream; the Files frame's focus is the page's
+  const flow = async (focused, ev) => {
+    const before = sent.length;
+    await $eval(([f, e]) => { document.hasFocus = () => f; dispatchEvent(new Event(e)); }, [focused, ev]);
+    await page.waitForTimeout(50);
+    return sent.slice(before).filter((m) => m.t === "pause" || m.t === "resume").map((m) => m.t).join();
+  };
+  const away = await flow(false, "blur"), inFrame = await flow(true, "blur"), still = await flow(true, "focus");
+  const again = await flow(false, "blur"), returned = await flow(true, "focus");
+  check("AC-52 web app: on a computer a page out of focus pauses its stream and resumes in focus; focus in the Files frame does not pause",
+    away === "pause" && inFrame === "resume" && still === "" && again === "pause" && returned === "resume", JSON.stringify({ away, inFrame, still, again, returned }));
+
   check("AC-52 web app: no page errors", !errors.length, errors.join(" | "));
   await page.close();
 }

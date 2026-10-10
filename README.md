@@ -182,6 +182,8 @@ and sign in:
   panel and its status lines wait behind an ⓘ button. On a phone lines
   re-flow to the screen (**Wrap**); **Grid** keeps iTerm2's layout, **Fit** scales it to the
   width, **Resize iTerm to this screen** (⋯) changes the Mac's window until you restore it.
+  With a keyboard attached to a phone or a tablet, ⌘C copies the selected terminal text and ⌘V
+  pastes into the pane.
 - **Names**: the pencil beside the title names the session: its iTerm2 tab and session, and in
   tmux its window and pane title. Clear the name to give it back to iTerm2 and tmux.
 - **Links**: web addresses and file paths or names the terminal printed (`src/main.rs:42`,
@@ -192,6 +194,15 @@ and sign in:
   shell runs, in `$TMPDIR/iterm-enhancer-paste/` on this Mac or `~/.cache/iterm-enhancer/paste/`
   on a host with the helper; its path is pasted, which Claude Code takes as an image. Files go
   after 7 days.
+- **Latency trace**: when typing lags, open the page with `?trace=1` (for example
+  `https://<mac>.<tailnet>.ts.net/?trace=1`) and use it as usual. For 15 minutes the page and the
+  bridge record how long each key takes to its echo and where (page, connection, bridge, iTerm2 or
+  tmux), how long a session takes to open, round trips and stalls, into
+  `~/.iterm-enhancer/logs/trace-<date>-<time>.jsonl`; no typed text or screen content. A badge
+  shows the time left and the echo; tap it to stop. Another page with `?trace=1` joins it.
+  `scripts/trace_report.py` sums up the newest trace by stage and by mode (shell or tmux, local
+  or remote). When the bridge itself is busy, `kill -USR1 <bridge pid>` writes its busiest
+  functions over 15 s to `profile-<date>-<time>.txt` in the same folder.
 - **Files** and **View**: this panel for the pane's folder (remote hosts too) and its editor
   (at 1400 px and wider, Files docked on the right and View a window over the terminal);
   web links open in your browser; Finder, apps and typing into a terminal are not offered.

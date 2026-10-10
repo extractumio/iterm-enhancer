@@ -18,6 +18,23 @@ from ..viewer_profile import VIEWER_PROFILE
 from .agentstate import claude_marked, session_state
 from .newsession import profile_of
 
+# The poll asks iTerm2 for many things (9 variables a pane, an agent's screen); all at once they
+# queue up in iTerm2 ahead of a key being typed (measured: keys took 2-3 times as long during a
+# poll). At most this many are in flight, so a key waits behind a few.
+IN_FLIGHT = 4
+_gate = (None, None)     # (event loop, its semaphore)
+
+
+async def gated(aw):
+    """aw, once fewer than IN_FLIGHT of the poll's requests are with iTerm2."""
+    global _gate
+    loop = asyncio.get_running_loop()
+    if _gate[0] is not loop:
+        _gate = (loop, asyncio.Semaphore(IN_FLIGHT))
+    async with _gate[1]:
+        return await aw
+
+
 AUTO_NAME = re.compile(r"[\w.+@-]+")   # tmux names a window after its command ("claude", "zsh")
 AGENTS = ("claude", "codex")            # coding agents the list marks with their own icon
 # A title that is only a program's name says nothing the program column does not; a pane keeps
@@ -54,7 +71,7 @@ def ssh_host(command_line):
 
 
 async def _vars(obj, names):
-    values = await asyncio.gather(*(obj.async_get_variable(n) for n in names))
+    values = await asyncio.gather(*(gated(obj.async_get_variable(n)) for n in names))
     return {n: (v or "") if not isinstance(v, (int, float)) else v for n, v in zip(names, values)}
 
 
@@ -71,7 +88,7 @@ async def tmux_programs(app):
     found = {}
     for tc in await iterm2.async_get_tmux_connections(app.connection):
         try:
-            out = await tc.async_send_command("list-panes -a -F '#{pane_id} #{automatic-rename} #{pane_current_command} #{window_name}'")
+            out = await gated(tc.async_send_command("list-panes -a -F '#{pane_id} #{automatic-rename} #{pane_current_command} #{window_name}'"))
         except Exception as e:  # a connection going away: its panes show no program this time
             log(f"web: list-panes on {tc.connection_id} failed: {e}")
             continue
@@ -108,11 +125,11 @@ async def session_item(session, tab, tv, pane_no, panes, tab_no, progs=None):
         title = user_title or program_title or job or v["profileName"] or "Shell"
         titles.append(program_title)
         host = ssh_host(v["commandLine"]) if v["jobName"] == "ssh" else None
+    if pane_no > 1:     # a pane under the tab's first one (a coding agent's subagent): its own title
+        title = next((t for t in titles if t and t.lower() not in PROGRAM_NAMES), "") or job or path or "Shell"
     sub = [job] if job and job != title else []
     if path:
         sub.append(path)
-    if panes > 1:
-        sub.append(f"pane {pane_no} of {panes}")
     sub += [t for t in titles if t and t != title and t not in sub and t.lower() not in PROGRAM_NAMES]
     # The tab's position, as in iTerm's tab bar. Not the tmux window number: iTerm keeps the
     # tmux title from when the tab opened, so after renumbering two tabs could show "3".
@@ -121,12 +138,13 @@ async def session_item(session, tab, tv, pane_no, panes, tab_no, progs=None):
     agent = agent_of(job, v["commandLine"]) or (window_name if in_tmux and window_name in AGENTS else None) \
         or ("claude" if claude_marked(raw) else None)
     return {"id": session.session_id, "title": bare(title), "sub": [bare(s) for s in sub], "index": str(tab_no) if tab_no else "",
+            "pane": pane_no if panes > 1 else 0,              # the list shows panes after the first under it
             "host": host,                                  # remote host name, None on this Mac
             "profile": v["profileName"],                   # its dot in the list: one color per profile
             "agent": agent,
             # a shell at its prompt: a tap may move its cursor along the line (not in htop, less, mc)
             "shell": job in SHELLS,
-            "state": await session_state(session, raw) if agent else None}   # working, waiting, failed, done
+            "state": await gated(session_state(session, raw)) if agent else None}   # working, waiting, failed, done
 
 
 async def window_group(w, number, progs=None):
@@ -143,8 +161,7 @@ async def window_group(w, number, progs=None):
         return {"kind": "tmux", "label": "tmux", "session": tv["tmuxWindowTitle"].split(":")[0],
                 "where": "" if host else "on this Mac", "host": host, "items": items,
                 "wid": w.window_id, "new": "New tmux tab", "pool": t.tmux_connection_id}
-    wn = await w.async_get_variable("number")
-    profile = await profile_of(w)
+    wn, profile = await asyncio.gather(gated(w.async_get_variable("number")), gated(profile_of(w)))
     # "Merge windows" (merge.py) gathers the windows of one pool; the Files viewer stays alone
     viewer = bool(items) and all(it["profile"] == VIEWER_PROFILE for it in items)
     return {"kind": "window", "label": f"Window {wn or number}", "where": "", "host": None, "items": items,

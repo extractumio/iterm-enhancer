@@ -13,7 +13,8 @@ from urllib.parse import parse_qs
 from ..common import APP_DIR, LOCAL_HOST, PORT
 from . import httpd, paste, proxy
 from .auth import COOKIE, Auth, client_address
-from .mirror import CLOSED, Client, Hub
+from .hub import Hub
+from .mirror import CLOSED, Client
 from .net import host_name, lan_addresses
 
 STATIC = Path(__file__).with_name("static")

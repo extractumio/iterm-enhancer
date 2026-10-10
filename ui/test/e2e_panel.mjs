@@ -16,6 +16,8 @@ import { manyPanels } from "./e2e_sockets.mjs";
 import { webApp } from "./e2e_web_app.mjs";
 import { webTerm } from "./e2e_web_term.mjs";
 import { webMerge } from "./e2e_web_merge.mjs";
+import { webTrace } from "./e2e_web_trace.mjs";
+import { webClip } from "./e2e_web_clip.mjs";
 import { sessionTools } from "./e2e_session_tools.mjs";
 import { recoveryTools } from "./e2e_recovery.mjs";
 import { recoveryUpgrade } from "./e2e_recovery_upgrade.mjs";
@@ -459,6 +461,8 @@ try {
   await webTerm(browser);
   await webApp(browser);
   await webMerge(browser);
+  await webTrace(browser);
+  await webClip(browser);
 
   // AC-28 an outdated link says so and stops retrying
   const op = await browser.newPage();

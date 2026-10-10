@@ -121,6 +121,34 @@ class TmuxPaneTest(unittest.TestCase):
                                                tmux, tv, 1, 1, 1, {("c1", "%101"): ("claude", True, "claude")}))
         self.assertEqual((auto["title"], auto["sub"]), ("Fix the list", ["claude", "~/p"]))
 
+    def test_a_tabs_other_panes_are_named_for_themselves(self):
+        """A coding agent's subagents in panes of its tab: the first pane is the tab, the others
+        go under it with their own titles and no "pane 2 of 6"."""
+        import asyncio
+        from fbbridge.web import layout
+
+        def session(**v):
+            class S:
+                session_id = "s" + v.get("n", "1")
+
+                async def async_get_variable(self, name):
+                    return v.get(name, "")
+
+                async def async_get_screen_contents(self):
+                    return types.SimpleNamespace(number_of_lines=0, line=lambda i: None)
+            return S()
+        plain = types.SimpleNamespace(tmux_window_id=None)
+        tv = {"titleOverride": "Orange notes", "tmuxWindowName": "", "tmuxWindowTitle": ""}
+        first = asyncio.run(layout.session_item(session(jobName="claude", commandLine="claude", path="/Users/alex/p"), plain, tv, 1, 6, 3))
+        sub = asyncio.run(layout.session_item(session(n="2", terminalWindowName="pragmatic", processTitle="2.1.295", commandLine="claude --agent",
+                                                      path="/Users/alex"), plain, tv, 2, 6, 3))
+        shell = asyncio.run(layout.session_item(session(n="6", jobName="bash", path="/Users/alex"), plain, tv, 6, 6, 3))
+        self.assertEqual((first["title"], first["pane"], first["sub"]), ("Orange notes", 1, ["claude", "~/p"]))
+        self.assertEqual((sub["title"], sub["pane"], sub["sub"], sub["agent"]), ("pragmatic", 2, ["2.1.295", "~"], "claude"))
+        self.assertEqual((shell["title"], shell["pane"]), ("bash", 6))
+        alone = asyncio.run(layout.session_item(session(jobName="zsh"), plain, tv, 1, 1, 3))
+        self.assertEqual(alone["pane"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

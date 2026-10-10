@@ -329,6 +329,7 @@ class MirrorTest(unittest.TestCase):
 
     def test_a_closed_session_needs_no_size_back_and_does_not_stop_opening_another(self):
         from fbbridge.web import mirror
+        from fbbridge.web.hub import Hub
         sent = []
 
         class Gone:
@@ -340,7 +341,7 @@ class MirrorTest(unittest.TestCase):
                 sent.append(json.loads(text))
 
         app = types.SimpleNamespace(get_session_by_id=lambda sid: Gone() if sid == "fitted" else None)
-        hub = mirror.Hub(app)
+        hub = Hub(app)
         client = mirror.Client(None, hub, Ws(), 1000, None)
         hub.fitted["fitted"] = [(80, 24), {client}]
         old = sys.modules["iterm2"].__dict__.get("util")
