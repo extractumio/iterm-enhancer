@@ -122,3 +122,14 @@ test("Starship's prompt: a colored line, then a clock and ❯; the next one a mi
   const got = regions(lines, lines.length).map(({ kind, from, to }) => ({ kind, from, to }));
   assert.deepEqual(got, [{ kind: "markdown", from: 3, to: 6 }, { kind: "mermaid", from: 10, to: 11 }, { kind: "markdown", from: 16, to: 21 }]);
 });
+
+test("a document a coding agent's tool printed, indented: found, and its text without the indentation", () => {
+  const out = ["  ⎿  # Releasing", "", "     How releases are signed, see [CLAUDE.md](../CLAUDE.md).", "",
+    "     ## Signed releases", "", "     Installs check `SHA256SUMS`:", "", "     ```bash", "     make signing-key", "     ```", "",
+    "     - one", "     - two", "", "⏺ Done."];
+  const r = regions(rows(out.join("\n")));
+  assert.equal(r.length, 1);
+  assert.equal(r[0].kind, "markdown");
+  assert.ok(r[0].text.startsWith("How releases") || r[0].text.startsWith("## Signed"), r[0].text.slice(0, 40));
+  assert.ok(!/^ {4}/m.test(r[0].text.split("\n").filter((t) => !t.startsWith("make")).join("\n")), "no line indented 4 spaces: Markdown would take it for code");
+});

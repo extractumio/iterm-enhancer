@@ -338,6 +338,20 @@ export async function webWidgets(browser, name = "") {
   check(`${at} a cleared scrollback (/clear, ⌘K) takes its folds along: new lines with the same numbers show`, cleared.folds === 0 && cleared.hidden === 0, JSON.stringify(cleared));
   await gone.page.close();
 
+  // a document a coding agent's tool printed is indented: rendered as Markdown, not as one code block
+  const tool = ["⏺ Bash(sed -n 1,20p docs/RELEASING.md)", "  ⎿  # Releasing", "", "     How releases are signed.", "",
+    "     ## Signed releases", "", "     Installs check `SHA256SUMS`:", "", "     ```bash", "     make signing-key", "     ```", "",
+    "     - one", "     - two", "", "⏺ Done."].map((t) => line(t));
+  const ind = await open(browser, { history: tool, screen: [] });
+  await ind.page.waitForFunction(() => document.querySelector("#hist .ln.wg-host")?.shadowRoot.querySelector(".body.markdown h2"), null, { timeout: 8000 }).catch(() => {});
+  const md2 = await ind.page.evaluate(() => {
+    const b = document.querySelector("#hist .ln.wg-host")?.shadowRoot.querySelector(".body.markdown");
+    return { h2: b?.querySelector("h2")?.textContent, li: b?.querySelectorAll("li").length, pres: b?.querySelectorAll("pre").length };
+  });
+  check(`${at} a document a coding agent's tool printed (indented) is rendered as Markdown, its fence as code`,
+    md2.h2 === "Signed releases" && md2.li === 2 && md2.pres === 1, JSON.stringify(md2));
+  await ind.page.close();
+
   // fbd not running: the widget says so, and the rows show as text
   const off = await open(browser, { renderers: false });
   await off.page.waitForFunction(() => [...document.querySelectorAll("#term .ln.wg-host")].some((h) => h.shadowRoot.querySelector(".err:not([hidden])")), null, { timeout: 10000 }).catch(() => {});

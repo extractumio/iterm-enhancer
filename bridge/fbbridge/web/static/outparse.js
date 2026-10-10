@@ -23,8 +23,9 @@ const CODEISH = new RegExp([
 // a shell prompt, by its common shapes: "alex@devbox ~ %", "$ ", "❯ ", "➜ dir", "(venv) …$", and
 // a prompt mark after a short lead (Starship's "at 12:21 ❯ ", "[main] ❯ ")
 const PROMPT = /^(?:\S+@[\w.-]+[:\s].*?[$#%>](?:\s|$)|[$%❯➜λ»›](?:\s|$)|\(\S+\)\s.*?[$%#❯](?:\s|$)|[^❯➜›]{1,40}[❯➜›](?:\s|$))/;
-// the end of the output: a prompt, or a line a program colored (a prompt's other lines usually are)
-const ends = (l) => l.styled || PROMPT.test(l.text);
+// the end of the output: a prompt, a line a program colored (a prompt's other lines usually are),
+// or a coding agent's next message or tool result (⏺, ⎿)
+const ends = (l) => l.styled || PROMPT.test(l.text) || /^\s*[⏺⎿]/.test(l.text);
 // prompts compared without their numbers: a clock, a counter or an exit code changes
 const shape = (t) => t.replace(/\d/g, "0");
 // a command that prints one file: the output after it is that file, up to the next prompt
@@ -104,7 +105,13 @@ export function scan(rows, end = rows.length) {
   return { found: found.map(({ line, lastLine, ...r }) => r), settled };
 }
 
-const body = (lines, a, b) => lines.slice(a, b + 1).map((l) => l.text).join("\n");
+// A region's text without the indentation all its lines share: a coding agent indents its tools'
+// output, and Markdown takes text indented 4 spaces for code.
+function body(lines, a, b) {
+  const part = lines.slice(a, b + 1).map((l) => l.text);
+  const cut = Math.min(...part.filter((t) => t.trim()).map((t) => t.length - t.trimStart().length));
+  return part.map((t) => t.slice(Math.min(cut, t.length - t.trimStart().length))).join("\n");
+}
 
 // A command line that prints one file ("alex@devbox ~ % cat README.md"): the lines after it up
 // to the next line that starts with the same prompt, numbers aside (the cursor's row too),
@@ -144,11 +151,11 @@ function fenced(lines, i) {
 
 // What a line says about Markdown: a strong sign, a weak one, or none.
 function sign(lines, i) {
-  const t = lines[i].text;
+  const t = lines[i].text.trimStart();           // indented as a tool's output is
   if (HEADING.test(t)) {
     // a heading stands after a blank line; "#" lines in a run of code are its comments
     const prev = lines[i - 1]?.text ?? "";
-    return prev.trim() || HEADING.test(lines[i + 1]?.text ?? "") ? "" : "heading";
+    return prev.trim() || HEADING.test((lines[i + 1]?.text ?? "").trimStart()) ? "" : "heading";
   }
   if (TABLE_SEP.test(t)) return "table";
   if (FENCE.test(t)) return "fence";
