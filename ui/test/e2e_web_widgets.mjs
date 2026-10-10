@@ -33,7 +33,7 @@ const SCREEN = ["Here is the fix:", "```python", "def main():", "    return 1", 
 const FILES = { "/tmp/shots": ["shot.png", "b.png", "notes.txt"] };     // what the fake fbd lists
 
 /** The page against a fake bridge; renderers: false makes /fb/renderers.js fail. */
-export async function open(browser, { renderers = true, agent = false, history = HISTORY, screen = SCREEN, cwd = "/tmp/shots", files = FILES,
+export async function open(browser, { renderers = true, agent = false, history = HISTORY, screen = SCREEN, cwd = "/tmp/shots", files = FILES, image = PNG,
   device = { viewport: { width: 1200, height: 800 } } } = {}) {
   const opts = { renderers };
   const page = await browser.newPage(device);
@@ -46,7 +46,7 @@ export async function open(browser, { renderers = true, agent = false, history =
   await page.route(`${ORIGIN}/**`, (route) => {
     const p = new URL(route.request().url()).pathname;
     if (p === "/auth/check") return route.fulfill({ status: 204, body: "" });
-    if (p.startsWith("/fb/api/raw")) return route.fulfill({ contentType: "image/png", body: PNG });
+    if (p.startsWith("/fb/api/raw")) return route.fulfill({ contentType: "image/png", body: image });
     if (p === "/fb/api/ls") {
       const q = new URL(route.request().url()).searchParams;
       const entries = (files[q.get("path")] ?? []).filter((n) => n.includes(q.get("filter") ?? "")).map((n) => ({ n, k: "f" }));
@@ -174,6 +174,15 @@ export async function webWidgets(browser, name = "") {
     fig.src === "/fb/api/raw?path=%2Ftmp%2Fshots%2Fshot.png" && fig.cap === "/tmp/shots/shot.png", JSON.stringify(fig));
   check(`${at} … fitted to half the terminal's width and height at most`, fig.w <= fig.tw / 2 + 1 && fig.h <= fig.th / 2 + 1 && fig.w > 0, JSON.stringify(fig));
   check(`${at} … asking the pane's folder (a relative path is taken from it)`, sent.some((m) => m.t === "files"));
+  const layout = await page.evaluate(() => {
+    const t = document.getElementById("term"), cs = getComputedStyle(t), r = t.getBoundingClientRect();
+    const left = r.left + parseFloat(cs.paddingLeft), right = r.right - parseFloat(cs.paddingRight) - (t.offsetWidth - t.clientWidth);
+    const img = [...document.querySelectorAll("#screen .ln")].map((el) => el.shadowRoot?.querySelector("figure img")).find(Boolean).getBoundingClientRect();
+    const md = [...document.querySelectorAll("#term .ln.wg-host")].map((h) => h.shadowRoot.querySelector('.wg[data-kind="markdown"]')).find(Boolean).getBoundingClientRect();
+    return { imgOff: Math.round((img.left + img.right) / 2 - (left + right) / 2), mdW: Math.round(md.width), termW: Math.round(right - left) };
+  });
+  check(`${at} an opened image is centered across the terminal, and a Markdown widget is as wide as it`,
+    Math.abs(layout.imgOff) <= 1 && Math.abs(layout.mdW - layout.termW) <= 2, JSON.stringify(layout));
 
   const buttons = await page.evaluate(() => [...document.querySelectorAll("#screen .ln")].map((el) => [el.textContent.trim(), el.shadowRoot?.querySelectorAll(".wgi button").length ?? 0]));
   check(`${at} no image button for a file that is not there, nor in a row of a drawn table`,

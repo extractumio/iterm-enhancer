@@ -92,10 +92,14 @@ export class Widgets {
     [["kw", 13], ["str", 10], ["num", 11], ["fn", 12], ["type", 14], ["tag", 9]].forEach(([k, i]) => { if (pal[i]) s.setProperty(`--tk-${k}`, pal[i]); });
   }
 
-  /** The largest an image in the history is: half the terminal's width and height. */
+  /** The largest an image in the history is: half the terminal's width and height; it is
+   *  centered across the terminal's width. */
   sizes() {
-    const s = this.term.style, w = `${Math.round(this.term.clientWidth / 2)}px`, h = `${Math.round(this.term.clientHeight / 2)}px`;
-    if (!this.term.clientHeight || (s.getPropertyValue("--wg-iw") === w && s.getPropertyValue("--wg-ih") === h)) return;
+    const t = this.term, s = t.style, cs = getComputedStyle(t);
+    const inner = t.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const tw = `${Math.round(inner)}px`, w = `${Math.round(t.clientWidth / 2)}px`, h = `${Math.round(t.clientHeight / 2)}px`;
+    if (!t.clientHeight || (s.getPropertyValue("--wg-tw") === tw && s.getPropertyValue("--wg-ih") === h)) return;
+    s.setProperty("--wg-tw", tw);                  // the terminal's text width: images are centered across it
     s.setProperty("--wg-iw", w);
     s.setProperty("--wg-ih", h);
     s.setProperty("--wg-dh", h);

@@ -34,7 +34,7 @@ img.diagram { display: block; margin: 0 auto; max-width: 100%; max-height: var(-
   cursor: zoom-in; background: transparent; }
 
 /* Markdown: prose in the system font, code in the terminal's */
-.body.markdown { font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; max-width: 80ch; }
+.body.markdown { font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }
 .markdown h1, .markdown h2 { border-bottom: 1px solid color-mix(in srgb, var(--t-fg) 15%, transparent); padding-bottom: .2em; }
@@ -74,7 +74,8 @@ img.diagram { display: block; margin: 0 auto; max-width: 100%; max-height: var(-
 .wgi { white-space: nowrap; margin-left: .6ch; -webkit-user-select: none; user-select: none; }
 .wgi button { padding: 0 4px; min-height: 0; height: 1.25em; vertical-align: -0.2em;
   border-color: color-mix(in srgb, var(--t-fg) 25%, transparent); color: var(--accent); }
-.figs { display: block; white-space: normal; text-align: center; }
+/* as wide as the terminal (a Grid row is only as wide as its text), so an image is centered in the view */
+.figs { display: block; box-sizing: border-box; width: var(--wg-tw, 100%); white-space: normal; text-align: center; }
 .figs:empty { display: none; }
 figure { margin: 4px 0 8px; display: inline-flex; flex-direction: column; align-items: center; gap: 2px;
   max-width: var(--wg-iw, 50%); vertical-align: top; }
