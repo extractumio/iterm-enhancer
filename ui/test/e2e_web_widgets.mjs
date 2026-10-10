@@ -28,10 +28,12 @@ const PROMPT = "alex@devbox ~/app % ";
 const HISTORY = [`${PROMPT}cat README.md`, "# App", "", "A small **tool**.", "", "## Install", "", "```sh", "$ npm install", "```", "",
   "- fast", "- small", "", `${PROMPT}cat flow.mmd`, "graph TD", "  A[Start] --> B[Done]", `${PROMPT}echo hi`, "hi",
   ...Array.from({ length: 40 }, (_, i) => `filler ${i}`)].map((t) => line(t));
-const SCREEN = ["Here is the fix:", "```python", "def main():", "    return 1", "```", "Saved /tmp/shots/shot.png and ./b.png"];
+const SCREEN = ["Here is the fix:", "```python", "def main():", "    return 1", "```", "Saved /tmp/shots/shot.png and ./b.png",
+  "Not there: /tmp/shots/gone.png", "│ in a table: /tmp/shots/shot.png │"];
+const FILES = { "/tmp/shots": ["shot.png", "b.png", "notes.txt"] };     // what the fake fbd lists
 
 /** The page against a fake bridge; renderers: false makes /fb/renderers.js fail. */
-export async function open(browser, { renderers = true, agent = false, history = HISTORY, screen = SCREEN, cwd = "/tmp/shots",
+export async function open(browser, { renderers = true, agent = false, history = HISTORY, screen = SCREEN, cwd = "/tmp/shots", files = FILES,
   device = { viewport: { width: 1200, height: 800 } } } = {}) {
   const opts = { renderers };
   const page = await browser.newPage(device);
@@ -45,6 +47,11 @@ export async function open(browser, { renderers = true, agent = false, history =
     const p = new URL(route.request().url()).pathname;
     if (p === "/auth/check") return route.fulfill({ status: 204, body: "" });
     if (p.startsWith("/fb/api/raw")) return route.fulfill({ contentType: "image/png", body: PNG });
+    if (p === "/fb/api/ls") {
+      const q = new URL(route.request().url()).searchParams;
+      const entries = (files[q.get("path")] ?? []).filter((n) => n.includes(q.get("filter") ?? "")).map((n) => ({ n, k: "f" }));
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ status: "ready", total: entries.length, writable: true, gen: 1, entries }) });
+    }
     const [root, rel] = p.startsWith("/fb/") ? [DIST, p.slice(4)] : [STATIC, p === "/" ? "index.html" : p];
     if (p === "/fb/renderers.js" && !opts.renderers) return route.fulfill({ status: 502, body: "fbd is not running" });
     const f = path.join(root, path.normalize(rel));
@@ -168,9 +175,13 @@ export async function webWidgets(browser, name = "") {
   check(`${at} … fitted to half the terminal's width and height at most`, fig.w <= fig.tw / 2 + 1 && fig.h <= fig.th / 2 + 1 && fig.w > 0, JSON.stringify(fig));
   check(`${at} … asking the pane's folder (a relative path is taken from it)`, sent.some((m) => m.t === "files"));
 
+  const buttons = await page.evaluate(() => [...document.querySelectorAll("#screen .ln")].map((el) => [el.textContent.trim(), el.shadowRoot?.querySelectorAll(".wgi button").length ?? 0]));
+  check(`${at} no image button for a file that is not there, nor in a row of a drawn table`,
+    buttons.find(([t]) => t.startsWith("Not there"))?.[1] === 0 && buttons.find(([t]) => t.startsWith("│"))?.[1] === 0, JSON.stringify(buttons));
+
   // the screen moves on: the code widget follows its rows without being drawn again
   const before = await page.evaluate(() => (window.codeWg = document.querySelector("#screen .ln.wg-host").shadowRoot.querySelector(".wg")) && 1);
-  say({ t: "screen", sid: "S1", full: false, n: 8, cols: 80, rows: 8, ch: [[6, line("done")], [7, { r: [[PROMPT, null, null, 0], [" ", null, null, 256]], e: true }]] });
+  say({ t: "screen", sid: "S1", full: false, n: 10, cols: 80, rows: 10, ch: [[8, line("done")], [9, { r: [[PROMPT, null, null, 0], [" ", null, null, 256]], e: true }]] });
   await page.waitForFunction(() => [...document.querySelectorAll("#screen .ln")].some((el) => el.textContent === "done"));
   check(`${at} a screen region stays a widget while the screen changes below it, not drawn again`,
     before === 1 && await page.evaluate(() => document.querySelector("#screen .ln.wg-host")?.shadowRoot.querySelector(".wg") === window.codeWg));

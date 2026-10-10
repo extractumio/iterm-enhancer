@@ -13,6 +13,8 @@ const CACHED = 150;          // rendered widgets kept, the least recently shown 
 const IMAGES_OPEN = 50;      // images kept open
 const THROTTLE = 100;        // ms between scans of streaming output
 const NEAR = 2;              // screens above and below the view whose history regions are drawn
+const RECHECK = 10000;       // ms before an image file that was not there is looked for again
+const BOXED = /^\s*[│┃║]|[│┃║]\s*$/;   // a row of a drawn box or table: an image would open inside it
 
 // FNV-1a: a region is known by its kind, language and text
 function hash(s) {
@@ -41,9 +43,10 @@ function dark(bg = "") {
 
 export class Widgets {
   /** view: the TermView; boxes: #hist and #screen; resolve(path): {url, path} or {error} for
-   *  an image path as printed; copy(text); onZoomClosed(): the viewer closed. */
-  constructor({ view, term, boxes, resolve, copy, onZoomClosed }) {
-    Object.assign(this, { view, term, boxes, resolve, copy, onZoomClosed });
+   *  an image path as printed; exists(path): whether that file is there; copy(text);
+   *  onZoomClosed(): the viewer closed. */
+  constructor({ view, term, boxes, resolve, exists, copy, onZoomClosed }) {
+    Object.assign(this, { view, term, boxes, resolve, exists, copy, onZoomClosed });
     this.modes = new Map();      // region key -> "raw" or "on", as the user chose
     this.cache = new Map();      // region key + theme -> its widget element
     this.sources = new WeakMap(); // widget -> its region's source text (for Copy)
@@ -77,6 +80,7 @@ export class Widgets {
     this.settledN = null;        // the history line the next scan starts at (null: its first)
     this.hosts = new Map();      // a region's first row -> {key, raw, rows, live}: what is attached
     this.imageHosts = new Set();
+    this.found = new Map();      // printed image path -> {ok, at}: whether the pane's file is there
     clearTimeout(this.steady); clearTimeout(this.later);
   }
 
@@ -260,6 +264,17 @@ export class Widgets {
     }
   }
 
+  /** The file a printed image path names is there: a button only for one that opens. Asked once
+   *  (in the background, the button comes when the answer does); "not there" is asked again
+   *  after RECHECK ms, as a program may save it a moment later. */
+  there(value) {
+    const k = this.found.get(value), now = performance.now();
+    if (k && (k.ok || now - k.at < RECHECK)) return k.ok;
+    this.found.set(value, { ok: false, at: now });          // asked: not again meanwhile
+    this.exists(value).then((ok) => { this.found.set(value, { ok, at: performance.now() }); if (ok) this.markImages(); }, () => {});
+    return false;
+  }
+
   imageKey(row, path) { return `${hash(row.textContent)}:${path}`; }
 
   async openImage(row, path) {
@@ -292,8 +307,9 @@ export class Widgets {
       const last = line.at(-1);
       const text = line.map((el) => el.textContent.replace(/[︎️]/g, "")).join("");
       line = [];
-      if (!last || this.hosts.has(last)) return;          // a widget's own row
-      const paths = imagePaths(text);
+      // not a widget's own row, a drawn table's or an agent's input box and footer
+      if (!last || this.hosts.has(last) || last.closest(".inbox, .foot") || BOXED.test(text)) return;
+      const paths = imagePaths(text).filter((p) => this.there(p.value));
       if (!paths.length) return;
       hosts.add(last);
       const root = hostOf(last, this.click);
