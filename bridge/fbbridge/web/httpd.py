@@ -123,6 +123,14 @@ class ConnectionClosed(Exception):
     pass
 
 
+def write_parts(writer, *parts):
+    """writer.writelines(parts), without copying a large one, and without empty ones: on Python
+    3.12 an empty part stays in the transport's buffer, and the event loop then writes 0 bytes
+    over and over for as long as the connection lasts (measured: the bridge at 100% CPU and
+    iTerm2's requests timing out, with a Files panel's event stream open)."""
+    writer.writelines([p for p in parts if p])
+
+
 def unmask(data, mask):
     """XOR with the repeated 4-byte mask, as one integer operation (not a loop per byte)."""
     n = len(data)
@@ -162,7 +170,7 @@ class WebSocket:
             if self.closed and opcode != 0x8:
                 raise ConnectionClosed()
             try:
-                self.writer.writelines((head, payload))       # no copy of a large payload
+                write_parts(self.writer, head, payload)
                 await self.writer.drain()
             except (ConnectionError, RuntimeError) as e:
                 self.closed = True

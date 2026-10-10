@@ -11,7 +11,7 @@ import re
 import secrets
 from urllib.parse import parse_qs, urlsplit
 
-from .httpd import HttpError
+from .httpd import HttpError, write_parts
 
 PREFIX = "/fb"
 # The only request headers passed on (fbd's Host, Origin, token and length are set below).
@@ -122,7 +122,7 @@ async def forward(req, fbd_port, token):
         if req.body:
             headers["content-length"] = str(len(req.body))
     head = f"{req.method} {target} HTTP/1.1\r\n" + "".join(f"{k}: {v}\r\n" for k, v in headers.items()) + "\r\n"
-    up_w.writelines((head.encode("latin-1"), req.body))          # no copy of a large file
+    write_parts(up_w, head.encode("latin-1"), req.body)          # a GET has no body
     await up_w.drain()
     try:
         status_head = await up_r.readuntil(b"\r\n\r\n")
