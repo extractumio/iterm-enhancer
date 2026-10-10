@@ -90,7 +90,7 @@ view.onDrawn = () => { placeKbd(); marks(); trace.drawn(); };
 // taken from the pane's folder as a clicked path is.
 const widgets = new Widgets({ view, term: $("term"), boxes: [$("hist"), $("screen")], resolve: imageUrl,
   copy: (text) => input.copySelection(text), onZoomClosed: () => focusTerminal() });
-view.onRows = (full) => widgets.update(full);
+view.onRows = (full, keep) => (keep ? widgets.keepPlace(() => widgets.update(full)) : widgets.update(full));
 view.onReset = () => widgets.reset();
 async function imageUrl(value) {
   const pane = await views.paneInfo();

@@ -6,12 +6,13 @@
 // history's or the screen's children: term.js counts them as rows and blocks.
 import { nearRows } from "./linkmarks.js";
 import { imagePaths, scan } from "./outparse.js";
-import { figure, hostOf, imageButtons, regionWidget, zoomDiagram, zoomImage } from "./widgetui.js";
+import { figure, hostOf, imageButtons, loadImage, loadStyles, regionWidget, zoomDiagram, zoomImage } from "./widgetui.js";
 
 const STEADY = 150;          // ms a region on the screen stays as it is before it is rendered
 const CACHED = 150;          // rendered widgets kept, the least recently shown go first
 const IMAGES_OPEN = 50;      // images kept open
 const THROTTLE = 100;        // ms between scans of streaming output
+const NEAR = 2;              // screens above and below the view whose history regions are drawn
 
 // FNV-1a: a region is known by its kind, language and text
 function hash(s) {
@@ -49,12 +50,25 @@ export class Widgets {
     this.seen = new Map();       // key of a screen region -> when it was first seen as it is
     this.images = new Map();     // image key -> {url, path, error} of an open image
     this.lastScan = 0;
+    this.styled = false;         // widgets wait for their style sheet
     this.reset();
     this.click = (b, root) => this.onClick(b, root);
+    loadStyles().then(() => { this.styled = true; this.keepPlace(() => this.update(true)); });
+    // scrolled, or shown again (Files, View), or another size: regions come near the view
     let timer = 0;
-    term.addEventListener("scroll", () => { clearTimeout(timer); timer = setTimeout(() => this.markImages(), 150); }, { passive: true });
-    // the terminal's size changes with the window, the keyboard, Files docked or not
-    new ResizeObserver(() => { this.sizes(); this.markImages(); }).observe(term);
+    const near = () => { clearTimeout(timer); timer = setTimeout(() => { this.markImages(); if (this.far) this.keepPlace(() => this.update(false, true)); }, 150); };
+    // following the output: as the user left it (a size change or a widget growing is not a scroll away)
+    this.following = true;
+    term.addEventListener("scroll", () => { this.following = view.atBottom(); near(); }, { passive: true });
+    // the terminal's size changes with the window, the keyboard, Files docked or not; shown
+    // again (it was 0 high behind Files or View), the regions in sight are drawn at once
+    let shownH = 0;
+    new ResizeObserver(() => {
+      const h = term.clientHeight, back = !shownH && h > 0;
+      shownH = h;
+      this.keepPlace(() => { this.sizes(); if (back) this.update(false, true); });
+      near();
+    }).observe(term);
   }
 
   /** Another session: nothing of the last one stays attached. */
@@ -76,10 +90,11 @@ export class Widgets {
 
   /** The largest an image in the history is: half the terminal's width and height. */
   sizes() {
-    const s = this.term.style;
-    s.setProperty("--wg-iw", `${Math.round(this.term.clientWidth / 2)}px`);
-    s.setProperty("--wg-ih", `${Math.round(this.term.clientHeight / 2)}px`);
-    s.setProperty("--wg-dh", `${Math.round(this.term.clientHeight / 2)}px`);
+    const s = this.term.style, w = `${Math.round(this.term.clientWidth / 2)}px`, h = `${Math.round(this.term.clientHeight / 2)}px`;
+    if (!this.term.clientHeight || (s.getPropertyValue("--wg-iw") === w && s.getPropertyValue("--wg-ih") === h)) return;
+    s.setProperty("--wg-iw", w);
+    s.setProperty("--wg-ih", h);
+    s.setProperty("--wg-dh", h);
   }
 
   /** After the history or the screen changed (term.js, inside its keepBottom). full: the rows
@@ -88,8 +103,10 @@ export class Widgets {
    *  them again), which is put right at once, or `now` (the user's own change). */
   update(full = false, now = false) {
     const v = this.view;
-    if (!v.theme) return;
+    if (!v.theme || !this.styled) return;
     clearTimeout(this.later);
+    // the screen drew a row with image buttons again: they come back now, not a moment later
+    if ([...this.imageHosts].some((el) => !el.isConnected)) this.markImages(true);
     const wait = this.lastScan + THROTTLE - performance.now();
     const torn = [...this.hosts.values()].some((h) => h.live && h.rows.some((el) => !el.isConnected));
     if (!full && !now && wait > 0 && !torn) { this.later = setTimeout(() => this.keepPlace(() => this.update()), wait); return; }
@@ -100,8 +117,13 @@ export class Widgets {
     const i0 = this.settledN === null ? 0 : Math.min(hist.length, Math.max(0, this.settledN - base));
     const rows = hist.slice(i0).concat(screen);
     const histPart = hist.length - i0;
-    const cursor = screen.findIndex((r) => r?.el.querySelector(".cur"));
-    const { found, settled } = scan(rows.map(info), histPart + (cursor >= 0 ? cursor : screen.length));
+    // the output ends at the cursor's row; in a coding agent's pane at its input box's top rule
+    // (what is typed there is not output, and changes with every key)
+    let end = screen.findIndex((r) => r?.el.querySelector(".cur"));
+    const boxTop = v.agent && v.box ? screen.filter(Boolean)[v.box.top]?.el : null;
+    const boxAt = boxTop ? screen.findIndex((r) => r?.el === boxTop) : -1;
+    if (boxAt >= 0 && (end < 0 || boxAt < end)) end = boxAt;
+    const { found, settled } = scan(rows.map(info), histPart + (end >= 0 ? end : screen.length));
     // regions wholly in the history before `settled` are final; the screen changes
     let cut = Math.min(settled, histPart);
     for (const r of [...found].reverse()) if (r.to >= cut && r.from < cut) cut = r.from;
@@ -130,19 +152,31 @@ export class Widgets {
 
   // The widgets attached to their rows; rows no longer in a region show again. A history
   // region attached as it should be is passed over (its rows stay as they are); a screen row
-  // may have been drawn again, so a screen region's rows are all looked at.
+  // may have been drawn again, so a screen region's rows are all looked at. A history region
+  // far from the view (NEAR screens) stays text until it comes near: a long history is not
+  // drawn all at once.
   apply(list) {
     const hosts = new Map();
+    const t = this.term.getBoundingClientRect(), lo = t.top - NEAR * t.height, hi = t.bottom + NEAR * t.height;
+    // following the output, the view goes to the end after this: measured from there
+    const ahead = this.view.sticking ? this.term.scrollHeight - this.term.clientHeight - this.term.scrollTop : 0;
+    const near = (els) => !this.term.hidden && t.height > 0 && els[0].getBoundingClientRect().top - ahead < hi
+      && els.at(-1).getBoundingClientRect().bottom - ahead > lo;
+    this.far = false;
     const show = (els, keep = new Set()) => { for (const el of els) if (!keep.has(el)) el.classList.remove("wg-hid"); };
     const detach = (anchor, was) => {
       show(was.rows);
       anchor.classList.remove("wg-host", "wg-raw");
       anchor.shadowRoot?.replaceChildren(document.createElement("slot"));
     };
-    for (const { rows, key, region, live } of list) {
-      if (!rows.length || rows.some((r) => !r)) continue;
+    list = list.filter(({ rows }) => rows.length && !rows.some((r) => !r));
+    // positions first, then changes: a read after a change would lay out the whole history again
+    const away = new Set(list.filter((l) => !l.live && !this.hosts.has(l.rows[0].el) && !near(l.rows.map((r) => r.el))));
+    for (const item of list) {
+      const { rows, key, region, live } = item;
       const anchor = rows[0].el, raw = this.raw(key, region), els = rows.map((r) => r.el);
       const was = this.hosts.get(anchor);
+      if (away.has(item)) { this.far = true; continue; }
       hosts.set(anchor, { key, raw, rows: els, live });
       const root = hostOf(anchor, this.click);
       let mine = root.firstElementChild;
@@ -166,7 +200,7 @@ export class Widgets {
   }
 
   build(key, region) {
-    const wg = regionWidget(region, { key, dark: this.dark, change: (fn) => this.keepPlace(fn),
+    const wg = regionWidget(region, { key, dark: this.dark, change: (fn) => this.keepPlace(fn, wg.getRootNode().host ?? null, false),
       raw: () => { this.modes.set(key, "raw"); this.keepPlace(() => this.update(false, true)); } });
     this.sources.set(wg, region.text);
     return wg;
@@ -181,14 +215,23 @@ export class Widgets {
     return wg;
   }
 
-  /** Runs fn, a change to the page, keeping the reader's place: the end while following the
-   *  output, else the row at the top of the view where it was (a widget above it may change).
-   *  Not while text is selected or a finger is down: the page must not change under them. */
-  keepPlace(fn) {
-    if (this.view.frozen()) { setTimeout(() => this.keepPlace(fn), 300); return; }
-    if (this.view.atBottom()) return this.view.keepBottom(fn);
-    const t = this.term.getBoundingClientRect();
-    const at = document.elementFromPoint(t.left + 12, t.top + 4)?.closest?.(".ln");
+  /** Runs fn, a change to the page, keeping the reader's place: `row` where it is on screen
+   *  (the row the user acted on: an image opened under it, Raw, Markdown; `user` false: a widget
+   *  that changed by itself, kept unless the user follows the output); else the end while
+   *  following the output, else the first row wholly in sight. Not while text is selected or a
+   *  finger is down: the page must not change under them. */
+  keepPlace(fn, row = null, user = true) {
+    if (this.view.frozen()) { setTimeout(() => this.keepPlace(fn, row, user), 300); return; }
+    const t = this.term.getBoundingClientRect(), r = row?.isConnected ? row.getBoundingClientRect() : null;
+    let at = r && r.bottom > t.top && r.top < t.bottom ? row : null;             // only a row in sight
+    if ((!at || !user) && (this.following || this.view.atBottom())) {
+      fn();
+      this.view.toBottom();                                      // following the output: its end stays in sight
+      this.following = true;
+      return;
+    }
+    // a row cut by the top edge may grow inside: the first one wholly in sight
+    at ??= nearRows(this.term, this.boxes).find((el) => el.getBoundingClientRect().top >= t.top);
     const before = at?.getBoundingClientRect().top;
     fn();
     if (at?.isConnected && before !== undefined) this.term.scrollTop += at.getBoundingClientRect().top - before;
@@ -204,7 +247,7 @@ export class Widgets {
         for (const [k, w] of this.cache) if (w === wg) this.cache.delete(k);
         root.replaceChildren(document.createElement("slot"));
       }
-      return this.keepPlace(() => this.update(false, true));
+      return this.keepPlace(() => this.update(false, true), root.host);
     }
     if (act === "copy") return this.copy(this.sources.get(wg) ?? "");
     if (act === "zoom") return zoomDiagram(b, this.onZoomClosed);
@@ -213,7 +256,7 @@ export class Widgets {
     if (act === "unimg") {
       const fig = b.closest("figure");
       this.images.delete(this.imageKey(root.host, fig.dataset.path));
-      this.keepPlace(() => fig.remove());
+      this.keepPlace(() => fig.remove(), root.host);
     }
   }
 
@@ -224,16 +267,25 @@ export class Widgets {
     if (this.images.has(k)) return;
     this.images.set(k, { pending: true });
     let got;
-    try { got = await this.resolve(path); } catch (e) { got = { error: e.message || String(e) }; }
+    try { got = await loadImage(await this.resolve(path)); } catch (e) { got = { error: e.message || String(e) }; }
     this.images.set(k, got);
     for (const key of [...this.images.keys()].slice(0, Math.max(0, this.images.size - IMAGES_OPEN))) this.images.delete(key);
-    this.keepPlace(() => this.markImages(true));
+    this.keepPlace(() => this.markImages(true), row);           // the line clicked stays where it is
+    // ... unless the image would open out of sight: then just enough to show it
+    const fig = row.isConnected && [...(row.shadowRoot?.querySelectorAll("figure") ?? [])].find((f) => f.dataset.path === path);
+    if (fig) {
+      const t = this.term.getBoundingClientRect(), b = fig.getBoundingClientRect().bottom;
+      if (b > t.bottom) this.term.scrollTop += Math.min(b - t.bottom + 8, row.getBoundingClientRect().top - t.top);
+      this.following = this.view.atBottom();
+      this.view.updateBottom();
+    }
   }
 
   /** The image buttons of the rows near the view (a long listing of image files would
    *  otherwise give thousands of rows a shadow root), and the images open there. */
   markImages(now = false) {
-    if (!now) { clearTimeout(this.imgTimer); this.imgTimer = setTimeout(() => this.markImages(true), 60); return; }
+    if (!this.styled) return;
+    if (!now) { clearTimeout(this.imgTimer); this.imgTimer = setTimeout(() => this.keepPlace(() => this.markImages(true)), 60); return; }
     const rows = nearRows(this.term, this.boxes), hosts = new Set();
     let line = [];
     const flush = () => {

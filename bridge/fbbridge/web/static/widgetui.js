@@ -17,20 +17,21 @@ export function renderers() {
   }));
 }
 
-let sheet = null;
-/** The widgets' style sheet, shared by every shadow root (widgets.css, loaded once). */
-function styles() {
-  if (sheet) return sheet;
-  sheet = new CSSStyleSheet();
-  fetch("widgets.css").then((r) => r.text()).then((css) => sheet.replace(css)).catch(() => { /* unstyled, but working */ });
-  return sheet;
+// The widgets' style sheet, shared by every shadow root (widgets.css), loaded with the page:
+// widgets are attached only once it is in, as one drawn unstyled first changes its height
+// after the page placed the view.
+let sheet = null, loaded = null;
+export function loadStyles() {
+  sheet ??= new CSSStyleSheet();
+  return (loaded ??= fetch("widgets.css").then((r) => r.text()).then((css) => sheet.replace(css))
+    .catch(() => { /* unstyled, but working */ }));
 }
 
 /** The shadow root of row element `el` (made once: a row's text shows through its slot). */
 export function hostOf(el, onClick) {
   if (el.shadowRoot) return el.shadowRoot;
   const root = el.attachShadow({ mode: "open" });
-  root.adoptedStyleSheets = [styles()];
+  root.adoptedStyleSheets = [sheet];
   root.append(document.createElement("slot"));
   root.addEventListener("click", (e) => {
     e.stopPropagation();                           // the terminal's own clicks (⌘-click, ⌥-click) are not for it
@@ -137,6 +138,7 @@ async function diagram(source, dark) {
   img.alt = "Mermaid diagram";
   img.dataset.act = "zoom";
   img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(root));
+  await img.decode().catch(() => {});             // in place at its size at once: the page does not move later
   return img;
 }
 
@@ -164,31 +166,35 @@ export function imageButtons(paths) {
   return [span, figs];
 }
 
-/** An image shown in the history: fitted to half the terminal's width and height, opened
- *  full screen on a click; its caption names the file it is (a relative path is taken from the
- *  pane's folder now, which may not be where it was printed). */
-export function figure(path, { url, error, path: file }) {
+/** The image at got.url, loaded before it is shown (so it takes its place at its size at once):
+ *  got with img, or with the reason it cannot be shown (fbd's message when it has one). */
+export async function loadImage(got) {
+  if (!got.url) return got;
+  const img = new Image();
+  img.alt = got.path ?? "";
+  img.dataset.act = "zoomimg";
+  img.src = got.url;
+  await img.decode().catch(() => {});
+  if (img.naturalWidth) return { ...got, img };
+  // the browser does not say why: ask once more for fbd's message
+  const why = await fetch(got.url).then(async (r) => (r.ok ? "not an image the browser can show"
+    : (await r.json().catch(() => ({}))).message ?? `HTTP ${r.status}`), (e) => e.message);
+  return { ...got, error: why };
+}
+
+/** An image shown in the history: centered, fitted to half the terminal's width and height,
+ *  opened full screen on a click; its caption names the file it is (a relative path is taken
+ *  from the pane's folder now, which may not be where it was printed). */
+export function figure(path, { img, error, path: file }) {
   const fig = document.createElement("figure");
   fig.dataset.path = path;
   const cap = document.createElement("figcaption");
   const name = document.createElement("span");
-  name.textContent = error ? `${path}: ${error}` : file ?? path;
+  name.textContent = error ? `${file ?? path}: ${error}` : file ?? path;
   if (error) name.className = "err";
   cap.append(name, button("unimg", "", "Close the image", "x"));
-  if (url) {
-    const img = new Image();
-    img.alt = file ?? path;
-    img.dataset.act = "zoomimg";
-    img.onerror = async () => {
-      // the browser does not say why: ask once more for fbd's message
-      const why = await fetch(url).then(async (r) => (r.ok ? "not an image the browser can show" : (await r.json().catch(() => ({}))).message ?? `HTTP ${r.status}`), (e) => e.message);
-      img.remove();
-      name.textContent = `${file ?? path}: ${why}`;
-      name.className = "err";
-    };
-    img.src = url;
-    fig.append(img);
-  }
+  // the one loaded, moved (never asked for again); a second row of the same text gets a copy
+  if (img && !error) fig.append(img.isConnected ? img.cloneNode() : img);
   fig.append(cap);
   return fig;
 }

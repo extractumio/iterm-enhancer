@@ -31,7 +31,7 @@ const HISTORY = [`${PROMPT}cat README.md`, "# App", "", "A small **tool**.", "",
 const SCREEN = ["Here is the fix:", "```python", "def main():", "    return 1", "```", "Saved /tmp/shots/shot.png and ./b.png"];
 
 /** The page against a fake bridge; renderers: false makes /fb/renderers.js fail. */
-export async function open(browser, { renderers = true, device = { viewport: { width: 1200, height: 800 } } } = {}) {
+export async function open(browser, { renderers = true, agent = false, device = { viewport: { width: 1200, height: 800 } } } = {}) {
   const opts = { renderers };
   const page = await browser.newPage(device);
   const errors = [], sent = [];
@@ -68,7 +68,7 @@ export async function open(browser, { renderers = true, device = { viewport: { w
       if (msg.t === "files") say({ t: "files", sid: "S1", key: "S1", cwd: "/tmp/shots", home: "/Users/alex", host: null });
     });
     say({ t: "build", id: "test" });
-    say({ t: "layout", groups: LAYOUT });
+    say({ t: "layout", groups: agent ? [{ ...LAYOUT[0], items: [{ ...LAYOUT[0].items[0], agent: "claude", shell: false }] }] : LAYOUT });
   });
   await page.goto(`${ORIGIN}/`);
   await page.waitForFunction(() => document.querySelectorAll("#screen .ln").length === 7, null, { timeout: 10000 });
@@ -143,8 +143,19 @@ export async function webWidgets(browser, name = "") {
   // an image path: a button after it; the image below the row, at most half the terminal
   await page.evaluate(() => { const t = document.getElementById("term"); t.scrollTop = t.scrollHeight; });
   await page.waitForFunction(() => [...document.querySelectorAll("#screen .ln")].some((el) => el.shadowRoot?.querySelectorAll(".wgi button").length === 2));
-  await page.evaluate(() => [...document.querySelectorAll("#screen .ln")].find((el) => el.shadowRoot?.querySelector(".wgi")).shadowRoot.querySelector(".wgi button").click());
+  const clickedAt = await page.evaluate(() => {
+    const row = [...document.querySelectorAll("#screen .ln")].find((el) => el.shadowRoot?.querySelector(".wgi"));
+    row.shadowRoot.querySelector(".wgi button").click();
+    return row.getBoundingClientRect().top;
+  });
   await page.waitForFunction(() => [...document.querySelectorAll("#screen .ln")].some((el) => el.shadowRoot?.querySelector("figure img")?.naturalWidth));
+  const opened = await page.evaluate(() => {
+    const row = [...document.querySelectorAll("#screen .ln")].find((el) => el.shadowRoot?.querySelector("figure"));
+    const f = row.shadowRoot.querySelector("figure").getBoundingClientRect(), t = document.getElementById("term").getBoundingClientRect();
+    return { rowAt: row.getBoundingClientRect().top, figH: f.height, inSight: f.bottom <= t.bottom + 1 };
+  });
+  check(`${at} the line whose image was opened stays on screen, moved only as much as the image below it needs to be in sight`,
+    opened.inSight && clickedAt - opened.rowAt >= -1 && clickedAt - opened.rowAt <= opened.figH + 10, JSON.stringify({ clickedAt, ...opened }));
   const fig = await page.evaluate(() => {
     const f = [...document.querySelectorAll("#screen .ln")].map((el) => el.shadowRoot?.querySelector("figure")).find(Boolean);
     const img = f.querySelector("img"), t = document.getElementById("term");
@@ -190,9 +201,47 @@ export async function webWidgets(browser, name = "") {
   check(`${at} a region whose first line was dropped shows its other lines as text`,
     trimmed.md === 1 && trimmed.shown.length === 2 && trimmed.shown[0] && !trimmed.shown[1], JSON.stringify(trimmed));
 
+  // a long history: regions far from the view stay text until scrolled near, and drawing them
+  // keeps the line at the top of the view where it was
+  const filler = Array.from({ length: 3000 }, (_, i) => line(`older ${i}`));
+  await page.evaluate(() => { const t = document.getElementById("term"); t.scrollTop = t.scrollHeight; });   // following the output
+  say({ t: "hist", mode: "reset", sid: "S1", first: 0, oldest: 0, truncated: false, lines: [...HISTORY.slice(0, 14), line(`${PROMPT}true`), ...filler] });
+  await page.waitForFunction(() => document.querySelectorAll("#hist .ln").length > 3000);
+  await page.waitForTimeout(400);
+  const lazy = await page.evaluate(() => document.querySelectorAll("#hist .ln.wg-host").length);
+  const scrolled = await page.evaluate(async () => {
+    const t = document.getElementById("term"), row = [...document.querySelectorAll("#hist .ln")].find((el) => el.textContent === "older 40");
+    row.scrollIntoView({ block: "start" });
+    const before = row.getBoundingClientRect().top;
+    await new Promise((r) => setTimeout(r, 700));
+    return { before, after: row.getBoundingClientRect().top, hosts: document.querySelectorAll("#hist .ln.wg-host").length,
+      drawn: !!document.querySelector("#hist .ln.wg-host")?.shadowRoot.querySelector(".body h1") };
+  });
+  check(`${at} a region far from the view is not drawn while the end is shown, and is drawn when scrolled near, the line in sight staying put`,
+    lazy === 0 && scrolled.hosts === 1 && scrolled.drawn && Math.abs(scrolled.before - scrolled.after) < 2, JSON.stringify({ lazy, ...scrolled }));
+
   check(`${at} nothing breaks the page's CSP (script-src 'self', no eval) and no page errors`,
     !errors.length && !(await page.evaluate(() => window.csp)).length, JSON.stringify({ errors, csp: await page.evaluate(() => window.csp) }));
   await page.close();
+
+  // a coding agent's pane: a fence right above its input box; typing lines into the box
+  // (Shift+Enter) neither joins them to the widget nor draws it again
+  const ag = await open(browser, { agent: true });
+  const RULE = "─".repeat(80);
+  const agentScreen = (typed) => [...["Here:", "```python", "def main():", "    return 1", "```"].map((t) => line(t)), line(RULE),
+    ...typed.map((t) => line("> " + t)), { r: [["> ", null, null, 0], [" ", null, null, 256]], e: true }, line(RULE), line("  ? for shortcuts")];
+  const sendAgent = (typed) => { const r = agentScreen(typed); ag.say({ t: "screen", sid: "S1", full: true, n: r.length, cols: 80, rows: r.length, ch: r.map((x, i) => [i, x]) }); };
+  sendAgent([]);
+  await ag.page.waitForFunction(() => document.querySelector("#screen .ln.wg-host")?.shadowRoot.querySelector(".tok-keyword"), null, { timeout: 8000 }).catch(() => {});
+  await ag.page.evaluate(() => { window.agentWg = document.querySelector("#screen .ln.wg-host")?.shadowRoot.querySelector(".wg"); });
+  for (const typed of [["first"], ["first", "second"], ["first", "second", "third"]]) { sendAgent(typed); await ag.page.waitForTimeout(120); }
+  await ag.page.waitForTimeout(300);
+  const box = await ag.page.evaluate(() => ({
+    same: !!window.agentWg && document.querySelector("#screen .ln.wg-host")?.shadowRoot.querySelector(".wg") === window.agentWg,
+    hidden: [...document.querySelectorAll("#screen .ln.wg-hid")].map((el) => el.textContent.trim()) }));
+  check(`${at} in a coding agent's pane a widget above the input box stays as it is while lines are typed into the box`,
+    box.same && box.hidden.every((t) => !t.startsWith(">") && !t.startsWith("─")), JSON.stringify(box));
+  await ag.page.close();
 
   // fbd not running: the widget says so, and the rows show as text
   const off = await open(browser, { renderers: false });

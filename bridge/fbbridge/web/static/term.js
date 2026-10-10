@@ -51,7 +51,8 @@ const blankRow = (r) => !r.txt.trim() && !r.data.r.some(([, , bg, flags]) => bg 
 
 export class TermView {
   /** keep: the most history lines on the page while it follows the output (older ones load
-   *  again on scrolling up). onRows(full) after the rows changed and onReset (set by the page):
+   *  again on scrolling up). onRows(full, keep) after the rows changed (keep: the reader's place is
+   *  the widgets' to keep) and onReset (set by the page):
    *  the output widgets (widgets.js). */
   constructor({ term, hist, screen, note, bottomBtn, paused, send, keep = Infinity }) {
     Object.assign(this, { term, histEl: hist, screenEl: screen, note, bottomBtn, paused, send, keep });
@@ -242,7 +243,14 @@ export class TermView {
   atBottom() { return this.term.scrollHeight - this.term.scrollTop - this.term.clientHeight < 8; }
   toBottom() { this.term.scrollTop = this.term.scrollHeight; this.updateBottom(); }
   updateBottom() { this.bottomBtn.hidden = this.atBottom(); }
-  keepBottom(fn) { const stick = this.atBottom(); fn(); if (stick) this.term.scrollTop = this.term.scrollHeight; this.updateBottom(); }
+  // sticking: fn runs before the view goes to the end (the widgets measure from there)
+  keepBottom(fn) {
+    const stick = this.atBottom();
+    this.sticking = stick;
+    try { fn(); } finally { this.sticking = false; }
+    if (stick) this.term.scrollTop = this.term.scrollHeight;
+    this.updateBottom();
+  }
 
   onHist(m) {
     if (!this.theme) return;
@@ -285,8 +293,8 @@ export class TermView {
         if (rest.length + next.childElementCount <= MAX_BLOCK) next.prepend(...rest.map((r) => r.el));
         else this.block(rest);                                      // cut, as a longer paragraph is
       }
-      this.onRows?.(true);
       this.term.scrollTop += this.term.scrollHeight - h;
+      this.onRows?.(true, true);                                    // measured from the place kept
     }
     this.showNote();
   }

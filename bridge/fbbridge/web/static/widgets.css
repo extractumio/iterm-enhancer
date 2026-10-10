@@ -29,8 +29,9 @@ svg.lu { width: var(--s, 14px); height: var(--s, 14px); fill: none; stroke: curr
 .body { padding: 8px 12px; overflow-x: auto; }
 .body.code { padding: 0; }
 pre { margin: 0; padding: 8px 12px; white-space: pre; overflow-x: auto; font-family: inherit; font-size: inherit; tab-size: 4; }
-.body.mermaid { text-align: center; }
-img.diagram { max-width: 100%; max-height: var(--wg-dh, 50vh); cursor: zoom-in; background: transparent; }
+.body.mermaid { display: flex; justify-content: center; }
+img.diagram { display: block; margin: 0 auto; max-width: 100%; max-height: var(--wg-dh, 50vh); object-fit: contain;
+  cursor: zoom-in; background: transparent; }
 
 /* Markdown: prose in the system font, code in the terminal's */
 .body.markdown { font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; max-width: 80ch; }
@@ -73,12 +74,13 @@ img.diagram { max-width: 100%; max-height: var(--wg-dh, 50vh); cursor: zoom-in; 
 .wgi { white-space: nowrap; margin-left: .6ch; -webkit-user-select: none; user-select: none; }
 .wgi button { padding: 0 4px; min-height: 0; height: 1.25em; vertical-align: -0.2em;
   border-color: color-mix(in srgb, var(--t-fg) 25%, transparent); color: var(--accent); }
-.figs { display: block; white-space: normal; }
+.figs { display: block; white-space: normal; text-align: center; }
 .figs:empty { display: none; }
-figure { margin: 4px 0 8px; display: inline-flex; flex-direction: column; gap: 2px; max-width: var(--wg-iw, 50%); vertical-align: top; }
-figure img { max-width: var(--wg-iw, 50vw); max-height: var(--wg-ih, 50vh); object-fit: contain; align-self: flex-start;
+figure { margin: 4px 0 8px; display: inline-flex; flex-direction: column; align-items: center; gap: 2px;
+  max-width: var(--wg-iw, 50%); vertical-align: top; }
+figure img { max-width: var(--wg-iw, 50vw); max-height: var(--wg-ih, 50vh); object-fit: contain;
   cursor: zoom-in; border-radius: 4px; background: repeating-conic-gradient(#8884 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
-figcaption { display: flex; align-items: center; gap: 4px; font: 11.5px/1.3 -apple-system, BlinkMacSystemFont, sans-serif;
+figcaption { display: flex; align-items: center; justify-content: center; gap: 4px; font: 11.5px/1.3 -apple-system, BlinkMacSystemFont, sans-serif;
   color: color-mix(in srgb, var(--t-fg) 60%, var(--t-bg)); overflow-wrap: anywhere; }
 figcaption button { padding: 0 3px; min-height: 0; }
 figcaption .err { flex-basis: auto; }
