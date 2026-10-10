@@ -189,6 +189,12 @@ and sign in:
 - **Links**: web addresses and file paths or names the terminal printed (`src/main.rs:42`,
   `~/notes.md`, `README.md`) have a dotted underline; ⌘-click (Ctrl-click off a Mac) or tap one
   to open an address in a new tab, a file in View.
+- **Output widgets**: code in the output (a fenced block, or a file printed with `cat`, `bat`,
+  `head`…) is highlighted; Markdown is rendered, with **Raw** / **Markdown** and **Copy**; a
+  Mermaid diagram is drawn. An image file the output names gets a button after it that shows the
+  image below the line. Click a diagram or an image to see it full screen: pinch, scroll or drag
+  to zoom and move, double-click for 1:1, Esc to close. Output a program colored itself (`bat`,
+  `glow`, Claude Code) stays as it is.
 - **Drop files** on the page to upload them, as the Upload hot key does: their paths are pasted.
 - **Images**: paste one (PNG, JPEG, GIF, WebP, up to 20 MB) and it is saved where the pane's
   shell runs, in `$TMPDIR/iterm-enhancer-paste/` on this Mac or `~/.cache/iterm-enhancer/paste/`

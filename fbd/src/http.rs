@@ -62,6 +62,10 @@ pub async fn ui(req: Request) -> Response {
     let mime = mime_guess::from_path(path).first_or_octet_stream();
     let mut res = Response::new(Body::from(file.data.into_owned()));
     res.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_str(mime.as_ref()).unwrap());
+    if path.starts_with("chunks/") {
+        // named by their content hash: kept by the browser (a phone loads Mermaid's 3.6 MB once, AC-56)
+        res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=31536000, immutable"));
+    }
     if path == "index.html" {
         // the event socket by name: WebKit's 'self' may not cover ws: (AC-41); the guard
         // admitted only our exact Host
@@ -70,4 +74,25 @@ pub async fn ui(req: Request) -> Response {
         res.headers_mut().insert("content-security-policy", HeaderValue::from_str(&csp).unwrap_or(HeaderValue::from_static("default-src 'self'")));
     }
     res
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn get(path: &str) -> Response {
+        ui(Request::builder().uri(path).body(Body::empty()).unwrap()).await
+    }
+
+    #[tokio::test]
+    async fn hashed_chunks_are_kept_and_the_rest_revalidated() {
+        let chunk = Ui::iter().find(|p| p.starts_with("chunks/")).expect("the UI build has chunks");
+        let res = get(&format!("/{chunk}")).await;
+        assert_eq!(res.headers()[header::CACHE_CONTROL], "public, max-age=31536000, immutable");
+        for page in ["/", "/main.js", "/renderers.js"] {
+            let res = get(page).await;
+            assert_eq!(res.status(), StatusCode::OK, "{page}");
+            assert!(res.headers().get(header::CACHE_CONTROL).is_none(), "{page}: left to the no-store default");
+        }
+    }
 }

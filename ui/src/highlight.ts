@@ -33,15 +33,18 @@ export async function languageForFile(name: string): Promise<LanguageSupport | n
   return d ? d.load() : null;
 }
 
+// A fence's word ("python", "py") or a file's name ("tool.py"): by language name or alias,
+// else by file name, else as an extension.
 async function languageByName(name: string): Promise<LanguageSupport | null> {
-  const d = LanguageDescription.matchLanguageName(languages, name, true);
+  const d = LanguageDescription.matchLanguageName(languages, name, true) ?? describeFile(name) ?? describeFile(`x.${name}`);
   return d ? d.load() : null;
 }
 
-/** Highlight `code` into the children of `into` using `tok-*` spans. */
-export async function highlightInto(into: HTMLElement, code: string, lang: string) {
-  const support = await languageByName(lang).catch(() => null);
-  if (!support) return;
+/** Highlight `code` into the children of `into` using `tok-*` spans; false when the
+ *  language is not known (the text stays as it was). */
+export async function highlightInto(into: HTMLElement, code: string, lang: string): Promise<boolean> {
+  const support = lang ? await languageByName(lang).catch(() => null) : null;
+  if (!support) return false;
   const tree = support.language.parser.parse(code);
   const frag = document.createDocumentFragment();
   let pos = 0;
@@ -55,4 +58,5 @@ export async function highlightInto(into: HTMLElement, code: string, lang: strin
   });
   if (pos < code.length) frag.append(code.slice(pos));
   into.replaceChildren(frag);
+  return true;
 }

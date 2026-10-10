@@ -248,6 +248,24 @@ svg.lu circle { fill: none; stroke: currentColor; }
 #term:not(.focused) .cur { background: transparent !important; color: inherit !important;
   outline: 1px solid var(--accent); outline-offset: -1px; }
 #note { margin: 4px 0 10px; color: var(--muted); font: 12px var(--ui); white-space: normal; }
+/* Output widgets (AC-56, widgets.css inside): a region's first row holds its widget and starts
+   on a line of its own; its other rows are hidden while it is rendered */
+#term .ln.wg-host { display: block; width: auto; min-height: 0; }
+#term .ln.wg-host::before, #term .ln.wg-host::after, #term.wrap .ln.eol.wg-host::before, #term.wrap .ln.eol.wg-host::after { content: none; }
+#term .ln.wg-hid { display: none; }
+
+/* The full-screen viewer of an image or a diagram (zoom.js) */
+#zoom { position: fixed; inset: 0; z-index: 40; background: color-mix(in srgb, #000 88%, transparent); color: #eee;
+  touch-action: none; -webkit-user-select: none; user-select: none; }
+#zoom[hidden] { display: none; }
+#zoom .zstage { position: absolute; inset: 0; overflow: hidden; cursor: grab; }
+#zoom .zstage:active { cursor: grabbing; }
+#zoom .zstage img { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; max-height: none; will-change: transform; }
+#zoom .ztools { position: absolute; top: calc(10px + env(safe-area-inset-top)); right: calc(10px + env(safe-area-inset-right)); display: flex; gap: 6px; }
+#zoom .ztools button { min-width: 40px; height: 40px; border-radius: 10px; border: 1px solid #fff3; background: #222c; color: #eee;
+  font: 15px var(--ui); padding: 0 10px; }
+#zoom .zcap { position: absolute; left: 12px; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom)); margin: 0;
+  font: 12px var(--ui); text-align: center; color: #ccc; overflow-wrap: anywhere; pointer-events: none; }
 
 #toast { position: absolute; left: 50%; bottom: calc(16px + var(--keys-h, 0px)); transform: translateX(-50%);
   z-index: 6; margin: 0; padding: 6px 14px; border-radius: 999px; font-size: 13px; white-space: nowrap;

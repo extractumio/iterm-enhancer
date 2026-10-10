@@ -1,0 +1,270 @@
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// The output widgets of the terminal view (AC-56): code, Markdown and Mermaid regions of the
+// output (outparse.js) drawn as widgets, and a button after each image file named in it. A
+// widget is a shadow root on its region's first row (widgetui.js); in its rendered form the
+// region's other rows are hidden (wg-hid), in Raw they show as before. Nothing is added to the
+// history's or the screen's children: term.js counts them as rows and blocks.
+import { nearRows } from "./linkmarks.js";
+import { imagePaths, scan } from "./outparse.js";
+import { figure, hostOf, imageButtons, regionWidget, zoomDiagram, zoomImage } from "./widgetui.js";
+
+const STEADY = 150;          // ms a region on the screen stays as it is before it is rendered
+const CACHED = 150;          // rendered widgets kept, the least recently shown go first
+const IMAGES_OPEN = 50;      // images kept open
+const THROTTLE = 100;        // ms between scans of streaming output
+
+// FNV-1a: a region is known by its kind, language and text
+function hash(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(36) + s.length.toString(36);
+}
+
+// A row as outparse.js reads it: its text (a wrapped row keeps its spaces) and whether the
+// program colored it.
+function info(r) {
+  if (!r) return { text: "", eol: true, styled: false };
+  return (r.wgInfo ??= {
+    text: r.data.e ? r.txt : r.el.textContent.replace(/[︎️]/g, ""),
+    eol: !!r.data.e,
+    styled: r.data.r.some(([, fg, bg]) => (fg != null && fg !== "R") || (bg != null && bg !== "R")),
+  });
+}
+
+// a dark background ("#rrggbb" or "rgb(r, g, b)") gets Mermaid's dark theme
+function dark(bg = "") {
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(bg), rgb = /(\d+)\D+(\d+)\D+(\d+)/.exec(bg);
+  const [r, g, b] = hex ? hex.slice(1).map((v) => parseInt(v, 16)) : rgb ? rgb.slice(1).map(Number) : [0, 0, 0];
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128;
+}
+
+export class Widgets {
+  /** view: the TermView; boxes: #hist and #screen; resolve(path): {url, path} or {error} for
+   *  an image path as printed; copy(text); onZoomClosed(): the viewer closed. */
+  constructor({ view, term, boxes, resolve, copy, onZoomClosed }) {
+    Object.assign(this, { view, term, boxes, resolve, copy, onZoomClosed });
+    this.modes = new Map();      // region key -> "raw" or "on", as the user chose
+    this.cache = new Map();      // region key + theme -> its widget element
+    this.sources = new WeakMap(); // widget -> its region's source text (for Copy)
+    this.seen = new Map();       // key of a screen region -> when it was first seen as it is
+    this.images = new Map();     // image key -> {url, path, error} of an open image
+    this.lastScan = 0;
+    this.reset();
+    this.click = (b, root) => this.onClick(b, root);
+    let timer = 0;
+    term.addEventListener("scroll", () => { clearTimeout(timer); timer = setTimeout(() => this.markImages(), 150); }, { passive: true });
+    // the terminal's size changes with the window, the keyboard, Files docked or not
+    new ResizeObserver(() => { this.sizes(); this.markImages(); }).observe(term);
+  }
+
+  /** Another session: nothing of the last one stays attached. */
+  reset() {
+    this.final = [];             // history regions that no longer change: {rows, key, region}
+    this.settledN = null;        // the history line the next scan starts at (null: its first)
+    this.hosts = new Map();      // a region's first row -> {key, raw, rows, live}: what is attached
+    this.imageHosts = new Set();
+    clearTimeout(this.steady); clearTimeout(this.later);
+  }
+
+  setTheme(theme) {
+    this.dark = dark(theme.bg);
+    const pal = theme.ansi ?? [];
+    const s = this.term.style;
+    // the token colors of the panel's highlighter, from the profile's ANSI colors
+    [["kw", 13], ["str", 10], ["num", 11], ["fn", 12], ["type", 14], ["tag", 9]].forEach(([k, i]) => { if (pal[i]) s.setProperty(`--tk-${k}`, pal[i]); });
+  }
+
+  /** The largest an image in the history is: half the terminal's width and height. */
+  sizes() {
+    const s = this.term.style;
+    s.setProperty("--wg-iw", `${Math.round(this.term.clientWidth / 2)}px`);
+    s.setProperty("--wg-ih", `${Math.round(this.term.clientHeight / 2)}px`);
+    s.setProperty("--wg-dh", `${Math.round(this.term.clientHeight / 2)}px`);
+  }
+
+  /** After the history or the screen changed (term.js, inside its keepBottom). full: the rows
+   *  were made again or older ones came first: scan all of the history again. Streaming output
+   *  is scanned at most every THROTTLE ms, unless a widget lost one of its rows (the screen drew
+   *  them again), which is put right at once, or `now` (the user's own change). */
+  update(full = false, now = false) {
+    const v = this.view;
+    if (!v.theme) return;
+    clearTimeout(this.later);
+    const wait = this.lastScan + THROTTLE - performance.now();
+    const torn = [...this.hosts.values()].some((h) => h.live && h.rows.some((el) => !el.isConnected));
+    if (!full && !now && wait > 0 && !torn) { this.later = setTimeout(() => this.keepPlace(() => this.update()), wait); return; }
+    this.lastScan = performance.now();
+    if (full) { this.final = []; this.settledN = null; }
+    const hist = v.hist, screen = v.screen;
+    const base = hist.length ? hist[0].n : 0;
+    const i0 = this.settledN === null ? 0 : Math.min(hist.length, Math.max(0, this.settledN - base));
+    const rows = hist.slice(i0).concat(screen);
+    const histPart = hist.length - i0;
+    const cursor = screen.findIndex((r) => r?.el.querySelector(".cur"));
+    const { found, settled } = scan(rows.map(info), histPart + (cursor >= 0 ? cursor : screen.length));
+    // regions wholly in the history before `settled` are final; the screen changes
+    let cut = Math.min(settled, histPart);
+    for (const r of [...found].reverse()) if (r.to >= cut && r.from < cut) cut = r.from;
+    const at = performance.now(), live = [];
+    for (const r of found) {
+      const key = `${r.kind}:${r.lang}:${hash(r.text)}`, part = rows.slice(r.from, r.to + 1);
+      if (r.to < cut) this.final.push({ rows: part, key, region: r });
+      else {
+        live.push({ rows: part, key, region: r, live: true });
+        if (!this.seen.has(key)) this.seen.set(key, at);
+      }
+    }
+    this.settledN = i0 + cut < hist.length ? hist[i0 + cut].n : hist.length ? hist.at(-1).n + 1 : null;
+    for (const k of this.seen.keys()) if (!live.some((l) => l.key === k)) this.seen.delete(k);
+    // a region whose first line was dropped (trim) is no longer one: its other rows show again
+    this.final = this.final.filter((f) => f.rows[0].n >= base);
+    this.apply([...this.final, ...live.filter((l) => at - this.seen.get(l.key) >= STEADY || this.cache.has(this.cacheKey(l.key)))]);
+    clearTimeout(this.steady);
+    if (live.some((l) => !this.cache.has(this.cacheKey(l.key)))) this.steady = setTimeout(() => this.keepPlace(() => this.update(false, true)), STEADY);
+    this.markImages();
+  }
+
+  cacheKey(key) { return `${key}:${this.dark ? "d" : "l"}`; }
+  // rendered unless the user chose Raw; a diagram guessed from text without a fence starts in Raw
+  raw(key, region) { return (this.modes.get(key) ?? (region.guessed ? "raw" : "on")) === "raw"; }
+
+  // The widgets attached to their rows; rows no longer in a region show again. A history
+  // region attached as it should be is passed over (its rows stay as they are); a screen row
+  // may have been drawn again, so a screen region's rows are all looked at.
+  apply(list) {
+    const hosts = new Map();
+    const show = (els, keep = new Set()) => { for (const el of els) if (!keep.has(el)) el.classList.remove("wg-hid"); };
+    const detach = (anchor, was) => {
+      show(was.rows);
+      anchor.classList.remove("wg-host", "wg-raw");
+      anchor.shadowRoot?.replaceChildren(document.createElement("slot"));
+    };
+    for (const { rows, key, region, live } of list) {
+      if (!rows.length || rows.some((r) => !r)) continue;
+      const anchor = rows[0].el, raw = this.raw(key, region), els = rows.map((r) => r.el);
+      const was = this.hosts.get(anchor);
+      hosts.set(anchor, { key, raw, rows: els, live });
+      const root = hostOf(anchor, this.click);
+      let mine = root.firstElementChild;
+      if (!live && was?.key === key && was.raw === raw && was.rows.length === els.length && was.rows.at(-1) === els.at(-1)
+        && mine?.dataset.key === key) continue;
+      if (was && was.key !== key) detach(anchor, was);
+      else if (was) show(was.rows, new Set(els));                 // rows the region no longer has
+      if (mine?.dataset.key !== key) {
+        mine = this.widget(key, region);
+        const used = mine.getRootNode().host;
+        if (used && used !== anchor && hosts.has(used)) mine = this.build(key, region);   // printed twice: one each
+        root.replaceChildren(mine, document.createElement("slot"));
+      }
+      if (!raw) mine.draw();
+      anchor.classList.add("wg-host");
+      anchor.classList.toggle("wg-raw", raw);
+      for (const el of els.slice(1)) el.classList.toggle("wg-hid", !raw);
+    }
+    for (const [anchor, was] of this.hosts) if (!hosts.has(anchor)) detach(anchor, was);
+    this.hosts = hosts;
+  }
+
+  build(key, region) {
+    const wg = regionWidget(region, { key, dark: this.dark, change: (fn) => this.keepPlace(fn),
+      raw: () => { this.modes.set(key, "raw"); this.keepPlace(() => this.update(false, true)); } });
+    this.sources.set(wg, region.text);
+    return wg;
+  }
+
+  widget(key, region) {
+    const ck = this.cacheKey(key);
+    let wg = this.cache.get(ck);
+    if (wg) { this.cache.delete(ck); this.cache.set(ck, wg); return wg; }
+    this.cache.set(ck, wg = this.build(key, region));
+    for (const k of [...this.cache.keys()].slice(0, Math.max(0, this.cache.size - CACHED))) this.cache.delete(k);
+    return wg;
+  }
+
+  /** Runs fn, a change to the page, keeping the reader's place: the end while following the
+   *  output, else the row at the top of the view where it was (a widget above it may change).
+   *  Not while text is selected or a finger is down: the page must not change under them. */
+  keepPlace(fn) {
+    if (this.view.frozen()) { setTimeout(() => this.keepPlace(fn), 300); return; }
+    if (this.view.atBottom()) return this.view.keepBottom(fn);
+    const t = this.term.getBoundingClientRect();
+    const at = document.elementFromPoint(t.left + 12, t.top + 4)?.closest?.(".ln");
+    const before = at?.getBoundingClientRect().top;
+    fn();
+    if (at?.isConnected && before !== undefined) this.term.scrollTop += at.getBoundingClientRect().top - before;
+    this.view.updateBottom();
+  }
+
+  onClick(b, root) {
+    const act = b.dataset.act, wg = b.closest(".wg"), key = wg?.dataset.key;
+    if (act === "raw" || act === "on") {
+      this.modes.set(key, act);
+      if (act === "on" && wg.dataset.failed !== undefined) {
+        // it could not be drawn: made again, so it tries again (fbd may be back)
+        for (const [k, w] of this.cache) if (w === wg) this.cache.delete(k);
+        root.replaceChildren(document.createElement("slot"));
+      }
+      return this.keepPlace(() => this.update(false, true));
+    }
+    if (act === "copy") return this.copy(this.sources.get(wg) ?? "");
+    if (act === "zoom") return zoomDiagram(b, this.onZoomClosed);
+    if (act === "zoomimg") return zoomImage(b, this.onZoomClosed);
+    if (act === "img") return this.openImage(root.host, b.dataset.path);
+    if (act === "unimg") {
+      const fig = b.closest("figure");
+      this.images.delete(this.imageKey(root.host, fig.dataset.path));
+      this.keepPlace(() => fig.remove());
+    }
+  }
+
+  imageKey(row, path) { return `${hash(row.textContent)}:${path}`; }
+
+  async openImage(row, path) {
+    const k = this.imageKey(row, path);
+    if (this.images.has(k)) return;
+    this.images.set(k, { pending: true });
+    let got;
+    try { got = await this.resolve(path); } catch (e) { got = { error: e.message || String(e) }; }
+    this.images.set(k, got);
+    for (const key of [...this.images.keys()].slice(0, Math.max(0, this.images.size - IMAGES_OPEN))) this.images.delete(key);
+    this.keepPlace(() => this.markImages(true));
+  }
+
+  /** The image buttons of the rows near the view (a long listing of image files would
+   *  otherwise give thousands of rows a shadow root), and the images open there. */
+  markImages(now = false) {
+    if (!now) { clearTimeout(this.imgTimer); this.imgTimer = setTimeout(() => this.markImages(true), 60); return; }
+    const rows = nearRows(this.term, this.boxes), hosts = new Set();
+    let line = [];
+    const flush = () => {
+      const last = line.at(-1);
+      const text = line.map((el) => el.textContent.replace(/[︎️]/g, "")).join("");
+      line = [];
+      if (!last || this.hosts.has(last)) return;          // a widget's own row
+      const paths = imagePaths(text);
+      if (!paths.length) return;
+      hosts.add(last);
+      const root = hostOf(last, this.click);
+      const want = paths.map((p) => p.value).join("\n");
+      let [span, figs] = [root.querySelector(".wgi"), root.querySelector(".figs")];
+      if (span?.dataset.paths !== want) {
+        [span, figs] = imageButtons(paths);
+        span.dataset.paths = want;
+        root.replaceChildren(document.createElement("slot"), span, figs);
+      }
+      for (const p of paths) {
+        const got = this.images.get(this.imageKey(last, p.value));
+        const shown = [...figs.children].find((f) => f.dataset.path === p.value);
+        if (got && !got.pending && !shown) figs.append(figure(p.value, got));
+        if (!got && shown) shown.remove();
+      }
+    };
+    for (const el of rows) {
+      line.push(el);
+      if (el.classList.contains("eol")) flush();
+    }
+    flush();
+    for (const el of this.imageHosts) if (!hosts.has(el) && !this.hosts.has(el)) el.shadowRoot?.replaceChildren(document.createElement("slot"));
+    this.imageHosts = hosts;
+  }
+}

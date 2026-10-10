@@ -10,7 +10,8 @@ rmSync("dist", { recursive: true, force: true });
 cpSync("public", "dist", { recursive: true });
 writeFileSync(".build-id", build + "\n"); // the browser test runs its fbd as this build
 const ctx = await esbuild.context({
-  entryPoints: ["src/main.ts"],
+  // renderers.js: the web app's output widgets' renderers (AC-56); it shares chunks with the panel
+  entryPoints: ["src/main.ts", { in: "src/web-widgets.ts", out: "renderers" }],
   bundle: true,
   splitting: true,
   format: "esm",

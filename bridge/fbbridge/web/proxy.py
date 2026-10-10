@@ -19,11 +19,12 @@ PASS = {"accept", "accept-language", "content-type", "user-agent", "if-match", "
         "x-fb-client", "x-fb-host", "sec-websocket-key", "sec-websocket-version"}
 
 
-# What the web app may ask of fbd: the panel's page, reading, editing and file operations.
+# What the web app may ask of fbd: the panel's page, the output widgets' renderers (AC-56), reading,
+# editing and file operations.
 # Not: acting on the Mac itself (open, reveal, typing into a terminal, windows, updates,
 # enabling hosts, recovery) nor switching web access, which stay with the Mac's own panel.
 ALLOWED = {
-    "GET": re.compile(r"/(|main\.js|main\.css|chunks/[\w.-]+)|/api/(state|ws|ls|file|raw|workspace|prefs|view/pending)"),
+    "GET": re.compile(r"/(|main\.js|main\.css|renderers\.js|chunks/[\w.-]+)|/api/(state|ws|ls|file|raw|workspace|prefs|view/pending)"),
     "PUT": re.compile(r"/api/(file|workspace|prefs)"),
     "POST": re.compile(r"/api/fs/(mkdir|touch|rename|trash)"),
 }

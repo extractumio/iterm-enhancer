@@ -51,7 +51,8 @@ const blankRow = (r) => !r.txt.trim() && !r.data.r.some(([, , bg, flags]) => bg 
 
 export class TermView {
   /** keep: the most history lines on the page while it follows the output (older ones load
-   *  again on scrolling up). */
+   *  again on scrolling up). onRows(full) after the rows changed and onReset (set by the page):
+   *  the output widgets (widgets.js). */
   constructor({ term, hist, screen, note, bottomBtn, paused, send, keep = Infinity }) {
     Object.assign(this, { term, histEl: hist, screenEl: screen, note, bottomBtn, paused, send, keep });
     this.theme = null; this.pal = []; this.cols = 0;
@@ -79,12 +80,16 @@ export class TermView {
     this.queued = []; this.pending = null;
     this.histEl.replaceChildren(); this.screenEl.replaceChildren();
     this.note.hidden = true;
+    this.onReset?.();
   }
 
   frozen() {
     if (this.touching) return true;
     const sel = getSelection();
-    return !!sel && !sel.isCollapsed && this.term.contains(sel.anchorNode);
+    if (!sel || sel.isCollapsed) return false;
+    // a selection in an output widget is in its row's shadow root (AC-56)
+    for (let n = sel.anchorNode; n; n = n.getRootNode().host) if (this.term.contains(n)) return true;
+    return false;
   }
 
   resume() {
@@ -104,6 +109,7 @@ export class TermView {
       this.hist = this.hist.map((r) => this.swap(r, r.data, r.n));
       this.screen = this.screen.map((r) => this.swap(r, r.data));
       this.relinkAll();
+      this.onRows?.(true);
     });
   }
 
@@ -246,7 +252,7 @@ export class TermView {
     this.truncated = m.truncated;
     if (m.mode === "reset") {
       this.hist = rows;
-      this.keepBottom(() => this.relinkAll());                   // it puts the lines in place
+      this.keepBottom(() => { this.relinkAll(); this.onRows?.(true); });   // it puts the lines in place
     } else if (m.mode === "append") {
       const known = this.hist.length ? this.hist.at(-1).n : -1;
       const fresh = rows.filter((r) => r.n > known);
@@ -261,6 +267,7 @@ export class TermView {
         this.trim(follow);
         this.pack();
         this.groupScreen();
+        this.onRows?.(false);
       });
     } else {                                        // prepend older lines, keep the view still
       const first = this.hist.length ? this.hist[0].n : Infinity;
@@ -278,6 +285,7 @@ export class TermView {
         if (rest.length + next.childElementCount <= MAX_BLOCK) next.prepend(...rest.map((r) => r.el));
         else this.block(rest);                                      // cut, as a longer paragraph is
       }
+      this.onRows?.(true);
       this.term.scrollTop += this.term.scrollHeight - h;
     }
     this.showNote();
@@ -332,6 +340,7 @@ export class TermView {
         for (const [i] of changed) { this.link(this.hist.length + i - 1); this.link(this.hist.length + i); }
         this.groupScreen();
       }
+      this.onRows?.(false);
     });
     if (performance.now() < (this.followUntil ?? 0)) this.showCursor();
     this.onDrawn?.();

@@ -4,6 +4,7 @@ import { ctrlChar, encodeKey } from "./keys.js";
 import { selectedText } from "./seltext.js";
 import { copyByCommand, keepSelectionAt } from "./touchcopy.js";
 import { composing } from "./trace.js";
+import { inWidget } from "./widgetui.js";
 
 // Four rows of six keys, grouped by what they do: text and the clipboard (with Upload), control
 // keys, the arrows with their modifiers, and moving around. Fn swaps the last two rows for the
@@ -126,9 +127,10 @@ export class Input {
     // selects the word under it, with iOS's handles; a tap on the selection shows Copy.
     let start = null, hold = 0;
     const release = () => { clearTimeout(hold); hold = 0; };
+    // A touch on an output widget (AC-56) is the widget's: its buttons, its own selection.
     this.term.addEventListener("touchstart", (e) => {
       const t = e.touches[0];
-      start = e.touches.length === 1 ? { x: t.clientX, y: t.clientY, at: Date.now() } : null;
+      start = e.touches.length === 1 && !inWidget(e) ? { x: t.clientX, y: t.clientY, at: Date.now() } : null;
       release();
       if (start && document.activeElement === this.kbd) {
         this.wasTyping = true;                     // a copy of what gets selected gives the focus back (bind)

@@ -11,28 +11,30 @@ const NEAR = 1;                 // screens above and below the visible one
 // re-joined hard end stands for a space), as for a click (termlinks.js).
 const continues = (el) => !el.classList.contains("eol") || el.classList.contains("join");
 
+/** The rows within a screen of the visible ones, top to bottom: the boxes' children are blocks
+ *  and loose rows. Rows hidden by a widget (AC-56) and an agent's status lines are left out:
+ *  what is not drawn has no position, which the search needs. */
+export function nearRows(term, boxes) {
+  if (term.hidden) return [];
+  const kids = boxes.flatMap((b) => [...b.children]).filter((k) => !k.classList.contains("foot") && !k.classList.contains("wg-hid"));
+  const view = term.getBoundingClientRect();
+  const lo = view.top - NEAR * view.height, hi = view.bottom + NEAR * view.height;
+  let a = 0, b = kids.length;
+  while (a < b) { const m = (a + b) >> 1; if (kids[m].getBoundingClientRect().bottom < lo) a = m + 1; else b = m; }
+  const rows = [];
+  for (let i = a; i < kids.length && kids[i].getBoundingClientRect().top <= hi; i++) {
+    if (kids[i].classList.contains("ln")) rows.push(kids[i]);
+    else rows.push(...kids[i].querySelectorAll(".ln:not(.wg-hid)"));
+  }
+  return rows;
+}
+
 export function linkMarks(term, boxes) {
   if (!globalThis.CSS?.highlights || typeof Highlight === "undefined") return () => {};
   let timer = 0;
   const later = (ms = 120) => { clearTimeout(timer); timer = setTimeout(mark, ms); };
   term.addEventListener("scroll", () => later(), { passive: true });
   addEventListener("resize", () => later());
-
-  // The rows near the screen: the boxes' children are blocks and loose rows, top to bottom.
-  function nearRows() {
-    if (term.hidden) return [];
-    // a hidden block has no position, which the search below needs: an agent's status lines go
-    const kids = boxes.flatMap((b) => [...b.children]).filter((k) => !k.classList.contains("foot")), view = term.getBoundingClientRect();
-    const lo = view.top - NEAR * view.height, hi = view.bottom + NEAR * view.height;
-    let a = 0, b = kids.length;
-    while (a < b) { const m = (a + b) >> 1; if (kids[m].getBoundingClientRect().bottom < lo) a = m + 1; else b = m; }
-    const rows = [];
-    for (let i = a; i < kids.length && kids[i].getBoundingClientRect().top <= hi; i++) {
-      if (kids[i].classList.contains("ln")) rows.push(kids[i]);
-      else rows.push(...kids[i].querySelectorAll(".ln"));
-    }
-    return rows;
-  }
 
   // One paragraph's text, and where each of its text nodes starts in it.
   function ranges(rows) {
@@ -63,7 +65,7 @@ export function linkMarks(term, boxes) {
     clearTimeout(timer);
     const all = [];
     let para = [];
-    for (const row of nearRows()) {
+    for (const row of nearRows(term, boxes)) {
       para.push(row);
       if (!continues(row)) { all.push(...ranges(para)); para = []; }
     }

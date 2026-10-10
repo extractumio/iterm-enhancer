@@ -6,12 +6,14 @@ import { arrowsTo, cellAt, cursorCell, inOneBox, typedEnd } from "./cursor.js";
 import { navTools } from "./navtools.js";
 import { bindReorder, ordered } from "./reorder.js";
 import { linkMarks } from "./linkmarks.js";
+import { absolutePath } from "./links.js";
 import { bindLinks } from "./termlinks.js";
 import { copyButton } from "./touchcopy.js";
 import { TermView } from "./term.js";
 import { Views } from "./views.js";
 import { uploads } from "./upload.js";
 import { waitingCards } from "./waiting.js";
+import { Widgets } from "./widgets.js";
 import * as trace from "./trace.js";
 
 const $ = (id) => document.getElementById(id);
@@ -82,6 +84,24 @@ function placeKbd() {
   k.style.cssText = `left:${t.left}px;top:${r.top}px;width:${t.width}px;height:${r.height}px`;   // the cursor's row only
 }
 view.onDrawn = () => { placeKbd(); marks(); trace.drawn(); };
+
+// Code, Markdown and diagrams in the output as widgets, images named in it behind a button
+// (AC-56). An image is read through the Files proxy, on the pane's host, its relative path
+// taken from the pane's folder as a clicked path is.
+const widgets = new Widgets({ view, term: $("term"), boxes: [$("hist"), $("screen")], resolve: imageUrl,
+  copy: (text) => input.copySelection(text), onZoomClosed: () => focusTerminal() });
+view.onRows = (full) => widgets.update(full);
+view.onReset = () => widgets.reset();
+async function imageUrl(value) {
+  const pane = await views.paneInfo();
+  if (!pane) return { error: "the Mac does not answer" };
+  if (pane.error) return { error: pane.error };
+  const path = absolutePath(value, pane.cwd, pane.home);
+  if (!path) return { error: "this session's folder is not known" };
+  const q = new URLSearchParams({ path });
+  if (pane.host) q.set("host", pane.host);
+  return { url: `/fb/api/raw?${q}`, path };
+}
 trace.watch(view);
 let kbdFrame = 0;
 $("term").addEventListener("scroll", () => { if (!kbdFrame) kbdFrame = requestAnimationFrame(() => { kbdFrame = 0; placeKbd(); }); }, { passive: true });
@@ -334,6 +354,7 @@ function applyTheme(theme) {
   if (key === shownTheme) return;
   shownTheme = key;
   views.setTheme(theme);
+  widgets.setTheme(theme);
   const r = document.documentElement.style;
   r.setProperty("--t-bg", theme.bg); r.setProperty("--t-fg", theme.fg);
   r.setProperty("--accent", theme.cursor || theme.fg);

@@ -142,11 +142,12 @@ class HttpTest(unittest.TestCase):
 
 class ProxyTest(unittest.TestCase):
     def test_only_file_work_reaches_fbd(self):
-        allowed = [("GET", "/"), ("GET", "/main.js"), ("GET", "/api/ls?path=/"), ("PUT", "/api/file?path=/a"),
+        allowed = [("GET", "/"), ("GET", "/main.js"), ("GET", "/renderers.js"), ("GET", "/chunks/mermaid-AB12.js"),
+                   ("GET", "/api/ls?path=/"), ("PUT", "/api/file?path=/a"),
                    ("POST", "/api/fs/trash"), ("PUT", '/api/workspace?key=web:["","K"]')]
         refused = [("POST", "/api/os/open"), ("POST", "/api/terminal/cd"), ("POST", "/api/web"), ("POST", "/api/update"),
                    ("GET", "/api/health"), ("POST", "/api/view/open"), ("PUT", "/api/workspace?key=w0t0p0:K"),
-                   ("POST", "/api/remote/enable"), ("GET", "/../state/token")]
+                   ("POST", "/api/remote/enable"), ("GET", "/../state/token"), ("GET", "/chunks/../token"), ("GET", "/renderers.json"), ("GET", "/widgets.js")]
         for m, t in allowed:
             self.assertTrue(proxy.allowed(m, t), (m, t))
         for m, t in refused:
