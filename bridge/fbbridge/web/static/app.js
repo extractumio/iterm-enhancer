@@ -285,7 +285,7 @@ function toggleGroup(key) {
 }
 
 // The header: the profile's bar beside two lines: the agent's state, the title and the pencil;
-// then one line that only shortens at its end: profile, where the tab is, host, program, folder.
+// then one line that only shortens at its end: host, program, folder, profile, where the tab is, titles.
 function showCurrent(found) {
   $("current").querySelector(".t").textContent = found ? textForm(found.item.title) : "Choose a session";
   $("curstate").replaceChildren(...[found && stateIcon(found.item.state)].filter(Boolean));
@@ -294,8 +294,10 @@ function showCurrent(found) {
   else {
     const { group: g, item: it } = found;
     const where = (g.session ? `${g.label} ${g.session}` : g.label) + (it.index ? `, tab ${it.index}` : "");
-    const line = metaLine([it.profile || "", where, ...(it.host ? [it.host] : []), ...it.sub].filter(Boolean), false);
-    if (it.host) [...line.children].find((c) => c.textContent === it.host)?.classList.add("host");
+    // what runs there first (host, program, folder), then where the tab is, then its titles
+    const sub = [...(it.host ? [it.host] : []), ...it.sub], dir = sub.findIndex((p) => /^[~/]/.test(p));
+    const at = dir >= 0 ? dir + 1 : Math.min(sub.length, it.host ? 2 : 1);
+    const line = metaLine([...sub.slice(0, at), it.profile || "", where, ...sub.slice(at)].filter(Boolean), !!it.host);
     $("cursub").replaceChildren(...line.childNodes);
     $("curbar").replaceChildren(profileBar(it.profile, true, it.state === "working"));
   }
