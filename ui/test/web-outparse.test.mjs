@@ -133,3 +133,23 @@ test("a document a coding agent's tool printed, indented: found, and its text wi
   assert.ok(r[0].text.startsWith("How releases") || r[0].text.startsWith("## Signed"), r[0].text.slice(0, 40));
   assert.ok(!/^ {4}/m.test(r[0].text.split("\n").filter((t) => !t.startsWith("make")).join("\n")), "no line indented 4 spaces: Markdown would take it for code");
 });
+
+test("a shell script's comment block a coding agent's tool printed is not Markdown, a document with headings still is", () => {
+  const script = [
+    "⏺ Read(scripts/build.sh)", "  ⎿  Read 80 lines", "     fi", "",
+    "     # Bundle id is an explicit caller input, never auto-applied here.", "     `build.sh`",
+    "     # passes the worktree-isolated id for its Debug macOS run (`run.sh`'s", "     app);",
+    "     # the qa/iq-robot UI-test host deliberately leaves it unset so it", "     keeps the",
+    "     # project's own id and does NOT collide in LaunchServices with a live", "     `run.sh`",
+    "     # instance (XCUITest needs to own the app it launches). deploy/Release", "     leave it",
+    "     # to the project's distribution/provisioning settings.", '     BUNDLE_ID="${IQ_XCB_BUNDLE_ID:-}"', "",
+    "⏺ Done.",
+  ].join("\n");
+  assert.deepEqual(found(script).filter((r) => r.kind === "markdown"), []);
+  const doc = "# Notes\n\nThe `build.sh` script.\n\n## Usage\n\n- run it\n- check `out/`\n# not a comment, a heading after text\n";
+  assert.equal(found(doc)[0]?.kind, "markdown");
+  const changelog = "## 1.3.0\n- fix `a`\n## 1.2.0\n- fix `b`\n## 1.1.0\n- add `c`\n";
+  assert.equal(found(changelog)[0]?.kind, "markdown", "a compact changelog");
+  const readme = "# App\nA small `tool`.\n## Install\n- run `make`\n- done\n";
+  assert.equal(found(readme)[0]?.kind, "markdown", "a heading right after a line of text");
+});

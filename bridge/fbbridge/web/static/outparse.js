@@ -165,6 +165,21 @@ function sign(lines, i) {
   return "";
 }
 
+// A "#" line inside a paragraph of three or more of them is a comment of code, as in a shell
+// script's comment block (a heading stands after a blank line, a list or text once in a while:
+// a compact changelog, a heading right after a line of text).
+function comment(lines, i) {
+  const hash = (k) => HEADING.test(lines[k]?.text.trimStart() ?? "");
+  const prev = lines[i - 1]?.text.trimStart() ?? "";
+  if (!hash(i) || !prev || LIST.test(prev) || QUOTE.test(prev)) return false;
+  let a = i, b = i;
+  while (a > 0 && i - a < 50 && lines[a - 1].text.trim()) a--;
+  while (b + 1 < lines.length && b - i < 50 && lines[b + 1].text.trim()) b++;
+  let count = 0;
+  for (let k = a; k <= b; k++) if (hash(k)) count++;
+  return count >= 3;
+}
+
 // A run of Markdown starting at line i: from a sign, on over gaps of at most GAP lines to the
 // last sign and the paragraph after it, never over a prompt; a fence inside it is part of it.
 // It is a document (ok) when it has a heading, a table or a fence, two kinds of signs, three
@@ -184,7 +199,7 @@ function markdownRun(lines, i) {
       kinds.add(s); signs++; filled += f.to - j + 1; last = j = f.to;
       continue;
     }
-    if (t.trim()) { filled++; if (CODEISH.test(t)) codeish++; }
+    if (t.trim()) { filled++; if (CODEISH.test(t) || comment(lines, j)) codeish++; }
     if (s) { kinds.add(s); signs++; last = j; }
   }
   open ||= j >= lines.length && j - i < MAX_LINES;
