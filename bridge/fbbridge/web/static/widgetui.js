@@ -34,6 +34,8 @@ export function hostOf(el, onClick) {
   root.adoptedStyleSheets = [sheet];
   root.append(document.createElement("slot"));
   root.addEventListener("click", (e) => {
+    // the row's own text shows through the slot: its clicks are the terminal's (a path, ⌥-click)
+    if (e.composedPath()[0]?.getRootNode?.() !== root) return;
     e.stopPropagation();                           // the terminal's own clicks (⌘-click, ⌥-click) are not for it
     const a = e.target.closest("a[href]");
     if (a) {
