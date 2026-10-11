@@ -44,12 +44,18 @@ export function copyButton(button, term, copy) {
   });
 }
 
-/** The older copy command for text that is no longer selected: it selects a copy of it. */
+/** The older copy command for text that is no longer selected: it selects a copy of it, then
+ *  the user's selection again (Copy beside a selection keeps it for a bookmark, AC-57). */
 export function copyByCommand(text) {
-  const el = document.createElement("span");
+  const el = document.createElement("span"), sel = getSelection();
+  const was = sel.rangeCount && !sel.isCollapsed ? sel.getRangeAt(0).cloneRange() : null;
   el.textContent = text;
   el.style.cssText = "position:fixed;left:-9999px;top:0;white-space:pre;-webkit-user-select:text;user-select:text";
   document.body.append(el);
-  getSelection().selectAllChildren(el);
-  try { return document.execCommand("copy"); } finally { el.remove(); getSelection().removeAllRanges(); }
+  sel.selectAllChildren(el);
+  try { return document.execCommand("copy"); } finally {
+    el.remove();
+    sel.removeAllRanges();
+    if (was) sel.addRange(was);
+  }
 }

@@ -57,6 +57,7 @@ export class TermView {
   constructor({ term, hist, screen, note, bottomBtn, paused, send, keep = Infinity }) {
     Object.assign(this, { term, histEl: hist, screenEl: screen, note, bottomBtn, paused, send, keep });
     this.theme = null; this.pal = []; this.cols = 0;
+    this.recs = new WeakMap();   // row element -> its record (a bookmark's line, AC-57)
     this.reset();
     this.touching = false;
     term.addEventListener("scroll", () => this.onScroll(), { passive: true });
@@ -78,6 +79,7 @@ export class TermView {
     this.hist = [];          // line records, oldest first, each with .n
     this.screen = [];        // line records
     this.oldest = 0; this.truncated = false; this.loading = false;
+    this.top = 0;            // the screen's first line
     this.queued = []; this.pending = null;
     this.histEl.replaceChildren(); this.screenEl.replaceChildren();
     this.note.hidden = true;
@@ -87,8 +89,9 @@ export class TermView {
   frozen() {
     if (this.touching) return true;
     const sel = getSelection();
-    if (!sel || sel.isCollapsed) return false;
-    // a selection in an output widget is in its row's shadow root (AC-56)
+    // a selection in an output widget is in its row's shadow root (AC-56); browsers report it
+    // collapsed by the row, with its text (markpick.js)
+    if (!sel || (sel.isCollapsed && !sel.toString())) return false;
     for (let n = sel.anchorNode; n; n = n.getRootNode().host) if (this.term.contains(n)) return true;
     return false;
   }
@@ -115,7 +118,21 @@ export class TermView {
   }
 
   // a line the bridge folded comes as null (AC-56): an empty row until the user shows it
-  make(data, n) { const r = lineRec(data ?? { r: [], e: true, gone: true }, this.theme, this.pal); r.n = n; r.gone = !!r.data.gone; return r; }
+  make(data, n) { const r = lineRec(data ?? { r: [], e: true, gone: true }, this.theme, this.pal); r.n = n; r.gone = !!r.data.gone; this.recs.set(r.el, r); return r; }
+  /** The line a row element shows (a screen row's counts from the screen's first), or null. */
+  lineOf(el) {
+    const r = this.recs.get(el);
+    if (!r) return null;
+    if (r.n !== undefined) return r.n;
+    const i = this.screen.indexOf(r);
+    return i < 0 ? null : this.top + i;
+  }
+  /** The record of line n, in the history or on the screen; null when not on the page. */
+  recordAt(n) {
+    const base = this.hist.length ? this.hist[0].n : this.top;
+    if (n >= this.top) return this.screen[n - this.top] ?? null;
+    return this.hist[n - base]?.n === n ? this.hist[n - base] : null;
+  }
   swap(old, data, n) { const r = this.make(data, n); old.el.replaceWith(r.el); return r; }
 
   /** Folded lines the bridge sent when asked (AC-56): they take the place of their empty rows. */
@@ -274,6 +291,7 @@ export class TermView {
     const rows = m.lines.map((data, i) => this.make(data, m.first + i));
     this.oldest = m.oldest;
     this.truncated = m.truncated;
+    if (m.mode !== "prepend") this.top = m.first + m.lines.length;
     if (m.mode === "reset") {
       this.hist = rows;
       this.keepBottom(() => { this.relinkAll(); this.onRows?.(true); });   // it puts the lines in place
@@ -284,7 +302,7 @@ export class TermView {
       this.hist.push(...fresh);
       // the cap applies while the user follows the output: not while an older page is on its
       // way (it would leave a gap), nor behind Files or File (a hidden view is "at the bottom")
-      const follow = !this.loading && !this.term.hidden && this.atBottom();
+      const follow = !this.loading && !this.holding && !this.term.hidden && this.atBottom();   // holding: a bookmark's lines (AC-57)
       this.keepBottom(() => {
         this.histEl.append(...fresh.map((r) => r.el));
         for (let i = Math.max(0, from); i <= this.hist.length; i++) this.link(i);

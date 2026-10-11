@@ -42,10 +42,11 @@ def page_files(static=STATIC):
 
 
 class Site:
-    def __init__(self, conn, app, cfg, verify, files_of, addresses, paste_to=None, tmux=None, sessions=None):
+    def __init__(self, conn, app, cfg, verify, files_of, addresses, paste_to=None, tmux=None, sessions=None, marks=None):
         self.conn, self.cfg, self.files_of, self.paste_to = conn, cfg, files_of, paste_to
-        # sessions: where sign-ins outlive a restart (config.SESSIONS); none for a test's Site
-        self.auth, self.hub = Auth(verify, sessions, (cfg.get("password") or {}).get("salt", "")), Hub(app, tmux)
+        # sessions: where sign-ins outlive a restart (config.SESSIONS); marks: the bookmarks' file
+        # (config.BOOKMARKS); none for a test's Site
+        self.auth, self.hub = Auth(verify, sessions, (cfg.get("password") or {}).get("salt", "")), Hub(app, tmux, marks)
         self.names = {"localhost", "127.0.0.1", "::1", LOCAL_HOST, f"{LOCAL_HOST}.local", *cfg["allow_hosts"]}
         self.set_addresses(addresses)
         self.files, self.build = page_files()

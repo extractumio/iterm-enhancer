@@ -32,9 +32,11 @@ const SCREEN = ["Here is the fix:", "```python", "def main():", "    return 1", 
   "Not there: /tmp/shots/gone.png", "│ in a table: /tmp/shots/shot.png │"];
 const FILES = { "/tmp/shots": ["shot.png", "b.png", "notes.txt"] };     // what the fake fbd lists
 
-/** The page against a fake bridge; renderers: false makes /fb/renderers.js fail. */
+/** The page against a fake bridge; renderers: false makes /fb/renderers.js fail. first: the
+ *  history's first line sent on opening (older ones are there to load); hook(msg, say): every
+ *  message the page sends, to answer more. */
 export async function open(browser, { renderers = true, agent = false, history = HISTORY, screen = SCREEN, cwd = "/tmp/shots", files = FILES, image = PNG, folds = [],
-  device = { viewport: { width: 1200, height: 800 } } } = {}) {
+  device = { viewport: { width: 1200, height: 800 } }, first = 0, hook = null, layout = LAYOUT } = {}) {
   const opts = { renderers };
   const page = await browser.newPage(device);
   const errors = [], sent = [];
@@ -70,17 +72,18 @@ export async function open(browser, { renderers = true, agent = false, history =
       if (msg.t === "sub") {
         say({ t: "theme", sid: "S1", theme: THEME });
         // folded lines are not sent (null) until asked for, as the bridge does (fold.py)
-        const sentLines = history.map((l, i) => (folds.some((f) => i >= f.n && i <= f.to) ? null : l));
-        say({ t: "hist", mode: "reset", sid: "S1", first: 0, oldest: 0, truncated: false, lines: sentLines, ...(folds.length ? { folds } : {}) });
+        const sentLines = history.map((l, i) => (folds.some((f) => i >= f.n && i <= f.to) ? null : l)).slice(first);
+        say({ t: "hist", mode: "reset", sid: "S1", first, oldest: 0, truncated: false, lines: sentLines, ...(folds.length ? { folds: folds.filter((f) => f.to >= first) } : {}) });
         const rows = [...screen.map((t) => (typeof t === "string" ? line(t) : t)), { r: [[PROMPT, null, null, 0], [" ", null, null, 256]], e: true }];
         say({ t: "screen", sid: "S1", full: true, n: rows.length, cols: 80, rows: rows.length, ch: rows.map((r, i) => [i, r]) });
       }
       if (msg.t === "unfold") say(folds.find((f) => f.n === msg.n)?.fail ? { t: "lines", sid: "S1", first: msg.n, lines: [], error: "These lines are no longer in iTerm's history." }
         : { t: "lines", sid: "S1", first: msg.n, lines: history.slice(msg.n, msg.to + 1) });
       if (msg.t === "files") say({ t: "files", sid: "S1", key: "S1", cwd, home: "/Users/alex", host: null });
+      hook?.(msg, say);
     });
     say({ t: "build", id: "test" });
-    say({ t: "layout", groups: agent ? [{ ...LAYOUT[0], items: [{ ...LAYOUT[0].items[0], agent: "claude", shell: false }] }] : LAYOUT });
+    say({ t: "layout", groups: agent ? [{ ...layout[0], items: [{ ...layout[0].items[0], agent: "claude", shell: false }] }] : layout });
   });
   await page.goto(`${ORIGIN}/`);
   await page.waitForFunction((n) => document.querySelectorAll("#screen .ln").length === n, screen.length + 1, { timeout: 10000 });

@@ -199,25 +199,31 @@ export class Input {
   // After a copy from the terminal on a touch screen the keyboard field takes the keys back when a
   // hardware keyboard is known or the user was typing before the selection (bind).
   afterCopy(later = false) {
-    if (!this.touchable || !(this.hardKbd || this.wasTyping)) return;
+    if (this.keepSelection || !this.touchable || !(this.hardKbd || this.wasTyping)) return;
     this.wasTyping = false;
     if (later) setTimeout(() => this.focus(), 0); else this.focus();
   }
 
   // Copies the selection, or `given` text (the Copy button's, taken while it was selected). The
   // clipboard API needs HTTPS (or localhost); elsewhere the older copy command copies a selection.
-  async copySelection(given) {
+  // keep: the selection stays (Copy beside it, AC-57): the keyboard field does not take the focus.
+  async copySelection(given, keep = false) {
     const text = given ?? selectedText(this.term) ?? String(getSelection());
     if (!text) return this.options.status("Select text first, then press Copy.");
-    if (window.isSecureContext && navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(text);
-        this.afterCopy();                          // ⌘V next
-        return this.options.status("Copied.");
-      } catch { /* fall through */ }
+    this.keepSelection = keep;
+    try {
+      if (window.isSecureContext && navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(text);
+          this.afterCopy();                        // ⌘V next
+          return this.options.status("Copied.");
+        } catch { /* fall through */ }
+      }
+      const ok = given ? copyByCommand(text) : document.execCommand("copy");
+      this.options.status(ok ? "Copied." : "Copying is blocked here; use the system Copy menu.");
+    } finally {
+      this.keepSelection = false;
     }
-    const ok = given ? copyByCommand(text) : document.execCommand("copy");
-    this.options.status(ok ? "Copied." : "Copying is blocked here; use the system Copy menu.");
   }
 
   async pasteFromClipboard() {

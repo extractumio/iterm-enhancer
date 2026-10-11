@@ -1,0 +1,12 @@
+[
+  ["Hello, World!", "helloworld"],
+  ["  **bold** and `code` ", "boldandcode"],
+  ["❯ git status​", "gitstatus"],
+  ["✳︎ Working… (12s)", "working12s"],
+  ["ÄÖÜ straße İstanbul", "äöüstraßeistanbul"],
+  ["日本語のテキスト 123", "日本語のテキスト123"],
+  ["αβγ ΔΕΖ", "αβγδεζ"],
+  ["a_b-c.d/e:f", "abcdef"],
+  ["⏺ Bash(ls)\n  ⎿  a.txt", "bashlsatxt"],
+  ["", ""]
+]

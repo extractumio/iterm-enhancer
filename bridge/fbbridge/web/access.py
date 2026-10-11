@@ -73,7 +73,8 @@ class WebAccess:
             log(f"web: {self.error}")
             return
         addresses = await asyncio.get_running_loop().run_in_executor(None, lan_addresses)
-        site = Site(self.conn, self.app, cfg, verify, self.files_of, addresses, self.paste_to, self.tmux, config.SESSIONS)
+        site = Site(self.conn, self.app, cfg, verify, self.files_of, addresses, self.paste_to, self.tmux,
+                    config.SESSIONS, config.BOOKMARKS)
         try:
             self.server = await httpd.serve(site.handle, cfg["host"], cfg["port"], site.body_limit)
         except OSError as e:

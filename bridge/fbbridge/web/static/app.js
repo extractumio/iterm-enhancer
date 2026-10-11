@@ -14,6 +14,7 @@ import { Views } from "./views.js";
 import { uploads } from "./upload.js";
 import { waitingCards } from "./waiting.js";
 import { Widgets } from "./widgets.js";
+import { Marks } from "./marks.js";
 import * as trace from "./trace.js";
 
 const $ = (id) => document.getElementById(id);
@@ -93,6 +94,9 @@ const widgets = new Widgets({ view, term: $("term"), boxes: [$("hist"), $("scree
   copy: (text) => input.copySelection(text), send, notify: (text) => toast(text, 3000), onZoomClosed: () => focusTerminal() });
 view.onRows = (full, keep) => (keep ? widgets.keepPlace(() => widgets.update(full)) : widgets.update(full));
 view.onReset = () => { widgets.reset(); images.forget(); };
+// Bookmarks of a selection, with a note, kept on the Mac (AC-57)
+const bookmarks = new Marks({ view, widgets, term: $("term"), send, sid: () => st.sid, alive: (id) => !!findItem(st.groups, id),
+  pick: (id) => pick(id), toast, onChange: () => drawNav(), copy: (text) => input.copySelection(text, true) });
 trace.watch(view);
 let kbdFrame = 0;
 $("term").addEventListener("scroll", () => { if (!kbdFrame) kbdFrame = requestAnimationFrame(() => { kbdFrame = 0; placeKbd(); }); }, { passive: true });
@@ -195,7 +199,7 @@ const computer = matchMedia("(hover: hover) and (pointer: fine)");
 let termHadKeys = false;
 function focusTerminal() {
   if (!computer.matches || $("app").hidden || document.body.dataset.shown !== "term") return;
-  if (!$("menu").hidden || $("pastebox").open || tools.renaming()) return;
+  if (!$("menu").hidden || $("pastebox").open || bookmarks.busy() || tools.renaming()) return;
   if (document.activeElement?.closest?.("input, textarea:not(#kbd), select, iframe, [contenteditable]")) return;
   input.focus();
 }
@@ -223,6 +227,7 @@ addEventListener("blur", () => setTimeout(syncActive, 0));   // the focus may ha
 function onMessage(m) {
   if (m.sid && m.sid !== st.sid) return;            // a frame from the session we just left
   trace.received(m);
+  bookmarks.seen(m);
   switch (m.t) {
     case "layout": st.groups = m.groups; reminders.layout(m.groups); drawNav(); tools.showMerge(m.groups); break;
     case "theme": applyTheme(m.theme); break;
@@ -260,7 +265,7 @@ function drawNav() {
   reminders.show(st.sid);
   if (reorder.dragging()) return;                  // the next layout redraws it
   renderNav($("sessions"), ordered(st.groups, store.get("groupOrder", [])), st.sid, $("filter").value, pick, st.collapsed, toggleGroup,
-    (wid) => send({ t: "new", group: wid }));
+    (wid) => send({ t: "new", group: wid }), bookmarks.sids());
   const found = st.sid && findItem(st.groups, st.sid);
   if (!found) {
     const first = st.groups.flatMap((g) => g.items)[0];

@@ -13,6 +13,7 @@ from ..common import APP_DIR
 
 FILE = APP_DIR / "web.json"
 SESSIONS = APP_DIR / "web-sessions.json"   # remembered sign-ins (auth.py); deleted when web access goes off
+BOOKMARKS = APP_DIR / "web-bookmarks.json" # the web app's bookmarks (bookmarks.py, AC-57); kept when it goes off
 DEFAULTS = {"enabled": False, "port": 8765, "host": "0.0.0.0", "history": 10000, "allow_hosts": [], "password": None}
 ITERATIONS = 200_000
 MIN_PASSWORD = 8

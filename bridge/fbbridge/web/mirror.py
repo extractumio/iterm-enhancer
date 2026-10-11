@@ -20,6 +20,7 @@ from .hub import encode, gone
 from .trace import Tracer
 from .screen import enc_line, line_key
 from .fold import History
+from . import bookmarks
 
 FIRST_HISTORY = 1000   # scrollback lines sent when a session opens; older ones load on scroll
 PAGE = 1000            # lines per "load older" request
@@ -39,7 +40,8 @@ NEW_EVERY = 1.0        # seconds between two new sessions from one browser
 ACTIONS = {"sub": "open the session", "in": "type into the session", "files": "show the session's files",
            "more": "load older lines", "fit": "resize iTerm", "unfit": "restore iTerm's size",
            "new": "open a new session", "rename": "name the session", "merge": "merge the windows",
-           "unfold": "show folded lines"}
+           "unfold": "show folded lines", "mark": "save the bookmark", "unmark": "delete the bookmark",
+           "locate": "find the bookmark"}
 UNFOLD_MAX = 20000     # lines one "unfold" may ask for
 
 
@@ -143,13 +145,14 @@ class Client:
         if self.history is history and self.session is session:   # not cleared or switched meanwhile
             await self.send({"t": "lines", "sid": session.session_id, "first": a, "lines": lines})
 
-    async def send_older(self, before):
+    async def send_older(self, before, to=None):
         session = self.session
         if not session or self.top is None:
             return
         self.overflow = (await session.async_get_line_info()).overflow
         before = max(self.oldest(), min(before, self.top))      # never trust the browser's range
-        await self.send_hist(session, "prepend", max(self.oldest(), before - PAGE), before)
+        first = before - PAGE if to is None else min(before - PAGE, int(to))   # down to a bookmark (AC-57)
+        await self.send_hist(session, "prepend", max(self.oldest(), first), before)
 
     # ---------- screen ----------
 
@@ -259,6 +262,7 @@ class Client:
         if self.show_in_iterm:
             await self.bring_tab_forward()       # a shown tab also refreshes at full speed
         self.stream_task = asyncio.create_task(self.guard(self.stream(self.session)))
+        bookmarks.later(bookmarks.rebind(self, self.session))   # a tmux pane attached anew
 
     async def guard(self, coro):
         try:
@@ -340,7 +344,9 @@ class Client:
         elif t == "files" and self.session:
             await self.send({"t": "files", "sid": self.session.session_id, **await self.files_of(self.session)})
         elif t == "more":
-            await self.send_older(int(msg["before"]))
+            await self.send_older(int(msg["before"]), msg.get("to"))
+        elif t in bookmarks.MESSAGES:
+            await bookmarks.handle(self, msg)
         elif t == "unfold":
             await self.unfold(int(msg["n"]), int(msg["to"]))
         elif t == "fit" and self.session:

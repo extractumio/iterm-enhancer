@@ -84,6 +84,7 @@ export class Widgets {
     this.imageHosts = new Set();
     this.found = new Map();      // printed image path -> {ok, at}: whether the pane's file is there
     this.folds?.reset();
+    this.pin = null;             // a bookmark held in view (AC-57) was of the last pane
     clearTimeout(this.steady); clearTimeout(this.later);
   }
 
@@ -236,6 +237,7 @@ export class Widgets {
    *  finger is down: the page must not change under them. */
   keepPlace(fn, row = null, user = true) {
     if (this.view.frozen()) { setTimeout(() => this.keepPlace(fn, row, user), 300); return; }
+    if (this.pin) return this.pinned(fn);
     const t = this.term.getBoundingClientRect(), r = row?.isConnected ? row.getBoundingClientRect() : null;
     let at = r && r.bottom > t.top && r.top < t.bottom ? row : null;             // only a row in sight
     if ((!at || !user) && (this.following || this.view.atBottom())) {
@@ -249,6 +251,19 @@ export class Widgets {
     const before = at?.getBoundingClientRect().top;
     fn();
     if (at?.isConnected && before !== undefined) this.term.scrollTop += at.getBoundingClientRect().top - before;
+    this.view.updateBottom();
+  }
+
+  /** A bookmark brought into view (AC-57) stays where it is on screen, whatever changes around
+   *  it, until the user scrolls: pin() gives its place again (a Range or an element), which
+   *  may be in a widget drawn meanwhile. */
+  pinned(fn) {
+    const top = (t) => (t && (t.startContainer?.isConnected ?? t.isConnected) ? t.getBoundingClientRect().top : undefined);
+    const before = top(this.pin());
+    if (before === undefined) { this.pin = null; return this.keepPlace(fn); }   // its line is gone: the view is free
+    fn();
+    const after = top(this.pin());
+    if (before !== undefined && after !== undefined) this.term.scrollTop += after - before;
     this.view.updateBottom();
   }
 

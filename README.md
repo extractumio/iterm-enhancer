@@ -200,6 +200,14 @@ and sign in:
   sent: a coding agent's edit diffs, long commands and long tool output, rows of base64 or hex
   and long runs of nearly equal lines are one line each ("⋯ 26 lines of diff") with **Show**
   and **Copy**, which fetch the lines when asked (about 40% less to send for an agent's pane).
+- **Bookmarks**: select text in the terminal and press the orange **+** beside it to keep it
+  with a note (the gray button above it copies the selection), to come back to a coding agent's or a command's output later. The session's
+  bookmarks are orange marks on the terminal's right edge; press one to scroll back to it (older
+  lines are loaded, a fold opens, text in a rendered widget is found there) and the bar shows its
+  note, with Edit, Delete and ↑ ↓ to the others. Sessions with bookmarks have an orange strip in
+  the list, and **Bookmarks** below it lists all of them, also of sessions that closed. They are
+  kept on the Mac (`~/.iterm-enhancer/state/web-bookmarks.json`), so your phone and your Mac see
+  the same ones; when the lines are gone from the history, a bookmark shows what was selected.
 - **Drop files** on the page to upload them, as the Upload hot key does: their paths are pasted.
 - **Images**: paste one (PNG, JPEG, GIF, WebP, up to 20 MB) and it is saved where the pane's
   shell runs, in `$TMPDIR/iterm-enhancer-paste/` on this Mac or `~/.cache/iterm-enhancer/paste/`

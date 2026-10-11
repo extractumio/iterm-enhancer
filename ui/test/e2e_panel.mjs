@@ -19,6 +19,7 @@ import { webMerge } from "./e2e_web_merge.mjs";
 import { webTrace } from "./e2e_web_trace.mjs";
 import { webClip } from "./e2e_web_clip.mjs";
 import { webWidgets } from "./e2e_web_widgets.mjs";
+import { webMarks } from "./e2e_web_marks.mjs";
 import { sessionTools } from "./e2e_session_tools.mjs";
 import { recoveryTools } from "./e2e_recovery.mjs";
 import { recoveryUpgrade } from "./e2e_recovery_upgrade.mjs";
@@ -465,6 +466,7 @@ try {
   await webTrace(browser);
   await webClip(browser);
   await webWidgets(browser);
+  await webMarks(browser);
 
   // AC-28 an outdated link says so and stops retrying
   const op = await browser.newPage();

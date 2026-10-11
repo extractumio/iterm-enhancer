@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Session navigator: iTerm2 windows (or tmux sessions) as groups, their tabs and panes as rows.
-// A row: the profile's bar (full for the session shown, pulsing while its agent works), the tab
+// A row: the profile's bar (full for the session shown, pulsing while its agent works), an orange
+// strip when it has bookmarks (AC-57), the tab
 // number and title, then host · program · folder · titles, and a coding agent's state in a
 // column of its own.
 import { icon, profileColor } from "./icons.js";
@@ -82,7 +83,7 @@ function grip(kind, label) {
   return g;
 }
 
-function row(item, current, onPick, movable, child = false) {
+function row(item, current, onPick, movable, child = false, marked = new Set()) {
   const li = document.createElement("li");
   if (movable) li.append(grip("row", "this tab"));
   const b = el("button", "item" + (child ? " child" : "") + (item.id === current ? " on" : ""));
@@ -100,14 +101,16 @@ function row(item, current, onPick, movable, child = false) {
   const st = el("span", "st");
   const mark = stateIcon(item.state);
   if (mark) st.append(mark);
-  b.append(profileBar(item.profile, item.id === current, item.state === "working"), txt, st);
+  b.append(profileBar(item.profile, item.id === current, item.state === "working"));
+  if (marked.has(item.id)) { const m = el("span", "bmbar"); m.title = "Has bookmarks"; b.append(m); }
+  b.append(txt, st);
   b.addEventListener("click", () => onPick(item.id));
   li.append(b);
   return li;
 }
 
 // A group's header collapses and expands it; while a filter is typed every match is shown.
-export function renderNav(list, groups, current, query, onPick, collapsed, onToggle, onNew) {
+export function renderNav(list, groups, current, query, onPick, collapsed, onToggle, onNew, marked = new Set()) {
   const q = query.trim().toLowerCase();
   const frag = document.createDocumentFragment();
   let shown = 0;
@@ -152,10 +155,10 @@ export function renderNav(list, groups, current, query, onPick, collapsed, onTog
       for (const it of items) {
         if (!q && it.pane > 1 && parent) {
           if (!parent.kids) parent.append(parent.kids = el("ul", "kids"));
-          parent.kids.append(row(it, current, onPick, false, true));
+          parent.kids.append(row(it, current, onPick, false, true, marked));
           continue;
         }
-        parent = row(it, current, onPick, !!g.wid && !q);
+        parent = row(it, current, onPick, !!g.wid && !q, false, marked);
         ul.append(parent);
       }
       sec.append(ul);

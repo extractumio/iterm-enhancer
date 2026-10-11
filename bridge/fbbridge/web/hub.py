@@ -8,6 +8,7 @@ import time
 import iterm2
 
 from ..common import log
+from .bookmarks import Store
 from .layout import layout_of
 from .trace import ms, note
 
@@ -29,7 +30,7 @@ class Hub:
     """One poll of iTerm's windows, tabs and titles, shared by every signed-in browser; and
     the original size of each session a browser resized (Fit iTerm), shared too."""
 
-    def __init__(self, app, tmux=None):
+    def __init__(self, app, tmux=None, marks=None):
         self.app, self.tmux = app, tmux      # tmux: the bridge's watch for dropped integrations (AC-54)
         self.clients = set()
         if tmux:
@@ -37,6 +38,7 @@ class Hub:
         self.layout = None
         self.fitted = {}         # session id -> [original (cols, rows), browsers that fitted it]
         self.merging = asyncio.Lock()   # two browsers merging at once would move tabs of closed windows
+        self.marks = Store(marks)        # bookmarks (AC-57); marks: their file, none for a test's Hub
 
     async def run(self):
         loop = asyncio.get_running_loop()
@@ -68,6 +70,12 @@ class Hub:
             asyncio.create_task(c.send_quietly(text))
             if c.session and self.suspect(c.session.session_id):
                 asyncio.create_task(c.leave_dropped())
+
+    def tell(self, msg):
+        """msg to every browser; a stalled one holds up nobody."""
+        text = encode(msg)
+        for c in list(self.clients):
+            asyncio.create_task(c.send_quietly(text))
 
     async def refresh(self):
         """Ask iTerm2 for its windows now and tell every browser what changed."""
@@ -114,3 +122,4 @@ class Hub:
             self.layout = await layout_of(self.app)
         await client.send({"t": "layout", "groups": self.layout})
         await client.send(self.drops())
+        await client.send({"t": "marks", "items": self.marks.all(), "error": self.marks.broken})

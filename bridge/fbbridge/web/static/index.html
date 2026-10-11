@@ -9,6 +9,7 @@
 <title>iTerm2 Web</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="marks.css">
 </head>
 <body data-shown="term">
 <div id="app" hidden>
@@ -30,11 +31,15 @@
       <p>A window that closes takes its Files panel along: save edited files there first.</p>
       <div class="row"><button id="mergego" class="primary" type="button">Merge</button><button id="mergecancel" type="button">Cancel</button></div>
     </div>
+    <div id="marklist" hidden></div>
     <div id="navgrip" role="separator" aria-orientation="vertical" aria-label="Width of the session list" tabindex="0"
       aria-valuemin="200" aria-valuemax="640"></div>
     <div class="nav-foot">
       <button id="newwin" type="button" aria-expanded="false" aria-controls="profiles" title="A new iTerm2 window, with a profile you pick">
         <svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:15px"><path d="M5 12h14"/><path d="M12 5v14"/></svg><span>New window</span><span class="chev"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:14px"><path d="m6 9 6 6 6-6"/></svg></span>
+      </button>
+      <button id="marksbtn" type="button" aria-expanded="false" aria-controls="marklist" title="Every bookmark, also of sessions that closed">
+        <svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:15px"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg><span>Bookmarks</span><span id="markcount" class="count"></span>
       </button>
       <button id="mergewin" type="button" aria-expanded="false" aria-controls="mergebox" title="Move the tabs of iTerm2's windows into as few windows as possible" hidden>
         <svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:15px"><path d="m14 10 7-7"/><path d="M20 10h-6V4"/><path d="m3 21 7-7"/><path d="M4 14h6v6"/></svg><span>Merge windows</span>
@@ -97,6 +102,19 @@
     </div>
     <p id="viewnote" class="view" hidden></p>
     <p id="toast" role="status" hidden></p>
+    <!-- Bookmarks (AC-57): Copy and [+] beside a selection, marks on the terminal's edge, the one shown. -->
+    <button id="markcopy" type="button" hidden title="Copy the selected text" aria-label="Copy the selected text"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg></button>
+    <button id="markadd" type="button" hidden title="Bookmark the selected text" aria-label="Bookmark the selected text"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:18px"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+    <div id="markrail" aria-label="Bookmarks of this session" hidden></div>
+    <div id="markbar" role="region" aria-label="Bookmark" hidden>
+      <div class="mbhead"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:15px"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg><span id="mbnote"></span>
+        <button id="mbprev" class="icon" type="button" title="The bookmark above" aria-label="The bookmark above"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="m18 15-6-6-6 6"/></svg></button><span id="mbpos"></span><button id="mbnext" class="icon" type="button" title="The bookmark below" aria-label="The bookmark below"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button id="mbedit" type="button">Edit</button><button id="mbdel" type="button">Delete</button>
+        <button id="mbclose" class="icon" type="button" aria-label="Close the bookmark"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+      </div>
+      <p id="mbwhy" hidden></p>
+      <div id="mbtext" hidden></div>
+    </div>
     <p id="paused" role="status" hidden>Paused while you select. Clear the selection to catch up.</p>
     <button id="bottom" type="button" hidden aria-label="Scroll to the bottom">
       <svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:18px"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
@@ -162,6 +180,20 @@
     <div class="actions">
       <button value="cancel" type="submit">Cancel</button>
       <button value="send" type="submit" class="primary">Send</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="markbox" aria-labelledby="marktitle">
+  <form method="dialog">
+    <h2 id="marktitle">Bookmark</h2>
+    <div id="marktext"></div>
+    <label for="marknote">Note</label>
+    <textarea id="marknote" rows="3" maxlength="1000" autocapitalize="sentences" placeholder="Why come back to this?"></textarea>
+    <p id="markerr" role="alert" hidden></p>
+    <div class="actions">
+      <button value="cancel" type="submit" formnovalidate>Cancel</button>
+      <button value="save" type="submit" class="primary">Save</button>
     </div>
   </form>
 </dialog>
