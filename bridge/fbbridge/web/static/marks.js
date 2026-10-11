@@ -6,7 +6,8 @@
 import { icon } from "./icons.js";
 import { Jumper } from "./markjump.js";
 import { markPicker } from "./markpick.js";
-import { railSlots } from "./marktext.js";
+import { Find } from "./find.js";
+import { railBox, railSlots } from "./marktext.js";
 
 const $ = (id) => document.getElementById(id);
 const ANSWER = 10000;          // ms the dialog waits for the Mac to keep a bookmark
@@ -46,6 +47,8 @@ export class Marks {
     this.replies = new Map();    // ref -> resolve, for the dialog
     this.shown = null;           // the bookmark in the bar
     this.jumper = new Jumper({ view, widgets, term, send, sid });
+    this.search = new Find({ view, widgets, term, send, sid });   // its magnifier stands beside the bookmarks' button
+    this.search.onOpen = () => this.togglePane(false);                // one of the two at a time
     markPicker({ term, main: $("main"), button: $("markadd"), copyButton: $("markcopy"), view,
       onPick: (sel) => this.edit(null, sel), onCopy: copy });
     $("markbox").querySelector("form").addEventListener("submit", (e) => this.submit(e));
@@ -68,6 +71,7 @@ export class Marks {
   /** Every message from the bridge (after app.js dropped those of another pane). */
   seen(m) {
     this.jumper.seen(m);
+    this.search.seen(m);
     switch (m.t) {
       case "marks":
         this.items = new Map(m.items.map((i) => [i.id, i]));
@@ -167,11 +171,9 @@ export class Marks {
   drawRail() {
     this.placeFab();
     const rail = $("markrail"), term = this.term, v = this.view, mine = this.mine();
-    if (!mine.length || term.hidden || !term.clientHeight || !v.theme) { rail.hidden = true; this.railKey = ""; return; }
-    // left of a scroll bar (clientWidth ends there); "left": in the wide layout the terminal's
-    // column, not #main, places it (style.css)
-    const h = term.clientHeight - 16;
-    const css = `top:${term.offsetTop + 8}px;height:${h}px;left:${term.offsetLeft + term.clientLeft + term.clientWidth - 18}px`;
+    const box = railBox(term);
+    if (!mine.length || !box || !v.theme) { rail.hidden = true; this.railKey = ""; return; }
+    const { css, h } = box;
     const slots = railSlots(mine, v.oldest, v.top + v.screen.length, h - 14);
     const key = css + JSON.stringify(slots);       // the screen changes often; the marks seldom
     if (key === this.railKey) return;
@@ -236,17 +238,22 @@ export class Marks {
 
   // ---------- this session's bookmarks, from the button at the terminal's top right ----------
 
-  /** The button stands at the terminal's top right, left of the marks, with the number of the
-   *  session's bookmarks on it; only while it has one at least. */
+  /** The buttons stand at the terminal's top right, left of the marks: the bookmarks' with their
+   *  number on it, only while the session has one at least, and the magnifier left of it (in its
+   *  place when there is none). */
   placeFab() {
-    const fab = $("marksfab"), term = this.term, n = this.sid() ? this.mine().length : 0;
-    const on = n > 0 && !term.hidden && term.clientHeight > 0 && !!this.view.theme;
-    fab.hidden = !on;
-    if (!on) return this.togglePane(false);
+    const fab = $("marksfab"), find = $("findfab"), term = this.term, n = this.sid() ? this.mine().length : 0;
+    const shown = !!this.sid() && !term.hidden && term.clientHeight > 0 && !!this.view.theme;
+    const right = term.offsetLeft + term.clientLeft + term.clientWidth - 18 - 8 - 32, top = `${term.offsetTop + 8}px`;
+    find.hidden = !shown;
+    if (!shown) this.search.toggle(false);
+    else { find.style.top = top; find.style.left = `${right - (n > 0 ? 40 : 0)}px`; this.search.place(); }
+    fab.hidden = !(shown && n > 0);
+    if (fab.hidden) return this.togglePane(false);
     $("marksfabn").textContent = String(n);
     fab.setAttribute("aria-label", `Bookmarks of this session: ${n}`);
-    fab.style.top = `${term.offsetTop + 8}px`;
-    fab.style.left = `${term.offsetLeft + term.clientLeft + term.clientWidth - 18 - 8 - 32}px`;
+    fab.style.top = top;
+    fab.style.left = `${right}px`;
     if (!$("markpane").hidden) this.placePane();
   }
   placePane() {
@@ -259,7 +266,7 @@ export class Marks {
     $("markpane").hidden = !open;
     this.paneSid = open ? this.sid() : null;
     $("marksfab").setAttribute("aria-expanded", String(open));
-    if (open) { this.drawPane(); this.placePane(); }
+    if (open) { this.search.toggle(false); this.drawPane(); this.placePane(); }
   }
   drawPane() {
     if ($("markpane").hidden) return;

@@ -10,6 +10,7 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="marks.css">
+<link rel="stylesheet" href="find.css">
 </head>
 <body data-shown="term">
 <div id="app" hidden>
@@ -108,6 +109,17 @@
     <div id="markrail" aria-label="Bookmarks of this session" hidden></div>
     <button id="marksfab" type="button" hidden title="Bookmarks of this session" aria-label="Bookmarks of this session" aria-expanded="false" aria-controls="markpane"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg><span id="marksfabn"></span></button>
     <div id="markpane" role="region" aria-label="Bookmarks of this session" hidden></div>
+    <!-- Search of the session's history (AC-58): the magnifier, its field, its matches' marks. -->
+    <button id="findfab" type="button" hidden title="Find in this session" aria-label="Find in this session" aria-expanded="false" aria-controls="findbox"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg></button>
+    <form id="findbox" role="search" hidden>
+      <input id="findq" type="search" placeholder="Find in this session" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" maxlength="200" aria-label="Find in this session">
+      <button type="submit" class="primary">Find</button>
+      <span id="findn" aria-live="polite"></span>
+      <button type="button" id="findprev" class="icon" title="The match before" aria-label="The match before"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="m18 15-6-6-6 6"/></svg></button>
+      <button type="button" id="findnext" class="icon" title="The next match" aria-label="The next match"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="m6 9 6 6 6-6"/></svg></button>
+      <button type="button" id="findclose" class="icon" title="Close the search" aria-label="Close the search"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+    </form>
+    <div id="findrail" aria-label="Matches in this session" hidden></div>
     <div id="markbar" role="region" aria-label="Bookmark" hidden>
       <div class="mbhead"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:15px"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg><span id="mbnote"></span>
         <button id="mbprev" class="icon" type="button" title="The bookmark above" aria-label="The bookmark above"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="m18 15-6-6-6 6"/></svg></button><span id="mbpos"></span><button id="mbnext" class="icon" type="button" title="The bookmark below" aria-label="The bookmark below"><svg class="lu" viewBox="0 0 24 24" aria-hidden="true" style="--s:16px"><path d="m6 9 6 6 6-6"/></svg></button>

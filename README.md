@@ -211,6 +211,9 @@ and sign in:
   the list, and **Bookmarks** below it lists all of them, also of sessions that closed. They are
   kept on the Mac (`~/.iterm-enhancer/state/web-bookmarks.json`), so your phone and your Mac see
   the same ones; when the lines are gone from the history, a bookmark shows what was selected.
+- **Search**: the magnifier at the terminal's top right finds text in the session's whole history
+  (older lines and folds too, not only what is loaded): how many, the first, ↑ ↓ to the others,
+  each a white mark on the right edge.
 - **Drop files** on the page to upload them, as the Upload hot key does: their paths are pasted.
 - **Images**: paste one (PNG, JPEG, GIF, WebP, up to 20 MB) and it is saved where the pane's
   shell runs, in `$TMPDIR/iterm-enhancer-paste/` on this Mac or `~/.cache/iterm-enhancer/paste/`

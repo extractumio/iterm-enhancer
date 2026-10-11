@@ -201,10 +201,12 @@ def item_of(layout, sid):
     return None
 
 
-async def history_rows(session, max_history, around=None):
+async def history_rows(session, max_history, around=None, eol=False):
     """[(line, text)] of what the page could load (the history it may load and the screen), or
-    only NEAR lines either side of line `around`. Each chunk is numbered from its own start: one
-    that comes back short (iTerm2 dropped lines meanwhile) shifts no other."""
+    only NEAR lines either side of line `around`; eol: [(line, text, hard end)] (a search,
+    search.py). Each chunk is numbered from its own start: one that comes back short (iTerm2
+    dropped lines meanwhile) shifts no other. A cell the program skipped is a space, as the page
+    draws it (screen.py)."""
     info = await session.async_get_line_info()
     top = info.overflow + info.scrollback_buffer_height
     first, end = max(info.overflow, top - max_history), top + info.mutable_area_height
@@ -212,7 +214,9 @@ async def history_rows(session, max_history, around=None):
         first, end = max(first, around - NEAR), min(end, around + NEAR)
     starts = range(first, end, CHUNK)
     chunks = await asyncio.gather(*(session.async_get_contents(s, min(CHUNK, end - s)) for s in starts))
-    return [(s + k, line.string) for s, chunk in zip(starts, chunks) for k, line in enumerate(chunk)]
+    if eol:
+        return [(s + k, line.string.replace("\x00", " "), line.hard_eol) for s, chunk in zip(starts, chunks) for k, line in enumerate(chunk)]
+    return [(s + k, line.string.replace("\x00", " ")) for s, chunk in zip(starts, chunks) for k, line in enumerate(chunk)]
 
 
 async def handle(client, msg):

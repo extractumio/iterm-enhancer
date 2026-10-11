@@ -20,7 +20,7 @@ from .hub import encode, gone
 from .trace import Tracer
 from .screen import enc_line, line_key
 from .fold import History
-from . import bookmarks
+from . import bookmarks, search
 
 FIRST_HISTORY = 1000   # scrollback lines sent when a session opens; older ones load on scroll
 PAGE = 1000            # lines per "load older" request
@@ -41,7 +41,7 @@ ACTIONS = {"sub": "open the session", "in": "type into the session", "files": "s
            "more": "load older lines", "fit": "resize iTerm", "unfit": "restore iTerm's size",
            "new": "open a new session", "rename": "name the session", "merge": "merge the windows",
            "unfold": "show folded lines", "mark": "save the bookmark", "unmark": "delete the bookmark",
-           "locate": "find the bookmark"}
+           "locate": "find the bookmark", "find": "search the history"}
 UNFOLD_MAX = 20000     # lines one "unfold" may ask for
 
 
@@ -345,6 +345,8 @@ class Client:
             await self.send({"t": "files", "sid": self.session.session_id, **await self.files_of(self.session)})
         elif t == "more":
             await self.send_older(int(msg["before"]), msg.get("to"))
+        elif t == "find":
+            search.handle(self, msg)
         elif t in bookmarks.MESSAGES:
             await bookmarks.handle(self, msg)
         elif t == "unfold":

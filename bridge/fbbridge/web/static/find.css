@@ -1,0 +1,38 @@
+/* SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial */
+/* Search of the session's history (AC-58): the magnifier (in the colors of a phone's floating
+   buttons, and their shape), its field, its matches' white marks, the match shown. */
+#findfab { position: absolute; z-index: 6; width: 32px; height: 32px; display: grid; place-items: center;
+  border-radius: 58% 42% 52% 48% / 46% 56% 44% 54%; animation: blob 7s ease-in-out infinite; animation-delay: -5s;
+  background: color-mix(in srgb, var(--chrome-2) 85%, transparent); border: 1px solid var(--line); color: var(--t-fg);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); box-shadow: 0 4px 14px color-mix(in srgb, #000 35%, transparent); }
+#findfab[aria-expanded="true"] { box-shadow: 0 0 0 2px var(--t-bg), 0 0 0 4px var(--t-fg); }
+body:has(#markcopy:not([hidden])) #findfab { visibility: hidden; }   /* a selection's Copy and + stand there */
+#findbox { position: absolute; z-index: 8; width: min(380px, calc(100% - 24px)); display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 6px; border-radius: 10px; background: var(--chrome-2); border: 1px solid var(--line);
+  box-shadow: 0 12px 32px color-mix(in srgb, #000 40%, transparent); }
+#findq { flex: 1 1 160px; min-width: 0; height: 32px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line);
+  background: var(--t-bg); color: var(--t-fg); font: inherit; font-size: 16px; }
+#findbox button { height: 32px; border-radius: 7px; }
+#findbox .primary { padding: 0 12px; background: var(--t-fg); color: var(--t-bg); font-weight: 600; }
+#findbox .icon { width: 32px; display: grid; place-items: center; }
+#findbox .icon:hover { background: color-mix(in srgb, var(--t-fg) 10%, var(--chrome-2)); }
+#findn { flex: 1 0 100%; order: 9; padding: 0 4px; font-size: 12px; color: var(--muted); }
+#findn:empty { display: none; }
+#findrail { position: absolute; z-index: 3; width: 16px; pointer-events: none; }
+#findrail .fm { position: absolute; left: 0; width: 16px; height: 10px; padding: 0; pointer-events: auto; display: grid; place-items: center; }
+#findrail .fm::before { content: ""; width: 10px; height: 2px; border-radius: 1px; background: color-mix(in srgb, #fff 70%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--t-bg) 60%, transparent); }
+#findrail .fm.on::before { height: 4px; background: #fff; }
+@media (hover: none) { #findrail .fm { left: -6px; width: 26px; height: 18px; margin-top: -4px; } }
+::highlight(find) { background-color: #fff; color: #111; }
+#term .find-at { outline: 2px solid #fff; outline-offset: 1px; border-radius: 2px; }
+body:not([data-shown="term"]) #findfab, body:not([data-shown="term"]) #findbox, body:not([data-shown="term"]) #findrail { display: none !important; }
+body.wide #findfab, body.wide #findbox, body.wide #findrail { grid-row: 1 / -1; }
+@media (prefers-reduced-motion: reduce) { #findfab { animation: none; } }
+
+/* a phone's floating keyboard and hot keys buttons: the same nearly round, drifting shape */
+#fabs button { border-radius: 58% 42% 52% 48% / 46% 56% 44% 54%; animation: blob 7s ease-in-out infinite; }
+#fabs button:nth-child(2) { animation-delay: -2s; }
+#fabs button:nth-child(3) { animation-delay: -4s; }
+#fabs button:nth-child(4) { animation-delay: -6s; }
+@media (prefers-reduced-motion: reduce) { #fabs button { animation: none; } }

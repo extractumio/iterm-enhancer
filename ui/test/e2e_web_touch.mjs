@@ -27,6 +27,8 @@ export async function webTouch(browser) {
   check(`${at} the keyboard field lies over the coding agent's whole input box (a long press there is iOS's Paste)`,
     cover.k[0] === cover.box[0] && cover.k[1] === cover.box[1], JSON.stringify(cover));
 
+  const shape = await page.evaluate(() => { const cs = getComputedStyle(document.getElementById("kbdbtn")); return [cs.borderTopLeftRadius, cs.borderTopRightRadius]; });
+  check(`${at} the floating keyboard buttons are nearly round blobs, not circles`, shape[0] !== shape[1] && !shape.includes("50%"), JSON.stringify(shape));
   await page.evaluate(() => document.getElementById("kbd").focus());
   const kept = await page.evaluate(() => document.getElementById("kbd").value);
   const before = sent.length;

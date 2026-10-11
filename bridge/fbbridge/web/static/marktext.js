@@ -54,6 +54,35 @@ export function rangeOf(nodes, needle) {
   return r;
 }
 
+/** A Range over the skip+1-th occurrence of query (as typed, case aside) in the text of
+ *  nodes, or null (a search, AC-58). */
+export function rangeOfText(nodes, query, skip = 0) {
+  if (!query) return null;
+  let text = "";
+  const starts = nodes.map((n) => { const at = text.length; text += n.data; return at; });
+  const low = text.toLowerCase(), q = query.toLowerCase();
+  let i = -1;
+  for (let k = 0; k <= skip; k++) { i = low.indexOf(q, i + 1); if (i < 0) return null; }
+  const point = (offset, end) => {
+    let k = starts.length - 1;
+    while (k > 0 && (end ? starts[k] >= offset : starts[k] > offset)) k--;
+    return [nodes[k], offset - starts[k]];
+  };
+  const r = document.createRange();
+  r.setStart(...point(i, false));
+  r.setEnd(...point(i + q.length, true));
+  return r;
+}
+
+/** Where the marks stand: a column on the terminal's right edge, left of a scroll bar
+ *  (clientWidth ends there), over its height; "left", as in the wide layout the terminal's
+ *  column, not #main, places it. {css, h}, or null while the terminal is not shown. */
+export function railBox(term) {
+  if (term.hidden || !term.clientHeight) return null;
+  const h = term.clientHeight - 16;
+  return { h, css: `top:${term.offsetTop + 8}px;height:${h}px;left:${term.offsetLeft + term.clientLeft + term.clientWidth - 18}px` };
+}
+
 /** The marks on the terminal's edge: a bookmark's line placed between the oldest line the
  *  pane can load and its last one, over `height` px; marks closer than `gap` px are one.
  *  items: [{n}]; returns [{top, items}], top to bottom. */

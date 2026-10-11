@@ -19,7 +19,11 @@ TEXT.splice(300, 11, `${PROMPT}cat README.md`, "# App", "", "A small **tool** th
 for (let i = 500; i <= 530; i++) TEXT[i] = `similar ${i}`;
 TEXT[515] = "folded secret line 515";
 TEXT[2200] = "See [the guide](https://docs.example/guide) for the install steps";
-const HISTORY = TEXT.map(line);
+TEXT[100] = "find alpha here";
+TEXT[2650] = "alpha beta ALPHA";
+TEXT[2700] = "x".repeat(250) + " gam";                             // a long row iTerm wrapped, "gamma" across the wrap
+TEXT[2701] = "ma end";
+const HISTORY = TEXT.map((t, n) => (n === 2700 ? { ...line(t), e: false } : line(t)));
 const FOLDS = [{ n: 500, to: 530, label: "⋯ 31 similar lines" }];
 const GONE = "These lines are no longer in this session's history.";
 const at0 = 1790000000;
@@ -72,6 +76,16 @@ function bridge(items) {
     }
     if (msg.t === "unmark") { items.delete(msg.id); say({ t: "unmark", id: msg.id }); }
     if (msg.t === "locate") say({ t: "located", id: msg.id, sid: "S1", ...locate(items.get(msg.id)) });
+    if (msg.t === "find") {                                           // the bridge's search (search.py), line by line
+      const q = msg.q.toLowerCase(), hits = [];
+      TEXT.forEach((t, n) => {
+        if (n === 2701) return;                                       // the rest of row 2700's line
+        const text = (n === 2700 ? t + TEXT[2701] : t).toLowerCase();
+        let i = -1, k = 0;
+        while ((i = text.indexOf(q, i + 1)) >= 0) hits.push([n, k++]);
+      });
+      say({ t: "found", ref: msg.ref, sid: "S1", q: msg.q, hits, total: hits.length });
+    }
     if (msg.t === "sub" && msg.id === "S2") {                         // a second pane, short
       say({ t: "theme", sid: "S2", theme: { bg: "#1e1e1e", fg: "#d4d4d4", cursor: "#fff", cursorText: "#000", ansi: Array(16).fill("#888"), font: null, size: null } });
       say({ t: "hist", mode: "reset", sid: "S2", first: 0, oldest: 0, truncated: false, lines: TEXT.slice(0, 600).map(line) });
@@ -194,6 +208,55 @@ export async function webMarks(browser, name = "") {
   m = await marked(page);
   check(`${at} from the list: a bookmark in a fold asks for its lines, opens it and marks the text`,
     sent.some((x) => x.t === "unfold" && x.n === 500) && m?.text === "folded secret line 515" && inView(m), JSON.stringify(m));
+
+  // search (AC-58): the magnifier left of the bookmarks' button opens a field; Find goes to the first match
+  const at58 = at.replace("AC-57", "AC-58");
+  const fabs = await page.evaluate(() => [document.getElementById("findfab"), document.getElementById("marksfab")].map((b) => !b.hidden && Math.round(b.getBoundingClientRect().left)));
+  await page.click("#findfab");
+  const focused = await page.evaluate(() => document.activeElement?.id);
+  await page.fill("#findq", "alpha");
+  await page.click('#findbox button[type="submit"]');
+  const findShown = (text) => page.waitForFunction((text) => { const r = [...(CSS.highlights?.get("find") ?? [])][0]; return r && r.toString() === text && document.getElementById("findn").textContent.length; }, text, { timeout: 8000 }).catch(() => {});
+  await findShown("alpha");
+  const first = await page.evaluate(() => {
+    const r = [...CSS.highlights.get("find")][0], t = document.getElementById("term").getBoundingClientRect(), b = r.getBoundingClientRect();
+    return { n: document.getElementById("findn").textContent, row: r.startContainer.parentElement.closest(".ln")?.textContent, inView: b.top >= t.top && b.bottom <= t.bottom,
+      marks: document.querySelectorAll("#findrail .fm").length, on: document.querySelectorAll("#findrail .fm.on").length };
+  });
+  check(`${at58} search: the magnifier stands left of the bookmarks' button, opens a focused field, Find says how many and shows the first, older lines loaded`,
+    fabs[0] && fabs[1] && fabs[0] < fabs[1] && focused === "findq" && first.n === "1 / 3" && first.row === "find alpha here" && first.inView && first.marks === 2 && first.on === 1,
+    JSON.stringify({ fabs, focused, first }));
+  await page.click("#findnext");
+  await findShown("alpha");
+  await page.click("#findnext");
+  await page.waitForFunction(() => document.getElementById("findn").textContent === "3 / 3");
+  await page.waitForTimeout(800);                                    // the pane idle: nothing marks it again
+  const third = await page.evaluate(() => ({ n: document.getElementById("findn").textContent, text: [...(CSS.highlights.get("find") ?? [])][0]?.toString() }));
+  await page.click("#findprev");
+  await page.waitForFunction(() => document.getElementById("findn").textContent === "2 / 3");
+  check(`${at58} search: next and the one before step through the matches, two on a row told apart, case aside`,
+    third.n === "3 / 3" && third.text === "ALPHA", JSON.stringify(third));
+  await page.fill("#findq", "gamma");
+  await page.keyboard.press("Enter");
+  await findShown("gamma");
+  const wrapped = await page.evaluate(() => {
+    const r = [...(CSS.highlights.get("find") ?? [])][0];
+    return { n: document.getElementById("findn").textContent, text: r?.toString(), rows: r && r.startContainer.parentElement.closest(".ln") !== r.endContainer.parentElement.closest(".ln") };
+  });
+  check(`${at58} search: a match across a long row iTerm wrapped is found and marked over both rows`,
+    wrapped.n === "1 / 1" && wrapped.text === "gamma" && wrapped.rows, JSON.stringify(wrapped));
+  say({ t: "hist", mode: "reset", sid: "S1", first: 2000, oldest: 0, truncated: false, lines: HISTORY.slice(2000) });
+  await page.waitForFunction(() => /history changed/.test(document.getElementById("findn").textContent), null, { timeout: 5000 }).catch(() => {});
+  check(`${at58} search: the history numbered anew drops the matches and says so`,
+    await page.evaluate(() => /history changed/.test(document.getElementById("findn").textContent) && document.getElementById("findrail").hidden));
+  await page.fill("#findq", "zzzz");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.getElementById("findn").textContent === "Not found", null, { timeout: 5000 }).catch(() => {});
+  const none = await page.evaluate(() => ({ n: document.getElementById("findn").textContent, rail: document.getElementById("findrail").hidden }));
+  await page.click("#findfab");
+  const shut = await page.evaluate(() => ({ box: document.getElementById("findbox").hidden, rail: document.getElementById("findrail").hidden, hl: !!CSS.highlights?.get("find")?.size }));
+  check(`${at58} search: nothing found says so; the magnifier pressed again closes the field, its marks and its highlight`,
+    none.n === "Not found" && none.rail && shut.box && shut.rail && !shut.hl, JSON.stringify({ none, shut }));
 
   // a part of its text (rendered Markdown lacks a link's address); text not found says so
   await page.click('#marklist .mkitem:has-text("guide")');

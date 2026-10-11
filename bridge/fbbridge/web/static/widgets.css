@@ -93,3 +93,4 @@ figcaption .err { flex-basis: auto; }
 .fold button { min-height: 0; height: 1.5em; padding: 0 7px; border-color: color-mix(in srgb, var(--t-fg) 22%, transparent);
   color: color-mix(in srgb, var(--t-fg) 70%, var(--t-bg)); }
 :host(:not(.wg-fold)) .fold { margin-right: .6ch; }
+::highlight(find) { background-color: #fff; color: #111; }

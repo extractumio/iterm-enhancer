@@ -32,7 +32,7 @@ body:has(#markcopy:not([hidden])) #fabs #copyfab { display: none !important; }
 @media (hover: none) { #markrail .mk { left: -8px; width: 26px; height: 24px; margin-top: -5px; } }   /* a finger's size */
 #markrail .mk[data-count]::after { content: attr(data-count); position: absolute; right: 9px; top: -1px; font-size: 9px; font-weight: 700;
   line-height: 14px; padding: 0 3px; border-radius: 7px; background: var(--mark); color: #1b1200; }
-#markbar { position: absolute; z-index: 6; left: 12px; right: 64px; max-width: 720px; margin: 0 auto; padding: 6px 6px 6px 10px; border-radius: 10px;
+#markbar { position: absolute; z-index: 6; left: 12px; right: 104px; max-width: 720px; margin: 0 auto; padding: 6px 6px 6px 10px; border-radius: 10px;
   background: var(--chrome-2); border: 1px solid var(--line);
   box-shadow: 0 10px 28px color-mix(in srgb, #000 40%, transparent); font-size: 13px; }
 #markbar .mbhead { display: flex; align-items: center; gap: 6px; }
