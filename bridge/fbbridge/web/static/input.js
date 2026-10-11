@@ -24,6 +24,11 @@ const FN_ROWS = [
 ];
 
 const HOLD = 400, REPEAT = 33;   // ms: as a keyboard's repeat
+const SLIDE_AFTER = 250, SLIDE_BEFORE = 600;   // ms a finger rests on the input before sliding moves the cursor (iOS's menu comes at ~500)
+const DELETES = { deleteContentBackward: "\x7f", deleteWordBackward: "\x7f", deleteContentForward: "\x1b[3~" };   // a word as one backspace: ^W is a search in nano
+// On a touch screen the keyboard field keeps one invisible character: iOS repeats a held delete
+// only while there is something to delete, and the field is emptied after every key.
+const KEEP = "\u200b";
 // keys that repeat while held: not the actions, the modifiers, Enter and the signals
 const REPEATS = (a) => !/^(copy|paste|upload|fn|mod:)/.test(a) && !["\r", "\x03", "\x04", "\x1a"].includes(a);
 
@@ -53,8 +58,13 @@ export class Input {
     // is let go. A repeat from the system takes over, so no key comes twice.
     let char = null;
     const stopChar = () => { if (char) { clearTimeout(char.timer); clearInterval(char.timer); char = null; } };
+    const touchable = (this.touchable = navigator.maxTouchPoints > 0);
+    const refill = () => { if (touchable && k.value !== KEEP) { k.value = KEEP; k.setSelectionRange(1, 1); } };
+    k.addEventListener("focus", refill);
     k.addEventListener("keydown", (e) => {
       if (e.isComposing) return;
+      // a delete takes the kept character, and the input event sends it: a held delete repeats
+      if (touchable && e.key === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey && (k.selectionStart > 0 || k.selectionEnd > k.selectionStart)) { stopChar(); return; }
       if (e.repeat) { if (char?.code === e.code) stopChar(); }
       else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
         stopChar();
@@ -68,19 +78,54 @@ export class Input {
     });
     k.addEventListener("input", (e) => {
       if (e.isComposing) return;
-      const text = e.inputType === "insertLineBreak" ? "\r" : k.value;
+      if (touchable && e.inputType?.startsWith("delete")) {           // iOS's delete, held or not
+        refill();
+        // only a key's delete reaches the pane; a cut or a composition's own delete (an IME) does not
+        return DELETES[e.inputType] ? this.type(this.withMods(DELETES[e.inputType]), "input", e) : undefined;
+      }
+      const text = e.inputType === "insertLineBreak" ? "\r" : k.value.replaceAll(KEEP, "");
       k.value = "";
+      refill();
       this.type(this.withMods(text.replace(/\n/g, "\r")), "input", e);
     });
     k.addEventListener("keyup", (e) => { if (char?.code === e.code) stopChar(); });
     k.addEventListener("blur", stopChar);
     k.addEventListener("compositionstart", (e) => { stopChar(); composing(e); });
-    k.addEventListener("compositionend", (e) => { this.type(k.value, "compose", e); k.value = ""; });
-    // The field may lie over the cursor's row (for iOS's long-press Paste): a short tap on it
-    // still moves the cursor like a tap on the terminal.
+    k.addEventListener("compositionend", (e) => { this.type(k.value.replaceAll(KEEP, ""), "compose", e); k.value = ""; refill(); });
+    // The field lies over the cursor's row or a coding agent's input box (for iOS's long-press
+    // Paste): a short tap on it still moves the cursor like a tap on the terminal, and a finger
+    // that rests a moment and then slides moves the cursor along the line, a character a step,
+    // as in a text field (iOS's own menu still comes for a finger held still).
     let down = null;
-    k.addEventListener("touchstart", (e) => { const t = e.touches[0]; down = t && { x: t.clientX, y: t.clientY, at: Date.now() }; }, { passive: true });
+    k.addEventListener("touchstart", (e) => {
+      const t = e.touches[0];
+      down = t && e.touches.length === 1 ? { x: t.clientX, y: t.clientY, at: Date.now(), slide: false, moved: 0 } : null;
+    }, { passive: true });
+    k.addEventListener("touchmove", (e) => {
+      const t = e.touches[0];
+      if (!down || !t) return;
+      const dx = t.clientX - down.x, dy = t.clientY - down.y;
+      if (down.scroll !== undefined) {                                 // a swipe over the field scrolls the terminal
+        e.preventDefault();
+        this.term.scrollTop += down.scroll - t.clientY;
+        down.scroll = t.clientY;
+        return;
+      }
+      if (!down.slide) {
+        const rest = Date.now() - down.at;
+        if (rest < SLIDE_AFTER) { if (Math.hypot(dx, dy) > 10) down.scroll = t.clientY; return; }
+        if (Math.abs(dx) < 4 || Math.abs(dx) < Math.abs(dy)) return;
+        if (rest > SLIDE_BEFORE) { down = null; return; }              // held still that long: iOS's menu's
+        down.slide = true;
+      }
+      e.preventDefault();                                             // the slide is ours, not iOS's loupe
+      const cells = Math.trunc(dx / (this.options.cellWidth?.() || 8));
+      const step = (dir) => this.type(this.options.appCursor() ? `\x1bO${dir}` : `\x1b[${dir}`, "slide");
+      for (; down.moved < cells; down.moved++) step("C");
+      for (; down.moved > cells; down.moved--) step("D");
+    }, { passive: false });
     k.addEventListener("touchend", (e) => {
+      if (down?.slide || down?.scroll !== undefined) { e.preventDefault(); down = null; return; }   // its tap would move the cursor
       const t = e.changedTouches[0];
       if (down && t && Date.now() - down.at < 350 && Math.hypot(t.clientX - down.x, t.clientY - down.y) < 10
           && !this.options.tapLink?.(t.clientX, t.clientY))       // an address or a path on the row still opens
@@ -112,7 +157,6 @@ export class Input {
     // ⌘C with terminal text selected copies it whatever has the focus: iOS may keep the focus in
     // the keyboard field, whose own (empty) selection it would copy.
     this.hardKbd = this.wasTyping = false;
-    const touchable = (this.touchable = navigator.maxTouchPoints > 0);
     const field = (el) => !!el?.closest?.("input, textarea:not(#kbd), select, [contenteditable]");
     k.addEventListener("keydown", (e) => { if (touchable && ["Meta", "Control", "Alt", "Shift"].includes(e.key)) this.hardKbd = true; });
     document.addEventListener("keydown", (e) => {

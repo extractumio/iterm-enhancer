@@ -181,7 +181,8 @@ and sign in:
   selection. A held key keeps its pace on a slow network: keys typed while the last ones are
   on their way go to the pane together. On a phone
   two floating buttons open the keyboard and the hot keys; in a coding agent's pane its input is a
-  panel and its status lines wait behind an ⓘ button. On a phone lines
+  panel and its status lines wait behind an ⓘ button; a long press in it offers Paste, a finger
+  resting and then sliding moves the cursor, and a held delete repeats. On a phone lines
   re-flow to the screen (**Wrap**); **Grid** keeps iTerm2's layout, **Fit** scales it to the
   width, **Resize iTerm to this screen** (⋯) changes the Mac's window until you restore it.
   With a keyboard attached to a phone or a tablet, ⌘C copies the selected terminal text and ⌘V
@@ -205,7 +206,8 @@ and sign in:
   with a note (the gray button above it copies the selection), to come back to a coding agent's or a command's output later. The session's
   bookmarks are orange marks on the terminal's right edge; press one to scroll back to it (older
   lines are loaded, a fold opens, text in a rendered widget is found there) and the bar shows its
-  note, with Edit, Delete and ↑ ↓ to the others. Sessions with bookmarks have an orange strip in
+  note, with Edit, Delete and ↑ ↓ to the others; the round bookmark button at the top right
+  lists the session's bookmarks. Sessions with bookmarks have an orange strip in
   the list, and **Bookmarks** below it lists all of them, also of sessions that closed. They are
   kept on the Mac (`~/.iterm-enhancer/state/web-bookmarks.json`), so your phone and your Mac see
   the same ones; when the lines are gone from the history, a bookmark shows what was selected.

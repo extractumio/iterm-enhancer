@@ -42,7 +42,7 @@ const view = new TermView({ term: $("term"), hist: $("hist"), screen: $("screen"
 const input = new Input({ kbd: $("kbd"), kbdButton: $("kbdbtn"), term: $("term"), panel: $("hotkeys"), pasteDialog: $("pastebox"),
   send: (data, path, e) => { send({ t: "in", data, ...trace.keyFields(data, path, e) }); if (data.includes("\r")) views.commandSent(); },
   options: { appCursor: () => st.appCursor, bracketed: () => st.bracketed, onTyped: () => view.typed(), status: toast, pasteImage: files.pasteImage, pickFile,
-    tapLink: (x, y) => tapLink(x, y), tapMove: (x, y) => tapMove(x, y) } });
+    tapLink: (x, y) => tapLink(x, y), tapMove: (x, y) => tapMove(x, y), cellWidth: () => view.charRatio() * parseFloat(getComputedStyle($("term")).fontSize) } });
 copyButton($("copyfab"), $("term"), (text) => input.copySelection(text));
 
 // The files the output names, on the pane's host: a path is a link, an image gets a button, only
@@ -82,10 +82,11 @@ $("term").addEventListener("click", (e) => { if (e.altKey && !String(getSelectio
 // On a touch screen the invisible keyboard field lies over the cursor's row, so a long press
 // there gets iOS's own Paste (text, or an image); elsewhere it is out of the way.
 function placeKbd() {
-  const k = $("kbd"), cur = touch.matches ? $("screen").querySelector(".cur") : null;
+  // a coding agent's input box whole (where it draws its own cursor may not be iTerm's), else the cursor's row
+  const k = $("kbd"), cur = touch.matches ? $("screen").querySelector(".blk.inbox") ?? $("screen").querySelector(".cur") : null;
   const t = $("term").getBoundingClientRect(), r = cur?.getBoundingClientRect();
   if (!r || r.bottom < t.top || r.top > t.bottom) { k.style.cssText = ""; return; }
-  k.style.cssText = `left:${t.left}px;top:${r.top}px;width:${t.width}px;height:${r.height}px`;   // the cursor's row only
+  k.style.cssText = `left:${t.left}px;top:${Math.max(r.top, t.top)}px;width:${t.width}px;height:${Math.min(r.bottom, t.bottom) - Math.max(r.top, t.top)}px`;
 }
 view.onDrawn = () => { placeKbd(); marks(); trace.drawn(); };
 
