@@ -142,7 +142,13 @@ export async function webMarks(browser, name = "") {
   const rail = await page.evaluate(() => [...document.querySelectorAll("#markrail .mk")].map((b) => ({ top: parseFloat(b.style.top), title: b.title, n: b.dataset.count })));
   check(`${at} the session's bookmarks are marks on the terminal's edge, placed by their lines`,
     rail.length >= 4 && rail.some((m) => m.title === "look again") && rail.at(-1).title === "look again" && rail[0].top < rail.at(-1).top, JSON.stringify(rail));
-  check(`${at} the session list shows an orange strip beside a session with bookmarks`, await page.evaluate(() => !!document.querySelector('#sessions .item[data-id="S1"] .bmbar')));
+  const rowsAt = await page.evaluate(() => ["S1", "S2"].map((id) => {
+    const it = document.querySelector(`#sessions .item[data-id="${id}"]`), r = (sel) => it.querySelector(sel)?.getBoundingClientRect();
+    return { strip: !!it.querySelector(".bmbar"), text: Math.round(r(".txt").left), top: Math.round(r(".txt").top - it.getBoundingClientRect().top),
+      state: Math.round(r(".st").left), stripIn: r(".bmbar") ? Math.round(r(".bmbar").right) <= Math.round(r(".txt").left) : null };
+  }));
+  check(`${at} the session list shows an orange strip beside a session with bookmarks, its row laid out as the others`,
+    rowsAt[0].strip && !rowsAt[1].strip && rowsAt[0].stripIn && rowsAt[0].text === rowsAt[1].text && rowsAt[0].top === rowsAt[1].top && rowsAt[0].state === rowsAt[1].state, JSON.stringify(rowsAt));
 
   // the way back: into older lines not loaded, found by its text (its line moved)
   await page.click('#markrail .mk[title="ask about the retry loop"]');

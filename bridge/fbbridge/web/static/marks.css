@@ -76,7 +76,9 @@ body.wide #markadd, body.wide #markcopy, body.wide #markrail, body.wide #markbar
 #marklist .empty { margin: 0; padding: 8px; color: var(--muted); font-size: 12.5px; }
 
 /* the session list: an orange strip beside the profile's bar of a session with bookmarks */
-.bmbar { width: 3px; align-self: stretch; min-height: 30px; margin: 1px 3px 1px -1px; border-radius: 2px; background: var(--mark); }
+.bars { display: flex; gap: 2px; align-self: stretch; }
+.bars .pbar { margin: 1px 0; }
+.bmbar { width: 4px; min-height: 30px; margin: 1px 0; border-radius: 2px; background: var(--mark); }
 
 /* the bookmark brought into view */
 ::highlight(bookmark) { background-color: color-mix(in srgb, #ff9f1a 45%, transparent); }

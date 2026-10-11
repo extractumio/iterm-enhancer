@@ -101,9 +101,14 @@ function row(item, current, onPick, movable, child = false, marked = new Set()) 
   const st = el("span", "st");
   const mark = stateIcon(item.state);
   if (mark) st.append(mark);
-  b.append(profileBar(item.profile, item.id === current, item.state === "working"));
-  if (marked.has(item.id)) { const m = el("span", "bmbar"); m.title = "Has bookmarks"; b.append(m); }
-  b.append(txt, st);
+  // the bar's column holds the orange strip beside it: the row's grid keeps its three columns
+  const bar = profileBar(item.profile, item.id === current, item.state === "working");
+  if (marked.has(item.id)) {
+    const both = el("span", "bars"), m = el("span", "bmbar");
+    m.title = "Has bookmarks";
+    both.append(bar, m);
+    b.append(both, txt, st);
+  } else b.append(bar, txt, st);
   b.addEventListener("click", () => onPick(item.id));
   li.append(b);
   return li;
