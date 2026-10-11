@@ -236,14 +236,15 @@ export class Marks {
 
   // ---------- this session's bookmarks, from the button at the terminal's top right ----------
 
-  /** The button stands at the terminal's top right, left of the marks; shown with the terminal. */
+  /** The button stands at the terminal's top right, left of the marks, with the number of the
+   *  session's bookmarks on it; only while it has one at least. */
   placeFab() {
-    const fab = $("marksfab"), term = this.term;
-    const on = !!this.sid() && !term.hidden && term.clientHeight > 0 && !!this.view.theme;
+    const fab = $("marksfab"), term = this.term, n = this.sid() ? this.mine().length : 0;
+    const on = n > 0 && !term.hidden && term.clientHeight > 0 && !!this.view.theme;
     fab.hidden = !on;
     if (!on) return this.togglePane(false);
-    const n = this.mine().length;
-    $("marksfabn").textContent = n ? String(n) : "";
+    $("marksfabn").textContent = String(n);
+    fab.setAttribute("aria-label", `Bookmarks of this session: ${n}`);
     fab.style.top = `${term.offsetTop + 8}px`;
     fab.style.left = `${term.offsetLeft + term.clientLeft + term.clientWidth - 18 - 8 - 32}px`;
     if (!$("markpane").hidden) this.placePane();
@@ -264,6 +265,6 @@ export class Marks {
     if ($("markpane").hidden) return;
     const mine = this.mine();
     $("markpane").replaceChildren(el("h2", "", "Bookmarks of this session"),
-      mine.length ? this.listOf(mine, false) : el("p", "empty", "None yet. Select text in the terminal and press + beside it."));
+      this.listOf(mine, false));
   }
 }

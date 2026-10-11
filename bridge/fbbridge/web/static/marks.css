@@ -10,7 +10,7 @@
 #marksfab { animation-delay: -1.7s; }
 body:has(#markcopy:not([hidden])) #marksfab { visibility: hidden; }   /* a selection's Copy and + stand there */
 #marksfab[aria-expanded="true"] { box-shadow: 0 0 0 2px var(--t-bg), 0 0 0 4px var(--mark); }
-#marksfabn:not(:empty) { position: absolute; right: -4px; top: -4px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
+#marksfabn { position: absolute; right: -4px; top: -4px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
   font: 700 9.5px/15px var(--ui); background: var(--t-bg); color: var(--mark); border: 1px solid var(--mark); }
 #markpane { position: absolute; z-index: 8; width: min(340px, calc(100% - 24px)); max-height: 60%; overflow: auto; padding: 4px; border-radius: 10px;
   background: var(--chrome-2); border: 1px solid var(--line); box-shadow: 0 12px 32px color-mix(in srgb, #000 40%, transparent); }

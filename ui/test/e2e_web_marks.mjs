@@ -175,7 +175,7 @@ export async function webMarks(browser, name = "") {
   await page.click("#marksfab");
   const paneClosed = await page.evaluate(() => document.getElementById("markpane").hidden) && outside;
   check(`${at} the button at the top right opens this session's bookmarks, top to bottom; pressed again it closes them`,
-    pane.open && paneClosed && pane.items[0] === "gone" && pane.items.includes("look again") && !pane.items.includes("closed one") && pane.count === String(pane.items.length),
+    pane.open && paneClosed && pane.items[0] === "gone" && pane.items.includes("look again") && !pane.items.includes("closed one") && pane.count === String(pane.items.length) && pane.count !== "0",
     JSON.stringify({ pane, paneClosed }));
 
   // into a rendered Markdown widget, drawn only once it is near
@@ -215,6 +215,7 @@ export async function webMarks(browser, name = "") {
     await page.evaluate(() => { const t = document.getElementById("term"); return t.scrollHeight - t.scrollTop - t.clientHeight < 8; }));
   await page.click('#sessions .item[data-id="S2"]');
   await page.waitForFunction(() => [...document.querySelectorAll("#screen .ln")].some((el) => el.textContent === "two"));
+  check(`${at} a pane without bookmarks has no bookmarks button`, await page.evaluate(() => document.getElementById("marksfab").hidden));
   check(`${at} another pane: no bar, no mark from the last one`,
     await page.evaluate(() => document.getElementById("markbar").hidden && (document.getElementById("markline")?.hidden ?? true)));
   await page.click('#marklist .mkitem:has-text("ask about the retry loop")');

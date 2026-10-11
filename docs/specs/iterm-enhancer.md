@@ -2385,7 +2385,7 @@ Scenario: AC-57 happy path — marks on the terminal and in the session list
   And the bridge reads 1000 lines either side of the bookmark's line first and the whole history only when the text is not there whole; it reads on a task of its own, so the browser's typing is not held up
   And the place stays put while widgets around it are drawn or change size, until the user scrolls, taps, clicks, types (also on the on-screen keyboard), goes to the end of the output or shows another pane; showing another pane closes the bar
   And a bar over the terminal shows the note with Edit, Delete and ×
-  When the user presses the round bookmark button at the terminal's top right (orange, a count of the session's bookmarks on it)
+  When the user presses the round bookmark button at the terminal's top right (orange, the number of the session's bookmarks on it; shown only while the session has one at least)
   Then a list of this session's bookmarks opens below it, top to bottom, each with its note, the start of its text and when it was made; a press on one brings it into view and closes the list; the button pressed again, Esc or another pane closes it
 
 Scenario: AC-57 happy path — all bookmarks
