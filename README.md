@@ -190,7 +190,8 @@ and sign in:
   tmux its window and pane title. Clear the name to give it back to iTerm2 and tmux.
 - **Links**: web addresses and file paths or names the terminal printed (`src/main.rs:42`,
   `~/notes.md`, `README.md`) have a dotted underline; ⌘-click (Ctrl-click off a Mac) or tap one
-  to open an address in a new tab, a file in View.
+  to open an address in a new tab, a file in View. A path is a link only when its file is there
+  (a relative one is taken from the pane's folder).
 - **Output widgets**: code in the output (a fenced block, or a file printed with `cat`, `bat`,
   `head`…) is highlighted; Markdown is rendered, with **Raw** / **Markdown** and **Copy**; a
   Mermaid diagram is drawn. An image file the output names gets a button after it that shows the

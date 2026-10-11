@@ -78,22 +78,28 @@ export async function openLink(tok, { paneInfo, openFile, toast }) {
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
 const held = (e) => (MAC ? e.metaKey : e.ctrlKey);
 
-/** Pointer feedback and clicks for a terminal element; `tap(x, y)` is for touch screens. */
+/** Pointer feedback and clicks for a terminal element; `tap(x, y)` is for touch screens. A path
+ *  is a link only when actions.state(path) says its file is there (as it is underlined); when
+ *  the pane's folder is not known a click says why (openLink). */
 export function bindLinks(term, actions) {
+  const usable = (x, y) => {
+    const tok = linkAt(x, y);
+    return tok && (tok.kind === "url" || actions.state(tok.value) !== "no") ? tok : null;
+  };
   let frame = 0;
   term.addEventListener("mousemove", (e) => {
     if (frame) return;
-    frame = requestAnimationFrame(() => { frame = 0; term.classList.toggle("onlink", held(e) && !!linkAt(e.clientX, e.clientY)); });
+    frame = requestAnimationFrame(() => { frame = 0; term.classList.toggle("onlink", held(e) && !!usable(e.clientX, e.clientY)); });
   });
   term.addEventListener("mouseleave", () => term.classList.remove("onlink"));
   addEventListener("keyup", (e) => { if (!held(e)) term.classList.remove("onlink"); });
   term.addEventListener("click", (e) => {
     if (e.button !== 0 || !held(e) || String(getSelection())) return;   // a click that ends a selection opens nothing
-    const tok = linkAt(e.clientX, e.clientY);
+    const tok = usable(e.clientX, e.clientY);
     if (tok) { e.preventDefault(); void openLink(tok, actions); }
   });
   return (x, y) => {
-    const tok = linkAt(x, y);
+    const tok = usable(x, y);
     if (tok) void openLink(tok, actions);
     return !!tok;
   };

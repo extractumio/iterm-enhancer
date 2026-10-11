@@ -4,6 +4,7 @@
 // the CSS Custom Highlight API: the lines' DOM stays as it is (iOS's selection, copying and the
 // cursor's maths depend on it). Only the paragraphs within a screen of the visible ones are
 // looked at, after a redraw and when scrolling settles; a browser without the API shows none.
+// A path is underlined only when its file is there (panefiles.js), as only then it opens.
 import { tokens } from "./links.js";
 
 const NEAR = 1;                 // screens above and below the visible one
@@ -29,12 +30,13 @@ export function nearRows(term, boxes) {
   return rows;
 }
 
-export function linkMarks(term, boxes) {
+export function linkMarks(term, boxes, files) {
   if (!globalThis.CSS?.highlights || typeof Highlight === "undefined") return () => {};
   let timer = 0;
   const later = (ms = 120) => { clearTimeout(timer); timer = setTimeout(mark, ms); };
   term.addEventListener("scroll", () => later(), { passive: true });
   addEventListener("resize", () => later());
+  files.listen(() => later());                    // a file turned out to be there
 
   // One paragraph's text, and where each of its text nodes starts in it.
   function ranges(rows) {
@@ -54,6 +56,7 @@ export function linkMarks(term, boxes) {
     };
     const out = [];
     for (const tok of tokens(text)) {
+      if (tok.kind === "path" && !files.there(tok.value)) continue;
       const a = point(tok.start, false), b = point(tok.end, true);
       // static: they cost nothing while the page changes, and survive a row moving into a block
       if (a && b) out.push(new StaticRange({ startContainer: a.node, startOffset: a.offset, endContainer: b.node, endOffset: b.offset }));

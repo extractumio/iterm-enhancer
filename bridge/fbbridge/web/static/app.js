@@ -6,7 +6,7 @@ import { arrowsTo, cellAt, cursorCell, inOneBox, typedEnd } from "./cursor.js";
 import { navTools } from "./navtools.js";
 import { bindReorder, ordered } from "./reorder.js";
 import { linkMarks } from "./linkmarks.js";
-import { imageFiles } from "./imagefiles.js";
+import { paneFiles } from "./panefiles.js";
 import { bindLinks } from "./termlinks.js";
 import { copyButton } from "./touchcopy.js";
 import { TermView } from "./term.js";
@@ -45,11 +45,14 @@ const input = new Input({ kbd: $("kbd"), kbdButton: $("kbdbtn"), term: $("term")
     tapLink: (x, y) => tapLink(x, y), tapMove: (x, y) => tapMove(x, y) } });
 copyButton($("copyfab"), $("term"), (text) => input.copySelection(text));
 
+// The files the output names, on the pane's host: a path is a link, an image gets a button, only
+// when its file is there (relative paths from the pane's folder, as a click takes them).
+const shownFiles = paneFiles(() => views.paneInfo());
 // Addresses and paths get a dotted underline (linkmarks.js).
-const marks = linkMarks($("term"), [$("hist"), $("screen")]);
+const marks = linkMarks($("term"), [$("hist"), $("screen")], shownFiles);
 const views = new Views({ send, store, onShow: () => { view.keepBottom(applyFit); marks(); }, onBack: () => focusTerminal() });
 // Addresses open in a new tab here, paths in File (on the pane's host).
-const openAt = bindLinks($("term"), { paneInfo: () => views.paneInfo(), openFile: (p, host) => views.open(p, host), toast });
+const openAt = bindLinks($("term"), { paneInfo: () => views.paneInfo(), openFile: (p, host) => views.open(p, host), toast, state: shownFiles.state });
 // Where a tap moves the cursor (a shell or a coding agent), on the cursor's row it does so, also
 // over a path typed there; elsewhere a tap there opens a link.
 function tapLink(x, y) {
@@ -87,13 +90,11 @@ function placeKbd() {
 view.onDrawn = () => { placeKbd(); marks(); trace.drawn(); };
 
 // Code, Markdown and diagrams in the output as widgets, images named in it behind a button
-// (AC-56): only an image that is there, read through the Files proxy on the pane's host, its
-// relative path taken from the pane's folder as a clicked path is.
-const images = imageFiles(() => views.paneInfo());
-const widgets = new Widgets({ view, term: $("term"), boxes: [$("hist"), $("screen")], resolve: images.resolve, exists: images.exists,
+// (AC-56), read through the Files proxy on the pane's host.
+const widgets = new Widgets({ view, term: $("term"), boxes: [$("hist"), $("screen")], files: shownFiles,
   copy: (text) => input.copySelection(text), send, notify: (text) => toast(text, 3000), onZoomClosed: () => focusTerminal() });
 view.onRows = (full, keep) => (keep ? widgets.keepPlace(() => widgets.update(full)) : widgets.update(full));
-view.onReset = () => { widgets.reset(); images.forget(); };
+view.onReset = () => { widgets.reset(); shownFiles.forget(); };
 // Bookmarks of a selection, with a note, kept on the Mac (AC-57)
 const bookmarks = new Marks({ view, widgets, term: $("term"), send, sid: () => st.sid, alive: (id) => !!findItem(st.groups, id),
   pick: (id) => pick(id), toast, onChange: () => drawNav(), copy: (text) => input.copySelection(text, true) });

@@ -37,6 +37,12 @@ export async function webApp(browser) {
     if (p === "/auth/check") return route.fulfill({ status: 204, body: "" });
     if (p === "/upload") return route.fulfill({ contentType: "application/json", body: JSON.stringify({ path: "/tmp/up/a b.txt" }) });
     if (p === "/blank.html") return route.fulfill({ contentType: "text/html", body: "<!doctype html><title>blank</title>" });
+    if (p === "/fb/api/ls") {                    // the pane's files: src/mod.rs is there, ~/notes.md is not
+      const q = new URL(route.request().url()).searchParams;
+      const there = { "/Users/alex/p/src": ["mod.rs"] }[q.get("path")] ?? [];
+      const entries = there.filter((n) => !q.get("filter") || n.includes(q.get("filter"))).map((n) => ({ n, k: "f" }));
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ status: "ready", total: entries.length, writable: true, gen: 1, entries }) });
+    }
     const f = path.join(STATIC, p === "/" ? "index.html" : path.normalize(p));
     if (!f.startsWith(STATIC) || !fs.existsSync(f)) return route.fulfill({ status: 404, body: "" });
     let body = fs.readFileSync(f);
@@ -53,6 +59,7 @@ export async function webApp(browser) {
         ws.send(JSON.stringify({ t: "hist", mode: "reset", sid: msg.id, first: 0, oldest: 0, truncated: false, lines: [] }));
         ws.send(JSON.stringify({ t: "screen", sid: msg.id, full: true, n: SCREEN.length, cols: 80, rows: SCREEN.length, ch: SCREEN.map((l, i) => [i, l]) }));
       }
+      if (msg.t === "files") ws.send(JSON.stringify({ t: "files", sid: "S1", key: "S1", cwd: "/Users/alex/p", home: "/Users/alex", host: null }));
     });
     ws.send(JSON.stringify({ t: "build", id: "test" }));
     ws.send(JSON.stringify({ t: "layout", groups: layout("working") }));
@@ -108,8 +115,13 @@ export async function webApp(browser) {
   await page.waitForFunction(() => document.querySelectorAll("#screen .ln").length === 4);
 
   // links: a faint dotted underline; with a mouse they open with ⌘ (Ctrl elsewhere) only
-  const marks = await $eval(() => new Promise((r) => setTimeout(() => r(CSS.highlights?.get("lnk")?.size ?? -1), 400)));
-  check("AC-52 web app: the addresses and paths are underlined, without changing the lines", marks === 3, String(marks));
+  await page.waitForFunction(() => CSS.highlights?.get("lnk")?.size === 2, null, { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const marks = await $eval(() => [...(CSS.highlights?.get("lnk") ?? [])].map((r) => {
+    const x = new Range(); x.setStart(r.startContainer, r.startOffset); x.setEnd(r.endContainer, r.endOffset); return x.toString();
+  }));
+  check("AC-52 web app: the addresses and the paths of files that are there are underlined, without changing the lines; a path not there is not",
+    JSON.stringify(marks) === JSON.stringify(["https://devbox.example/docs", "src/mod.rs:42"]), JSON.stringify(marks));
   const at = await $eval(() => {
     const t = document.querySelector("#screen .ln span").firstChild, r = new Range();
     r.setStart(t, t.data.indexOf("devbox")); r.setEnd(t, t.data.indexOf("devbox") + 6);
@@ -125,6 +137,19 @@ export async function webApp(browser) {
   const opened = await $eval(() => window.opened);
   check("AC-52 web app: a plain click on an address opens nothing; with the modifier key it opens", plain === 0 && opened.length === 1
     && opened[0].startsWith("https://devbox.example/docs"), JSON.stringify(opened));
+  const notes = await $eval(() => {
+    const t = document.querySelector("#screen .ln span").firstChild, r = new Range(), i = t.data.indexOf("notes.md");
+    r.setStart(t, i); r.setEnd(t, i + 3);
+    const b = r.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  });
+  const fileSrc = await $eval(() => document.getElementById("file").getAttribute("src"));
+  await page.keyboard.down(mod);
+  await page.mouse.click(notes.x, notes.y);
+  await page.keyboard.up(mod);
+  await page.waitForTimeout(300);
+  check("AC-52 web app: a path whose file is not there opens nothing", await $eval(() => document.getElementById("file").getAttribute("src")) === fileSrc
+    && await $eval(() => document.body.dataset.shown) === "term");
 
   const rules = await $eval(() => [...document.querySelectorAll("#screen .ln.rule")].map((l) => [l.classList.contains("full"), Math.round(l.getBoundingClientRect().width)]));
   const termWidth = await $eval(() => document.getElementById("term").clientWidth);
@@ -155,6 +180,7 @@ export async function webApp(browser) {
   check("AC-52 web app: closing View's last file closes its window over the terminal", wideOpen
     && await $eval(() => document.getElementById("filewin").hidden && document.querySelector('button[data-view="file"]').disabled));
   await page.setViewportSize({ width: 800, height: 800 });
+  await page.waitForFunction(() => !document.body.classList.contains("wide"));   // the page took the new width (its change event comes later)
   await openView();
   const narrowOpen = await $eval(() => document.body.dataset.shown);
   await emptied();
