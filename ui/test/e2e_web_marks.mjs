@@ -82,10 +82,11 @@ function bridge(items) {
 
 // the bookmark marked now: its text, whether it is in a widget, and where it is in the terminal
 const marked = (page) => page.evaluate(() => {
-  const r = [...(CSS.highlights?.get("bookmark") ?? [])][0], t = document.getElementById("term").getBoundingClientRect();
-  if (!r) return null;
-  const b = r.getBoundingClientRect();
-  return { text: r.toString(), shadow: r.startContainer.getRootNode() instanceof ShadowRoot, top: Math.round(b.top - t.top), h: Math.round(t.height) };
+  const line = document.getElementById("markline"), r = line?.range, t = document.getElementById("term").getBoundingClientRect();
+  if (!r || line.hidden) return null;
+  const b = r.getBoundingClientRect(), l = line.getBoundingClientRect();
+  return { text: r.toString(), shadow: r.startContainer?.getRootNode() instanceof ShadowRoot, top: Math.round(b.top - t.top), h: Math.round(t.height),
+    line: l.left < b.left && l.top <= b.top + 1 && l.bottom >= b.bottom - 1 };
 });
 const inView = (m) => m && m.top >= 0 && m.top < m.h;
 
@@ -124,6 +125,8 @@ export async function webMarks(browser, name = "") {
   check(`${at} a gray Copy button stands just above it; both are blobs, not circles`,
     pair.shown && pair.above && pair.sameX && /^rgb\((\d+), \1, |^rgb\(1[45]\d, 1[56]\d, 1[67]\d\)/.test(pair.gray) && pair.radius !== pair.other, JSON.stringify(pair));
   await page.evaluate(() => { window.copied = []; document.addEventListener("copy", () => window.copied.push(String(getSelection()))); });
+  check(`${at} the bookmarks button gives way while Copy and + stand beside a selection`,
+    await page.evaluate(() => getComputedStyle(document.getElementById("marksfab")).visibility === "hidden"));
   await page.click("#markcopy");
   await page.waitForTimeout(800);                                  // past the buttons' grace after a selection goes
   check(`${at} Copy copies the selected text and keeps the selection for a bookmark`,
@@ -152,16 +155,32 @@ export async function webMarks(browser, name = "") {
 
   // the way back: into older lines not loaded, found by its text (its line moved)
   await page.click('#markrail .mk[title="ask about the retry loop"]');
-  await page.waitForFunction(() => [...(CSS.highlights?.get("bookmark") ?? [])][0]?.toString().includes("retry loop"), null, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(() => document.getElementById("markline")?.range?.toString().includes("retry loop"), null, { timeout: 8000 }).catch(() => {});
   let m = await marked(page);
   const more = sent.find((x) => x.t === "more" && x.to !== undefined);
   check(`${at} a mark loads the older lines down to its text in one request and marks it in view, a third from the top`,
     more?.before === 2000 && more.to === 110 && m?.text === "the retry loop never resets" && inView(m) && Math.abs(m.top - m.h / 3) < 40, JSON.stringify({ more, m }));
   check(`${at} the bar shows its note`, (await page.textContent("#mbnote")) === "ask about the retry loop" && await page.isVisible("#markbar"));
+  check(`${at} the text keeps its look; a wavy line on its left from its first row to its last marks it`, m?.line === true
+    && await page.evaluate(() => !CSS.highlights?.has("bookmark") && getComputedStyle(document.getElementById("markline")).backgroundImage.includes("svg")), JSON.stringify(m));
+
+  // this session's bookmarks from the button at the terminal's top right: a toggle
+  await page.click("#marksfab");
+  const pane = await page.evaluate(() => ({ open: !document.getElementById("markpane").hidden,
+    items: [...document.querySelectorAll("#markpane .mkitem .note")].map((n) => n.textContent),
+    count: document.getElementById("marksfabn").textContent }));
+  await page.mouse.click(30, 300);                                 // a press elsewhere closes it
+  const outside = await page.evaluate(() => document.getElementById("markpane").hidden);
+  await page.click("#marksfab");
+  await page.click("#marksfab");
+  const paneClosed = await page.evaluate(() => document.getElementById("markpane").hidden) && outside;
+  check(`${at} the button at the top right opens this session's bookmarks, top to bottom; pressed again it closes them`,
+    pane.open && paneClosed && pane.items[0] === "gone" && pane.items.includes("look again") && !pane.items.includes("closed one") && pane.count === String(pane.items.length),
+    JSON.stringify({ pane, paneClosed }));
 
   // into a rendered Markdown widget, drawn only once it is near
   await page.click('#markrail .mk[title="rendered"]');
-  await page.waitForFunction(() => { const r = [...(CSS.highlights?.get("bookmark") ?? [])][0]; return r && r.startContainer.getRootNode() instanceof ShadowRoot; }, null, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(() => { const r = document.getElementById("markline")?.range; return r?.startContainer?.getRootNode() instanceof ShadowRoot; }, null, { timeout: 8000 }).catch(() => {});
   m = await marked(page);
   await page.waitForTimeout(400);
   const later = await marked(page);
@@ -171,14 +190,14 @@ export async function webMarks(browser, name = "") {
   // into a fold whose lines were never sent
   await page.click("#marksbtn");
   await page.click('#marklist .mkitem:has-text("folded secret line 515")');
-  await page.waitForFunction(() => [...(CSS.highlights?.get("bookmark") ?? [])][0]?.toString() === "folded secret line 515", null, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(() => document.getElementById("markline")?.range?.toString() === "folded secret line 515", null, { timeout: 8000 }).catch(() => {});
   m = await marked(page);
   check(`${at} from the list: a bookmark in a fold asks for its lines, opens it and marks the text`,
     sent.some((x) => x.t === "unfold" && x.n === 500) && m?.text === "folded secret line 515" && inView(m), JSON.stringify(m));
 
   // a part of its text (rendered Markdown lacks a link's address); text not found says so
   await page.click('#marklist .mkitem:has-text("guide")');
-  await page.waitForFunction(() => /install steps/.test([...(CSS.highlights?.get("bookmark") ?? [])][0]?.toString() ?? ""), null, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(() => /install steps/.test(document.getElementById("markline")?.range?.toString() ?? ""), null, { timeout: 8000 }).catch(() => {});
   m = await marked(page);
   check(`${at} found by a part of its text, that part is marked`, /for the install steps$/.test(m?.text ?? "") && !/https/.test(m.text) && inView(m), JSON.stringify(m));
   await page.click('#marklist .mkitem:has-text("phantom")');
@@ -187,7 +206,7 @@ export async function webMarks(browser, name = "") {
 
   // the view is the user's again: the end of the output, another pane
   await page.click('#markrail .mk[title="ask about the retry loop"]');
-  await page.waitForFunction(() => [...(CSS.highlights?.get("bookmark") ?? [])][0]?.toString().includes("retry loop"), null, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(() => document.getElementById("markline")?.range?.toString().includes("retry loop"), null, { timeout: 8000 }).catch(() => {});
   await page.click("#bottom");
   say({ t: "screen", sid: "S1", full: false, n: 2, cols: 80, rows: 2, ch: [[0, line("after the jump")]] });
   await page.waitForFunction(() => [...document.querySelectorAll("#screen .ln")].some((el) => el.textContent === "after the jump"));
@@ -197,9 +216,9 @@ export async function webMarks(browser, name = "") {
   await page.click('#sessions .item[data-id="S2"]');
   await page.waitForFunction(() => [...document.querySelectorAll("#screen .ln")].some((el) => el.textContent === "two"));
   check(`${at} another pane: no bar, no mark from the last one`,
-    await page.evaluate(() => document.getElementById("markbar").hidden && ![...(CSS.highlights?.get("bookmark") ?? [])].some((r) => r.startContainer.isConnected) && !document.querySelector(".mk-at")));
+    await page.evaluate(() => document.getElementById("markbar").hidden && (document.getElementById("markline")?.hidden ?? true)));
   await page.click('#marklist .mkitem:has-text("ask about the retry loop")');
-  await page.waitForFunction(() => [...(CSS.highlights?.get("bookmark") ?? [])][0]?.toString().includes("retry loop"), null, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(() => document.getElementById("markline")?.range?.toString().includes("retry loop"), null, { timeout: 8000 }).catch(() => {});
   m = await marked(page);
   check(`${at} a bookmark of another pane shows that pane and its text`, m?.text === "the retry loop never resets" && inView(m)
     && await page.evaluate(() => document.querySelector("#sessions .item.on")?.dataset.id === "S1"), JSON.stringify(m));
@@ -233,7 +252,7 @@ export async function webMarks(browser, name = "") {
   // a selection in a widget's rendered text, by a mouse drag (WebKit keeps a script's range in a
   // shadow root out of the document's selection); the widget is drawn once near the view
   await page.click('#markrail .mk[title="rendered"]');
-  await page.waitForFunction(() => { const r = [...(CSS.highlights?.get("bookmark") ?? [])][0]; return r && r.startContainer.getRootNode() instanceof ShadowRoot; }, null, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(() => { const r = document.getElementById("markline")?.range; return r?.startContainer?.getRootNode() instanceof ShadowRoot; }, null, { timeout: 8000 }).catch(() => {});
   await page.click("#mbclose");
   const box = await page.evaluate(() => {
     const host = [...document.querySelectorAll("#term .ln.wg-host")].find((h) => h.shadowRoot.querySelector('.wg[data-kind="markdown"] p'));

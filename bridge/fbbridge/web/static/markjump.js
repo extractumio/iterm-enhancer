@@ -2,7 +2,7 @@
 // The way back to a bookmark (AC-57). The bridge finds its text nearest the line it was on
 // (iTerm2 numbers lines anew when it wraps them again); the page then loads older lines down to
 // it, opens a fold it is in, finds the text in the rows or in a widget's rendered text, puts it
-// a third from the terminal's top and marks it. The widgets keep it there while they are drawn
+// a third from the terminal's top and marks it with a wavy line on its left. The widgets keep it there while they are drawn
 // around it (widgets.js pin) until the user scrolls, taps, clicks or types.
 import { loose, part, rangeOf, textNodes } from "./marktext.js";
 
@@ -18,7 +18,23 @@ export class Jumper {
     Object.assign(this, { view, widgets, term, send, sid });
     this.waiters = new Set();
     this.token = 0;
-    this.marked = null;          // an element marked when no text range was found
+    this.at = null;              // what is marked: a Range, or an element when no text range was found
+    // the line goes with the text when the page moves under it (a widget drawn, the view scrolled)
+    // (it lies in the scrolled content: only content changing size above it, or a sideways
+    // scroll, moves the text from under it; the text is looked up again only once its range went)
+    let frame = 0, left = 0;
+    this.follow = () => {
+      if (frame || !this.find) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (!this.find) return;
+        const at = this.at, live = at instanceof Range ? at.startContainer.isConnected : at?.isConnected;
+        this.mark(live ? at : this.find());
+      });
+    };
+    term.addEventListener("scroll", () => { if (term.scrollLeft !== left) { left = term.scrollLeft; this.follow(); } }, { passive: true });
+    const sizes = new ResizeObserver(this.follow);
+    for (const el of [term, ...term.querySelectorAll("#hist, #screen")]) sizes.observe(el);
     // the user moves the view: scrolls, taps, clicks, types (also by the on-screen keyboard), or
     // goes to the end
     const release = () => { this.widgets.pin = null; };
@@ -127,28 +143,34 @@ export class Jumper {
     w.following = false;                           // set now: the scroll event comes later
     const t = term.getBoundingClientRect();
     term.scrollTop += first.getBoundingClientRect().top - t.top - term.clientHeight / 3;
-    w.pin = () => { const at = this.target(n, needle); this.mark(at); return at; };
+    this.find = () => this.target(n, needle);
+    w.pin = () => { const at = this.find(); this.mark(at); return at; };
     w.keepPlace(() => w.update(false, true));     // the regions near it drawn, its place kept
     this.mark(this.target(n, needle));
     this.view.updateBottom();
     return first;
   }
 
-  /** The bookmark's text marked orange (the CSS Custom Highlight API, as linkmarks.js); an
-   *  element when its text was not found. */
+  /** The bookmark's text (a Range, or the element shown when it was not found) marked by a
+   *  wavy line on its left, from its first row to its last; the text keeps its own look. The
+   *  line lies in the terminal's scrolled content, so it scrolls with the text. */
   mark(at) {
-    this.marked?.classList.remove("mk-at");
-    this.marked = null;
-    const hl = globalThis.CSS?.highlights;
-    if (at instanceof Range) { if (hl && typeof Highlight !== "undefined") hl.set("bookmark", new Highlight(at)); }
-    else if (at) { hl?.delete("bookmark"); at.classList.add("mk-at"); this.marked = at; }
+    const line = (this.line ??= Object.assign(document.createElement("div"), { id: "markline" }));
+    if (!line.isConnected) this.term.append(line);
+    this.at = line.range = at ?? null;               // for the page's own checks
+    const live = at instanceof Range ? at.startContainer.isConnected : at?.isConnected;
+    const rects = !live ? [] : at instanceof Range ? [...at.getClientRects()].filter((r) => r.height) : [at.getBoundingClientRect()];
+    if (!rects.length) { line.hidden = true; return; }
+    const t = this.term.getBoundingClientRect(), top = Math.min(...rects.map((r) => r.top)), bottom = Math.max(...rects.map((r) => r.bottom));
+    line.style.cssText = `top:${Math.round(top - t.top + this.term.scrollTop)}px;height:${Math.round(bottom - top)}px;left:${this.term.scrollLeft + 1}px`;
+    line.hidden = false;
   }
 
   /** No bookmark shown: its mark goes, the view is the user's again. */
   clear() {
     this.widgets.pin = null;
-    globalThis.CSS?.highlights?.delete("bookmark");
-    this.marked?.classList.remove("mk-at");
-    this.marked = null;
+    this.find = null;
+    this.at = null;
+    if (this.line) { this.line.hidden = true; this.line.range = null; }
   }
 }

@@ -57,6 +57,11 @@ export class Marks {
     $("mbnext").onclick = () => this.step(1);
     armed($("mbdel"), () => ["Delete"], () => { if (this.shown) this.send({ t: "unmark", id: this.shown.id }); });
     $("marksbtn").onclick = () => this.toggleList();
+    $("marksfab").onclick = () => this.togglePane();
+    $("marksfab").addEventListener("mousedown", (e) => e.preventDefault());   // the terminal keeps the keys
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") this.togglePane(false); });
+    // a press anywhere else closes it
+    document.addEventListener("pointerdown", (e) => { if (!$("markpane").hidden && !e.target.closest("#markpane, #marksfab")) this.togglePane(false); });
     new ResizeObserver(() => this.drawRail()).observe(term);
   }
 
@@ -77,8 +82,10 @@ export class Marks {
         if (this.shown?.id === m.id) this.hideBar();
         return this.changed();
       case "marked": return this.replies.get(m.ref)?.(m);
-      case "hist":                                 // another pane: the bar was of the last one
+      case "hist":                                 // another pane: the bar and the list were of the last one
         if (m.mode === "reset" && this.shown && this.shown.sid !== m.sid) this.hideBar();
+        else if (m.mode === "reset") this.jumper.clear();     // its lines are numbered anew: no mark on them
+        if (m.mode === "reset" && m.sid !== this.paneSid) this.togglePane(false);
       // falls through
       case "screen": requestAnimationFrame(() => this.drawRail()); return;   // the pane's range changed
       case "layout": requestAnimationFrame(() => this.drawList());                  // a session closed or came back
@@ -87,7 +94,7 @@ export class Marks {
 
   sids() { return new Set([...this.items.values()].map((i) => i.sid)); }
   busy() { return $("markbox").open; }
-  changed() { this.drawRail(); this.drawList(); this.onChange(); }
+  changed() { this.drawRail(); this.drawList(); this.drawPane(); this.onChange(); }
   mine() { return [...this.items.values()].filter((i) => i.sid === this.sid()).sort((a, b) => a.n - b.n); }
 
   // ---------- the dialog ----------
@@ -158,6 +165,7 @@ export class Marks {
   // ---------- the marks on the terminal's edge ----------
 
   drawRail() {
+    this.placeFab();
     const rail = $("markrail"), term = this.term, v = this.view, mine = this.mine();
     if (!mine.length || term.hidden || !term.clientHeight || !v.theme) { rail.hidden = true; this.railKey = ""; return; }
     // left of a scroll bar (clientWidth ends there); "left": in the wide layout the terminal's
@@ -198,16 +206,22 @@ export class Marks {
     if ($("marklist").hidden) return;
     const all = [...this.items.values()].sort((a, b) => b.at - a.at);
     if (!all.length) return $("marklist").replaceChildren(el("p", "empty", "No bookmarks yet. Select text in a terminal and press + beside it."));
+    $("marklist").replaceChildren(this.listOf(all, true));
+  }
+
+  /** A list of bookmarks: note, the start of the text, and (all: its session's title, host, when
+   *  and whether it closed); a press brings one into view, × (twice) deletes it. */
+  listOf(items, all) {
     const ul = el("ul");
-    for (const item of all) {
+    for (const item of items) {
       const li = el("li"), b = el("button", "mkitem");
       b.type = "button";
       b.append(el("span", "note" + (item.note ? "" : " quiet"), item.note || firstLine(item.text)));
       if (item.note) b.append(el("span", "snip", firstLine(item.text)));
-      const meta = el("span", "meta", [item.title, item.host, when(item.at)].filter(Boolean).join(" · "));
-      if (!this.alive(item.sid)) meta.append(el("span", "closed", "closed"));
+      const meta = el("span", "meta", (all ? [item.title, item.host, when(item.at)] : [when(item.at)]).filter(Boolean).join(" · "));
+      if (all && !this.alive(item.sid)) meta.append(el("span", "closed", "closed"));
       b.append(meta);
-      b.onclick = () => this.jump(item);
+      b.onclick = () => { this.togglePane(false); this.jump(item); };
       const del = el("button", "mkdel");
       del.type = "button";
       del.title = "Delete this bookmark";
@@ -217,6 +231,39 @@ export class Marks {
       li.append(b, del);
       ul.append(li);
     }
-    $("marklist").replaceChildren(ul);
+    return ul;
+  }
+
+  // ---------- this session's bookmarks, from the button at the terminal's top right ----------
+
+  /** The button stands at the terminal's top right, left of the marks; shown with the terminal. */
+  placeFab() {
+    const fab = $("marksfab"), term = this.term;
+    const on = !!this.sid() && !term.hidden && term.clientHeight > 0 && !!this.view.theme;
+    fab.hidden = !on;
+    if (!on) return this.togglePane(false);
+    const n = this.mine().length;
+    $("marksfabn").textContent = n ? String(n) : "";
+    fab.style.top = `${term.offsetTop + 8}px`;
+    fab.style.left = `${term.offsetLeft + term.clientLeft + term.clientWidth - 18 - 8 - 32}px`;
+    if (!$("markpane").hidden) this.placePane();
+  }
+  placePane() {
+    const fab = $("marksfab"), pane = $("markpane");
+    pane.style.top = `${fab.offsetTop + fab.offsetHeight + 8}px`;
+    pane.style.left = `${Math.max(8, fab.offsetLeft + fab.offsetWidth - pane.offsetWidth)}px`;
+  }
+  /** Opens or closes the list of this session's bookmarks (a second press closes it). */
+  togglePane(open = $("markpane").hidden) {
+    $("markpane").hidden = !open;
+    this.paneSid = open ? this.sid() : null;
+    $("marksfab").setAttribute("aria-expanded", String(open));
+    if (open) { this.drawPane(); this.placePane(); }
+  }
+  drawPane() {
+    if ($("markpane").hidden) return;
+    const mine = this.mine();
+    $("markpane").replaceChildren(el("h2", "", "Bookmarks of this session"),
+      mine.length ? this.listOf(mine, false) : el("p", "empty", "None yet. Select text in the terminal and press + beside it."));
   }
 }
