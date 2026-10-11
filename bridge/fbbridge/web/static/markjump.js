@@ -162,7 +162,7 @@ export class Jumper {
     const rects = !live ? [] : at instanceof Range ? [...at.getClientRects()].filter((r) => r.height) : [at.getBoundingClientRect()];
     if (!rects.length) { line.hidden = true; return; }
     const t = this.term.getBoundingClientRect(), top = Math.min(...rects.map((r) => r.top)), bottom = Math.max(...rects.map((r) => r.bottom));
-    line.style.cssText = `top:${Math.round(top - t.top + this.term.scrollTop)}px;height:${Math.round(bottom - top)}px;left:${this.term.scrollLeft + 1}px`;
+    line.style.cssText = `top:${Math.round(top - t.top + this.term.scrollTop)}px;height:${Math.round(bottom - top)}px;left:${this.term.scrollLeft + 6}px`;   // in the terminal's 8 px gutter, beside the text
     line.hidden = false;
   }
 
