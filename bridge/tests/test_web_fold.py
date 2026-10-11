@@ -31,11 +31,58 @@ class FoldTest(unittest.TestCase):
         short = rows("⏺ Update(a.ts)", "  ⎿  Updated a.ts with 1 addition", "      1 +  x", "      2    y", "", "⏺ ok")
         self.assertEqual(folds(short), [], "a short diff stays")
 
+    def test_a_tools_output_with_blank_lines_its_long_command_and_blank_runs_fold(self):
+        # as Claude Code printed it in the owner's pane: a script with blank lines in it, a
+        # command it wrapped over rows of its own, and rows its redraw left empty
+        script = ["#!/usr/bin/env bash", "# Pure bundle-identity selector.", "set -euo pipefail", "",
+                  'CANONICAL_BUNDLE_ID="app.iqtz.iquantize"', "", "is_iquantize_bundle_id() {",
+                  '  local bundle_id="$1"', "}", "", "select_iquantize_bundle_id() {",
+                  *[f"  step {k}" for k in range(20)], "}"]
+        r = rows("⏺ iPhone 14 Pro is connected.", "",
+                 "⏺ Bash(cat apps/iquantize/scripts/select-ipad7-bundle-id.sh | head -60; xcrun devicectl device info",
+                 "      apps --device 3EB72D0B | grep -i iquantize | head)",
+                 "  ⎿  " + script[0], *[("     " + t) if t else "" for t in script[1:]], "",
+                 "⏺ Bash(S=/private/tmp/claude-501/scratchpad; DEV=3EB72D0B; ok=0; for i in $(seq 1 120); do",
+                 "      if xcrun devicectl device info apps --device $DEV > $S/iphone-apps.txt 2>&1; then ok=1;",
+                 "      break; fi; sleep 10; done; if [ $ok = 0 ]; then echo TIMEOUT; exit 3; fi; echo unlocked;",
+                 "      grep -o -E app.iqtz $S/iphone-apps.txt | sort -u; ./deploy-ipad7.sh > $S/deploy.log 2>&1;",
+                 "      echo deploy exit=$?)",
+                 "", "", "", "", "",
+                 "  ⎿  exit=1", "     ERROR: The developer disk image could not be mounted.",
+                 "", "", "", "", "", "", "", "", "", "",
+                 "⏺ The iPhone is locked.")
+        found = spans(folds(r), r)
+        out = next(f for f in found if "of output" in f[2])
+        self.assertEqual(r[out[0] - 9][0], "  ⎿  #!/usr/bin/env bash", "its line and the output's first 8 lines stay")
+        self.assertEqual(out[1], 3 + 1 + len(script) - 1, "to the output's last line, over its blank lines")
+        self.assertIn((r.index(("      break; fi; sleep 10; done; if [ $ok = 0 ]; then echo TIMEOUT; exit 3; fi; echo unlocked;", True)),
+                       r.index(("      echo deploy exit=$?)", True)), "⋯ 3 more lines of the command"), found)
+        blanks = [f for f in found if f[2].endswith("blank lines")]
+        self.assertEqual([f[2] for f in blanks], ["⋯ 5 blank lines", "⋯ 10 blank lines"], found)
+
+    def test_an_output_scrolling_in_at_a_blank_line_folds_whole(self):
+        words = "build test lint pack sign push tag note mail sync copy move link wipe load save scan sort plot read".split()
+        script = ["#!/bin/sh", *[f"{w} --all" for w in words], "", *[f"echo {w} done" for w in words]]
+        lines = enc("⏺ Bash(cat run.sh)", "  ⎿  " + script[0], *[("     " + t if t else "") for t in script[1:]], "", "⏺ Ran.")
+        h = History(100000)
+        cut = 2 + 21                                   # the history ends on the script's blank line
+        h.take(0, lines[:cut], bulk=False)
+        first = h.scan(SCAN_EVERY)
+        h.take(cut, lines[cut:], bulk=False)
+        later = h.scan(2 * SCAN_EVERY)
+        self.assertEqual((first, [(f["n"], f["to"]) for f in later]), ([], [(10, len(script))]))
+
+    def test_blank_rows_fold_only_before_an_agents_next_line(self):
+        box = rows("╭ ask ╮", "", "", "", "╭ ask ╮", "", "", "", "╭ ask ╮", "", "", "", "╭ ask ╮", "", "", "", "╭ ask ╮", "", "", "", "╭ ask ╮", "⏺ Done.")
+        self.assertEqual([f[2] for f in spans(folds(box), box)], ["⋯ 5 more copies of this line"], "the copies, not the blank rows")
+        file = rows("$ cat a.py", "import os", "", "", "", "def main():", "    pass", "$ ")
+        self.assertEqual(folds(file), [], "a file's own blank lines stay")
+
     def test_a_written_file_and_a_long_command_and_output(self):
-        r = rows("⏺ Write(notes.md)", "  ⎿  Wrote 9 lines to notes.md", *[f"       {k} text" for k in range(1, 10)], "")
+        r = rows("⏺ Write(notes.md)", "  ⎿  Wrote 9 lines to notes.md", *[f"       {k} text" for k in range(1, 10)], "", "⏺ Done.")
         self.assertEqual(spans(folds(r), r), [(2, 10, "⋯ 9 lines of the file")])
         cmd = rows("⏺ Bash(python3 - <<'EOF'", *[f"      line {k}" for k in range(10)], "      EOF)", "  ⎿  done", "")
-        self.assertEqual(spans(folds(cmd), cmd), [(3, 11, "⋯ 9 more lines of the command")])
+        self.assertEqual(spans(folds(cmd), cmd), [(2, 11, "⋯ 10 more lines of the command")])
         out = rows("⏺ Bash(make)", "  ⎿  cc a.c", *[f"     cc file{k}.c -o file{k}.o" for k in range(30)], "", "⏺ Built.")
         self.assertEqual(spans(folds(out), out), [(10, 31, "⋯ 22 more lines of output")])
 
@@ -43,7 +90,7 @@ class FoldTest(unittest.TestCase):
         r = [("⏺ Update(a.ts)", True), ("  ⎿  Updated a.ts with 7 additions", True)]
         for k in range(7):
             r += [(f"      {k} +  a long line that iTerm wrapped at the", False), ("width of the window", True)]
-        r += [("", True)]
+        r += [("", True), ("⏺ Done.", True)]
         self.assertEqual(spans(folds(r), r), [(2, 15, "⋯ 7 lines of diff")])
 
     def test_blobs_and_nearly_equal_lines(self):

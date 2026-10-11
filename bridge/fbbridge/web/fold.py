@@ -5,12 +5,13 @@ the scripts it ran and their output (measured on the owner's panes); a file list
 thousands of nearly equal lines. Pure: lines are (text, hard_eol); mirror.py sends the rest."""
 import re
 
-CMD_KEEP, CMD_MIN = 2, 4        # a long command: its first lines stay, at least this many more fold
+CMD_KEEP, CMD_MIN = 1, 2        # a long command: its line and this many more stay, at least this many more fold
 OUT_KEEP, OUT_MIN = 8, 8        # a long tool output: likewise
 DIFF_MIN = 6                    # an edit's diff folds from this many lines
 SAME_MIN, SAME_HEAD, SAME_TAIL = 20, 3, 2   # nearly equal lines: from 20, the first 3 and last 2 stay
 BLOB_MIN = 3                    # rows of encoded data
 REPEAT_MIN = 5                  # one line again and again (an input box redrawn into the history)
+BLANK_MIN = 3                   # blank lines in a row before an agent's ⏺ or ⎿ (rows its redraw left empty)
 
 TOOL = re.compile(r"^⏺ [\w.-]+\(")                 # Claude Code's tool call: "⏺ Bash(…"
 RESULT = re.compile(r"^ {2}⎿ ")                     # its result's first line
@@ -95,11 +96,17 @@ def _folds(text, newest):
                 taken[k] = True
 
     def cont(i, indent):
-        """Lines after i that go on (indented at least `indent`), and whether something ends them."""
-        j = i + 1
-        while j < n and text[j].strip() and text[j].startswith(" " * indent) and not RESULT.match(text[j]):
+        """Lines after i that go on (indented at least `indent`, blank lines between them too: a
+        script's), up to the last one that does, and whether a line that does not go on comes
+        after them (blank lines at the history's end may still be inside them)."""
+        j, last = i + 1, i
+        while j < n:
+            if text[j].strip():
+                if not text[j].startswith(" " * indent) or RESULT.match(text[j]):
+                    break
+                last = j
             j += 1
-        return j, j < n
+        return last + 1, j < n
 
     for i, t in enumerate(text):
         if TOOL.match(t):                                    # the command a tool ran, its lines
@@ -145,6 +152,15 @@ def _folds(text, newest):
         if s and j - i >= SAME_MIN and (j < n or not newest) and not text[i].startswith("⏺"):
             fold(i + SAME_HEAD, j - 1 - SAME_TAIL, f"⋯ {j - i - SAME_HEAD - SAME_TAIL} similar lines")
         i = j if s else i + 1
+
+    i = 0                                                    # blank lines in a row before a coding
+    while i < n:                                             # agent's next message or result (its
+        j = i                                                # redraw left them; a file's own stay)
+        while j < n and not text[j].strip() and not taken[j]:
+            j += 1
+        if j - i >= BLANK_MIN and j < n and (text[j].startswith("⏺") or RESULT.match(text[j])):
+            fold(i, j - 1, f"⋯ {j - i} blank lines")
+        i = max(j, i + 1)
     return sorted(out, key=lambda f: f["from"])
 
 
