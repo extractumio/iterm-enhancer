@@ -6,6 +6,7 @@
 // looked at, after a redraw and when scrolling settles; a browser without the API shows none.
 // A path is underlined only when its file is there (panefiles.js), as only then it opens.
 import { tokens } from "./links.js";
+import { joinedText } from "./rowtext.js";
 
 const NEAR = 1;                 // screens above and below the visible one
 // A row goes on in the next one when the program wrapped it or the page re-joined it (a
@@ -38,15 +39,9 @@ export function linkMarks(term, boxes, files) {
   addEventListener("resize", () => later());
   files.listen(() => later());                    // a file turned out to be there
 
-  // One paragraph's text, and where each of its text nodes starts in it.
+  // One paragraph's text (rowtext.js), and where each of its text nodes starts in it.
   function ranges(rows) {
-    let text = "";
-    const pieces = [];
-    for (const row of rows) {
-      const walk = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
-      for (let t = walk.nextNode(); t; t = walk.nextNode()) { pieces.push({ node: t, at: text.length }); text += t.data; }
-      if (row.classList.contains("join")) text += " ";
-    }
+    const { text, pieces } = joinedText(rows);
     // the text node an offset falls in: the last one starting at or before it (an end: before it)
     const point = (offset, end) => {
       let a = 0, b = pieces.length;

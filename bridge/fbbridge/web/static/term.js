@@ -35,6 +35,21 @@ export function wrapsInto(a, b, cols) {
   return a.length + 1 + word > cols - 4;
 }
 
+const NEW_TOKEN = /^(?:\/|~\/|\.\.?\/|[a-z][\w+.-]*:\/\/)/i;   // how a path or an address starts
+
+/** True when the wrap between line a and line b (wrapsInto) broke a word longer than the row:
+ *  a program does so only at the row's edge (wrap-ansi's hard mode, as Claude Code's), so a is
+ *  full and the word across the break is longer than the row's room. Such rows join without a
+ *  space (a long path or address stays one), prose keeps its space; a next row that starts a
+ *  path or an address is one of its own. Characters are counted, not cells: a full row with
+ *  wide characters reads as short and is not glued (a known limit). */
+export function glued(a, b, cols) {
+  if (!a || !cols || a.length < cols - 4) return false;
+  const tail = /\S+$/.exec(a)?.[0], head = /^\S+/.exec(b.trimStart())?.[0];
+  if (NEW_TOKEN.test(head ?? "")) return false;                 // a path or address of its own (a listing, cp a b)
+  return !!tail && !!head && tail.length + head.length > cols - (a.length - a.trimStart().length) - 4;
+}
+
 /** Where blocks of lines end: after the first paragraph end (ends[i]) at least `min` lines
  *  into each block, or after `max` lines without one. Returns the end indexes (exclusive);
  *  lines after the last one are left. */
@@ -157,6 +172,7 @@ export class TermView {
     if (!a) return;
     const join = wrappedHere(a, b, this.cols);
     a.el.classList.toggle("join", join);
+    a.el.classList.toggle("glue", join && glued(a.txt, b.txt, this.cols));
     // a separator at least half of iTerm's width is a line across the whole view; a line pushed
     // to the right by spaces (a notice) loses them on a phone, where they would wrap it
     a.el.classList.toggle("full", a.el.classList.contains("rule") && !a.el.classList.contains("labelled") && a.txt.trim().length * 2 >= this.cols);

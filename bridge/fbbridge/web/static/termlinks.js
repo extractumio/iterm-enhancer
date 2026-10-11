@@ -2,6 +2,7 @@
 // Clicks and taps on web addresses and file paths in the terminal (AC-52): the text under the
 // pointer, taken with the rows it was wrapped over, and what opening it means.
 import { absolutePath, tokenAt } from "./links.js";
+import { joinedText, offsetOf } from "./rowtext.js";
 
 // A row continues on the next one when the program wrapped it (no hard end) or the page
 // re-joined it (Wrap mode); a re-joined hard end stood for a space.
@@ -39,24 +40,11 @@ export function linkAt(x, y) {
   const before = !box || x < box.left ? 1 : 0;
   let first = row;
   while (rowOf(first.previousElementSibling) && continues(first.previousElementSibling)) first = first.previousElementSibling;
-  let text = "", offset = -1;
-  for (let el = first; el; el = rowOf(el.nextElementSibling)) {
-    if (el === row) offset = text.length + offsetIn(row, at.node, at.offset) - before;
-    text += el.textContent;
-    if (!continues(el)) break;
-    if (el.classList.contains("eol")) text += " ";
-  }
-  return offset < 0 ? null : tokenAt(text, offset);
-}
-
-function offsetIn(row, node, offset) {
-  const walk = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
-  let n = 0;
-  for (let t = walk.nextNode(); t; t = walk.nextNode()) {
-    if (t === node) return n + offset;
-    n += t.length;
-  }
-  return n;
+  const rows = [];
+  for (let el = first; el; el = rowOf(el.nextElementSibling)) { rows.push(el); if (!continues(el)) break; }
+  // the text as the underline reads it (rowtext.js); indentation left out at a broken word is no link
+  const { text, pieces } = joinedText(rows), at0 = offsetOf(pieces, at.node, at.offset);
+  return at0 < 0 ? null : tokenAt(text, Math.max(0, at0 - before));
 }
 
 /** Opens a token: an address in a new tab of this browser, a path in File. */

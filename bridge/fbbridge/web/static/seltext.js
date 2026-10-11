@@ -3,7 +3,7 @@
 // (generated content is never copied), so the lines are joined here: a hard end is a newline, a
 // line iTerm wrapped continues, and in Wrap prose re-joined on the screen keeps its space.
 
-/** Joins the selected parts of lines: {text, eol, join, cont}, in order. Padding after a hard
+/** Joins the selected parts of lines: {text, eol, join, glue, cont}, in order. Padding after a hard
  *  end is dropped; in Wrap a re-joined line also drops its indentation. */
 export function joinLines(parts, wrap) {
   let out = "";
@@ -12,7 +12,7 @@ export function joinLines(parts, wrap) {
     if (p.eol) t = t.replace(/\s+$/, "");
     if (wrap && p.cont && i > 0) t = t.replace(/^\s+/, "");
     out += t;
-    if (i < parts.length - 1 && p.eol) out += wrap && p.join ? " " : "\n";
+    if (i < parts.length - 1 && p.eol) out += wrap && p.join ? (p.glue ? "" : " ") : "\n";   // glue: a word broken at the edge
   });
   return out;
 }
@@ -31,7 +31,7 @@ export function selectedText(term) {
     if (ln.contains(range.startContainer)) r.setStart(range.startContainer, range.startOffset);
     if (ln.contains(range.endContainer)) r.setEnd(range.endContainer, range.endOffset);
     const c = ln.classList;
-    parts.push({ text: r.toString(), eol: c.contains("eol"), join: c.contains("join"), cont: c.contains("cont") });
+    parts.push({ text: r.toString(), eol: c.contains("eol"), join: c.contains("join"), glue: c.contains("glue"), cont: c.contains("cont") });
   }
   return parts.length ? joinLines(parts, term.classList.contains("wrap")) : null;
 }

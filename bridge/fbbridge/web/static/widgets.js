@@ -6,6 +6,7 @@
 // history's or the screen's children: term.js counts them as rows and blocks.
 import { Folds } from "./folds.js";
 import { nearRows } from "./linkmarks.js";
+import { joinedText } from "./rowtext.js";
 import { imagePaths, scan } from "./outparse.js";
 import { figure, hostOf, imageButtons, loadImage, loadStyles, regionWidget, zoomDiagram, zoomImage } from "./widgetui.js";
 
@@ -321,7 +322,8 @@ export class Widgets {
     let line = [];
     const flush = () => {
       const last = line.at(-1);
-      const text = line.map((el) => el.textContent.replace(/[︎️]/g, "")).join("");
+      // a word the program broke at the row's edge is one again (rowtext.js)
+      const text = joinedText(line).text.replace(/[︎️]/g, "");
       line = [];
       // not a widget's own row, a drawn table's or an agent's input box and footer
       if (!last || this.hosts.has(last) || this.folds.has(last) || last.closest(".inbox, .foot") || BOXED.test(text)) return;
@@ -345,7 +347,7 @@ export class Widgets {
     };
     for (const el of rows) {
       line.push(el);
-      if (el.classList.contains("eol")) flush();
+      if (el.classList.contains("eol") && !el.classList.contains("glue")) flush();   // a line goes on only over a broken word
     }
     flush();
     for (const el of this.imageHosts) if (!hosts.has(el) && !this.hosts.has(el) && !this.folds.has(el)) el.shadowRoot?.replaceChildren(document.createElement("slot"));

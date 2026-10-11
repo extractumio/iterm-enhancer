@@ -57,7 +57,7 @@ export async function open(browser, { renderers = true, agent = false, history =
     const [root, rel] = p.startsWith("/fb/") ? [DIST, p.slice(4)] : [STATIC, p === "/" ? "index.html" : p];
     if (p === "/fb/renderers.js" && !opts.renderers) return route.fulfill({ status: 502, body: "fbd is not running" });
     const f = path.join(root, path.normalize(rel));
-    if (!f.startsWith(root) || !fs.existsSync(f)) return route.fulfill({ status: 404, body: "" });
+    if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) return route.fulfill({ status: 404, body: "" });   // View's page is not served here
     let body = fs.readFileSync(f);
     if (p === "/") body = body.toString().replace("__BUILD__", "test");
     return route.fulfill({ contentType: TYPES[f.split(".").pop()] ?? "application/octet-stream", body,
@@ -354,6 +354,45 @@ export async function webWidgets(browser, name = "") {
   check(`${at} a document a coding agent's tool printed (indented) is rendered as Markdown, its fence as code`,
     md2.h2 === "Signed releases" && md2.li === 2 && md2.pres === 1, JSON.stringify(md2));
   await ind.page.close();
+
+  // a path longer than the row, broken by the program at its edge: one path again
+  const dir = "/tmp/" + "deep-folder-name-".repeat(5) + "x", long = `${dir}/drill-results.png`;
+  const cut = 78, broken = await open(browser, { screen: ["Here it is:", `  ${long.slice(0, cut)}`, `  ${long.slice(cut)}`, "done"],
+    files: { [dir]: ["drill-results.png"] } });
+  await broken.page.waitForFunction(() => [...document.querySelectorAll("#screen .ln")].some((el) => el.shadowRoot?.querySelector(".wgi button")), null, { timeout: 8000 }).catch(() => {});
+  await broken.page.waitForFunction(() => CSS.highlights?.get("lnk")?.size, null, { timeout: 8000 }).catch(() => {});   // links after image buttons
+  const second = await broken.page.evaluate(() => {
+    const row = [...document.querySelectorAll("#screen .ln")][2], walk = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+    let t = walk.nextNode();
+    while (t && !t.data.includes("drill")) t = walk.nextNode();
+    const r = document.createRange(), i = t.data.indexOf("drill");
+    r.setStart(t, i + 2); r.setEnd(t, i + 3);
+    const b = r.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  });
+  const mod = process.platform === "darwin" ? "Meta" : "Control";
+  await broken.page.keyboard.down(mod);
+  await broken.page.mouse.click(second.x, second.y);
+  await broken.page.keyboard.up(mod);
+  await broken.page.waitForFunction(() => document.getElementById("file").getAttribute("src"), null, { timeout: 5000 }).catch(() => {});
+  const openedLong = await broken.page.evaluate(() => new URLSearchParams(new URL(document.getElementById("file").src || "http://x/").search).get("view"));
+  const glue = await broken.page.evaluate(() => {
+    const rows = [...document.querySelectorAll("#screen .ln")];
+    const btn = rows.map((el) => el.shadowRoot?.querySelector(".wgi button")).find(Boolean);
+    const lnk = [...(CSS.highlights?.get("lnk") ?? [])].map((r) => [rows.indexOf(r.startContainer.parentElement.closest(".ln")), rows.indexOf(r.endContainer.parentElement.closest(".ln"))]);
+    const sel = getSelection(), r = document.createRange();
+    r.setStart(rows[1], 0); r.setEnd(rows[2], rows[2].childNodes.length);
+    sel.removeAllRanges(); sel.addRange(r);
+    return { glue: rows[1].classList.contains("glue"), path: btn?.dataset.path, lnk,
+      shown: getComputedStyle(rows[1], "::after").content === "none" && rows[2].querySelector(".lead") && getComputedStyle(rows[2].querySelector(".lead")).display === "none" };
+  });
+  await broken.page.evaluate(() => { window.copied = []; document.addEventListener("copy", (e) => window.copied.push(e.clipboardData?.getData("text/plain"))); });
+  await broken.page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");
+  const copiedLong = await broken.page.evaluate(() => window.copied.at(-1));
+  check(`${at} a path the program broke at the row's edge is one path again: shown without a space, its image button, one underline, a click on its second half, copied without a space`,
+    glue.glue && glue.shown && glue.path === long && glue.lnk.some(([a, b]) => a === 1 && b === 2) && openedLong === long && copiedLong?.trim() === long,
+    JSON.stringify({ glue, openedLong, copiedLong }));
+  await broken.page.close();
 
   // fbd not running: the widget says so, and the rows show as text
   const off = await open(browser, { renderers: false });
