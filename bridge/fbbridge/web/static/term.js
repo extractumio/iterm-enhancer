@@ -12,18 +12,19 @@ const BOXED = /^[│┃║╎┆|]|[│┃║╎┆|]$/; // rows of a drawn box:
 // Re-flowing that on a narrow screen leaves ragged half-lines. A hard end is treated as a
 // wrap (and re-joined in Wrap mode) when the next line's first word would not have fit:
 // that is exactly the rule the program used to break the line.
-function wrappedHere(a, b, cols) {
+function wrappedHere(a, b, cols, boxed) {
   if (!a || !b || !a.data.e || !cols) return false;
   if (a.el.classList.contains("rule") || b.el.classList.contains("rule")) return false;
-  return wrapsInto(a.txt, b.txt, cols);
+  return boxed ? inputWraps(a.txt, b.txt, cols, !!b.el.querySelector(".cur")) : wrapsInto(a.txt, b.txt, cols);
 }
 
 // Lines that start something new: a list item, an agent's mark (⏺ ⎿ ● ❯ ✻ · and other symbols
 // and emoji) or a numbered line of a listing or a diff ("151:", "12 +", "694-}").
 const STARTS_NEW = /^(?:[-*•+>]\s|\d+[.)]\s|[\u00b7\u2190-\u2bff\u{1f000}-\u{1faff}]|\d+(?::|\s*[-+]))/u;
 
-/** True when line a's hard end is a wrap of the text that goes on in line b. */
-export function wrapsInto(a, b, cols) {
+/** True when line a's hard end is a wrap of the text that goes on in line b; room: the most
+ *  characters a row of it holds (a program's prose leaves a few cells free). */
+export function wrapsInto(a, b, cols, room = cols - 4) {
   if (!a || !b.trim()) return false;
   if (BOXED.test(a.trim()) || BOXED.test(b.trim())) return false;
   const next = b.trimStart();
@@ -32,7 +33,15 @@ export function wrapsInto(a, b, cols) {
   const indent = (t) => t.length - t.trimStart().length;
   if (indent(a) > cols / 4 || indent(b) > cols / 4) return false;
   const word = next.split(/\s/, 1)[0].length;
-  return a.length + 1 + word > cols - 4;
+  return a.length + 1 + word > room;
+}
+
+/** The same in a coding agent's input box, as Claude Code wraps what is typed there (measured):
+ *  its rows hold cols - 2 characters, prompt included, and a space typed at a full row's end
+ *  puts the cursor alone on the next row, which goes on the same line until a word comes. */
+export function inputWraps(a, b, cols, cursor) {
+  if (!b.trim()) return cursor && !!a && a.length >= cols - 2;
+  return wrapsInto(a, b, cols, cols - 2);
 }
 
 const NEW_TOKEN = /^(?:\/|~\/|\.\.?\/|[a-z][\w+.-]*:\/\/)/i;   // how a path or an address starts
@@ -170,7 +179,7 @@ export class TermView {
   link(i) {
     const a = this.at(i), b = this.at(i + 1);
     if (!a) return;
-    const join = wrappedHere(a, b, this.cols);
+    const join = wrappedHere(a, b, this.cols, this.boxed?.has(a.el) && this.boxed.has(b.el));
     a.el.classList.toggle("join", join);
     a.el.classList.toggle("glue", join && glued(a.txt, b.txt, this.cols));
     // a separator at least half of iTerm's width is a line across the whole view; a line pushed
@@ -263,18 +272,31 @@ export class TermView {
     const was = this.box;
     if (!at && cursor < 0 && was && was.end < rows.length && rows[was.top]?.el.classList.contains("rule") && rows[was.bottom]?.el.classList.contains("rule")) at = was;
     this.box = at;
+    this.relinkBox(at ? rows.slice(at.top + 1, at.bottom) : []);
     if (!at) return null;
     const below = rows.slice(at.bottom + 1, at.end + 1);
     if (cursor >= 0 && typedEnd(rows[cursor].data) <= 2) this.idle = new Set(below.map((r) => statusKey(r.txt)));   // only the prompt (a faint suggestion is not typed)
     for (const r of below) r.el.classList.toggle("status", !!this.idle?.has(statusKey(r.txt)));
     return at;
   }
+  // The rows typed in the box re-join by the input's own rule (inputWraps); rows that left it
+  // by the general one.
+  relinkBox(rows) {
+    const old = this.boxed ?? new Set();
+    this.boxed = new Set(rows.map((r) => r.el));
+    if (old.size === this.boxed.size && [...old].every((el) => this.boxed.has(el))) return;
+    const base = this.hist.length;
+    for (const r of new Set([...rows, ...this.screen.filter((x) => x && old.has(x.el))])) {
+      const i = this.screen.indexOf(r);
+      if (i >= 0) { this.link(base + i - 1); this.link(base + i); }
+    }
+  }
   /** The shown pane runs a coding agent (or no longer): its input box is drawn as a panel. */
   setAgent(on) {
     if (this.agent === on) return;
     this.agent = on;
     this.box = this.idle = null;
-    this.keepBottom(() => this.groupScreen());
+    this.keepBottom(() => { this.relinkBox([]); this.groupScreen(); });
   }
 
   /** Typing: for 3 s, and at once, keep the cursor's row in sight (an agent's input box

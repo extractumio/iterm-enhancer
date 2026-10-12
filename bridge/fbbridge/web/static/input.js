@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Keyboard, paste and the hot keys panel. Everything typed ends up in send(bytes).
+import { HeldDelete, WORD } from "./heldelete.js";
 import { ctrlChar, encodeKey } from "./keys.js";
 import { selectedText } from "./seltext.js";
 import { copyByCommand, keepSelectionAt } from "./touchcopy.js";
@@ -25,7 +26,7 @@ const FN_ROWS = [
 
 const HOLD = 400, REPEAT = 33;   // ms: as a keyboard's repeat
 const SLIDE_AFTER = 250, SLIDE_BEFORE = 600;   // ms a finger rests on the input before sliding moves the cursor (iOS's menu comes at ~500)
-const DELETES = { deleteContentBackward: "\x7f", deleteWordBackward: "\x7f", deleteContentForward: "\x1b[3~" };   // a word as one backspace: ^W is a search in nano
+const DELETES = { deleteContentBackward: "\x7f", deleteWordBackward: "\x7f", deleteContentForward: "\x1b[3~" };   // a word as one backspace where ^W is not a word (nano: search)
 // On a touch screen the keyboard field keeps one invisible character: iOS repeats a held delete
 // only while there is something to delete, and the field is emptied after every key.
 const KEEP = "\u200b";
@@ -36,6 +37,7 @@ export class Input {
   constructor({ kbd, kbdButton, term, panel, pasteDialog, send, options }) {
     Object.assign(this, { kbd, kbdButton, term, panel, pasteDialog, send, options });
     this.mods = { ctrl: false, alt: false };
+    this.held = new HeldDelete();
     this.buildPanel();
     this.bind();
   }
@@ -73,15 +75,18 @@ export class Input {
           if (char === held) held.timer = setInterval(() => this.type(held.key, "keydown"), REPEAT);
         }, HOLD);
       } else stopChar();
-      const seq = encodeKey(e, this.options.appCursor());
-      if (seq !== null) { e.preventDefault(); this.type(this.withMods(seq), "keydown", e); }
+      let seq = encodeKey(e, this.options.appCursor());
+      if (seq === "\x7f" && e.key === "Backspace") seq = this.backspace(e.repeat);   // held: words after a while
+      if (seq !== null) { e.preventDefault(); if (seq) this.type(this.withMods(seq), "keydown", e); }
     });
     k.addEventListener("input", (e) => {
       if (e.isComposing) return;
       if (touchable && e.inputType?.startsWith("delete")) {           // iOS's delete, held or not
         refill();
         // only a key's delete reaches the pane; a cut or a composition's own delete (an IME) does not
-        return DELETES[e.inputType] ? this.type(this.withMods(DELETES[e.inputType]), "input", e) : undefined;
+        const del = DELETES[e.inputType];
+        const out = del !== "\x7f" ? del : e.inputType === "deleteWordBackward" && this.options.wordDeletes?.() ? WORD : this.backspace();
+        return out ? this.type(this.withMods(out), "input", e) : undefined;
       }
       const text = e.inputType === "insertLineBreak" ? "\r" : k.value.replaceAll(KEEP, "");
       k.value = "";
@@ -182,6 +187,11 @@ export class Input {
     // With a mouse, a click that does not end a text selection gives the terminal the keyboard.
     const mouse = matchMedia("(hover: hover) and (pointer: fine)");
     this.term.addEventListener("mouseup", () => { if (mouse.matches && !String(getSelection())) this.focus(); });
+    // and moves the cursor there, as a tap does (⌥-click with any pointer); ⌘-click opens a link
+    this.term.addEventListener("click", (e) => {
+      if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || !(mouse.matches || e.altKey) || String(getSelection()) || inWidget(e)) return;
+      this.options.tapMove?.(e.clientX, e.clientY);
+    });
     // On a touch screen a short tap opens the keyboard; a long press selects text and a moving
     // finger scrolls, so neither of those does. iOS opens the keyboard only for a focus() made
     // inside the touch handler itself.
@@ -234,6 +244,11 @@ export class Input {
   }
 
   focus() { this.kbd.focus({ preventScroll: true }); }
+
+  /** One backspace of a hold (repeat: the key's flag; a phone's are told by time): a character,
+   *  or after a while a word where the pane takes Ctrl+W as one (a coding agent's input, a
+   *  shell's prompt), or "" between two words. */
+  backspace(repeat) { return this.held.next(repeat, !!this.options.wordDeletes?.()); }
 
   paste(text) {
     const clean = text.replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "").replace(/\n/g, "\r");

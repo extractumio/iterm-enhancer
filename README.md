@@ -182,7 +182,9 @@ and sign in:
   on their way go to the pane together. On a phone
   two floating buttons open the keyboard and the hot keys; in a coding agent's pane its input is a
   panel and its status lines wait behind an ⓘ button; a long press in it offers Paste, a finger
-  resting and then sliding moves the cursor, and a held delete repeats. On a phone lines
+  resting and then sliding moves the cursor, and a held delete repeats. A click (a tap on a
+  phone) on a coding agent's input or a shell's prompt moves the cursor there; a delete held
+  there goes by words after 1.5 s. On a phone lines
   re-flow to the screen (**Wrap**); **Grid** keeps iTerm2's layout, **Fit** scales it to the
   width, **Resize iTerm to this screen** (⋯) changes the Mac's window until you restore it.
   With a keyboard attached to a phone or a tablet, ⌘C copies the selected terminal text and ⌘V

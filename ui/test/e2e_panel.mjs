@@ -21,6 +21,7 @@ import { webClip } from "./e2e_web_clip.mjs";
 import { webWidgets } from "./e2e_web_widgets.mjs";
 import { webMarks } from "./e2e_web_marks.mjs";
 import { webTouch } from "./e2e_web_touch.mjs";
+import { webEdit } from "./e2e_web_edit.mjs";
 import { sessionTools } from "./e2e_session_tools.mjs";
 import { recoveryTools } from "./e2e_recovery.mjs";
 import { recoveryUpgrade } from "./e2e_recovery_upgrade.mjs";
@@ -469,6 +470,7 @@ try {
   await webWidgets(browser);
   await webMarks(browser);
   await webTouch(browser);
+  await webEdit(browser);
 
   // AC-28 an outdated link says so and stops retrying
   const op = await browser.newPage();

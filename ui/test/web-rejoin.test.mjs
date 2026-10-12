@@ -1,7 +1,7 @@
 // The web app's Wrap mode (AC-52): which hard line ends are a program's own wrap of one line.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { glued, wrapsInto } from "../../bridge/fbbridge/web/static/term.js";
+import { glued, inputWraps, wrapsInto } from "../../bridge/fbbridge/web/static/term.js";
 
 const COLS = 131;
 
@@ -39,4 +39,22 @@ test("a word longer than the row, broken by the program at its edge, joins witho
   assert.equal(glued(listed(1), listed(2), 80), false, "two paths of a listing, each on its line");
   assert.equal(glued("  cp /Users/alex/shots/build-2026-10-11/simulator/iphone-17/a.png /Users/alex/x.png", "  /Users/alex/final/home-screen.png", 80), false, "cp a b wrapped at its space");
   assert.equal(glued("  " + "x".repeat(76), "  https://devbox.example/next", 80), false, "an address of its own");
+});
+
+// Claude Code's input box at 80 columns, as measured in iTerm2: rows of at most 78 characters
+// (its prompt included); a word that did not fit went on the next row, a line the user ended stays.
+const ROW = "❯ " + Array(7).fill("abcdefghi").join(" ") + " abcdef";   // 78: full
+
+test("in an agent's input box a row re-joins by Claude Code's own wrap (cols - 2)", () => {
+  assert.equal(ROW.length, 78);
+  assert.equal(inputWraps(ROW.slice(0, 71), "  abcdefg", 80, true), true);         // 71 + 1 + 7 > 78: wrapped
+  assert.equal(inputWraps("❯ " + "w".repeat(70), "  abcde", 80, false), false);  // 72 + 1 + 5 fits: the user's own line end
+  assert.equal(wrapsInto("❯ " + "w".repeat(70), "  abcde", 80), true);           // the general rule (cols - 4) glued it
+});
+
+test("a space typed at a full row's end leaves the cursor alone on the next row: still the same line", () => {
+  assert.equal(inputWraps(ROW, "", 80, true), true);
+  assert.equal(inputWraps(ROW, "", 80, false), false);                          // an empty row without the cursor ends it
+  assert.equal(inputWraps(ROW.slice(0, 60), "", 80, true), false);              // a short row: a new line the user began
+  assert.equal(inputWraps(ROW, "  x", 80, true), true);                         // the next letter: the same line still
 });

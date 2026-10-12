@@ -40,9 +40,11 @@ const files = uploads({ sid: () => st.sid, paste: (text) => input.paste(text), t
 const view = new TermView({ term: $("term"), hist: $("hist"), screen: $("screen"), note: $("note"),
   bottomBtn: $("bottom"), paused: $("paused"), send, keep: touch.matches ? 2000 : Infinity });
 const input = new Input({ kbd: $("kbd"), kbdButton: $("kbdbtn"), term: $("term"), panel: $("hotkeys"), pasteDialog: $("pastebox"),
-  send: (data, path, e) => { send({ t: "in", data, ...trace.keyFields(data, path, e) }); if (data.includes("\r")) views.commandSent(); },
+  send: (data, path, e) => { send({ t: "in", data, ...trace.keyFields(data, path, e) }); if (data.includes("\r")) { views.commandSent(); st.ran = true; } },
   options: { appCursor: () => st.appCursor, bracketed: () => st.bracketed, onTyped: () => view.typed(), status: toast, pasteImage: files.pasteImage, pickFile,
-    tapLink: (x, y) => tapLink(x, y), tapMove: (x, y) => tapMove(x, y), cellWidth: () => view.charRatio() * parseFloat(getComputedStyle($("term")).fontSize) } });
+    tapLink: (x, y) => tapLink(x, y), tapMove: (x, y) => tapMove(x, y), cellWidth: () => view.charRatio() * parseFloat(getComputedStyle($("term")).fontSize),
+    // Ctrl+W deletes a word: in an agent's input box; at a shell's prompt, not after an Enter until the list says the shell is back (nano: search)
+    wordDeletes: () => { const it = st.sid && findItem(st.groups, st.sid)?.item; return !!(it?.agent ? view.box : it?.shell && !st.ran); } } });
 copyButton($("copyfab"), $("term"), (text) => input.copySelection(text));
 
 // The files the output names, on the pane's host: a path is a link, an image gets a button, only
@@ -61,7 +63,7 @@ function tapLink(x, y) {
   return !(at && cur.row === at.row) && openAt(x, y);
 }
 
-// A tap (or ⌥-click) on the input moves the cursor there with arrow keys; across rows only in
+// A tap or a click (input.js) on the input moves the cursor there with arrow keys; across rows only in
 // a coding agent's pane, where ↑ and ↓ move in the input instead of recalling shell history.
 // Only where arrows edit a line: a coding agent's input or a shell's prompt (not htop, less, mc).
 // Rows only inside one box drawn between two rules: ↑ on an input's first line, or anywhere
@@ -77,7 +79,6 @@ function tapMove(x, y) {
   if (seq) send({ t: "in", data: seq, ...trace.keyFields(seq, "tap") });
   if (seq) view.typed();
 }
-$("term").addEventListener("click", (e) => { if (e.altKey && !String(getSelection())) tapMove(e.clientX, e.clientY); });
 
 // On a touch screen the invisible keyboard field lies over the cursor's row, so a long press
 // there gets iOS's own Paste (text, or an image); elsewhere it is out of the way.
@@ -231,7 +232,7 @@ function onMessage(m) {
   trace.received(m);
   bookmarks.seen(m);
   switch (m.t) {
-    case "layout": st.groups = m.groups; reminders.layout(m.groups); drawNav(); tools.showMerge(m.groups); break;
+    case "layout": st.groups = m.groups; st.ran = false; reminders.layout(m.groups); drawNav(); tools.showMerge(m.groups); break;
     case "theme": applyTheme(m.theme); break;
     case "hist":                                    // a reset: another pane, or its scrollback cleared
       if (m.mode === "reset") widgets.folds.reset();
