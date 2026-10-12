@@ -71,8 +71,9 @@ export async function webEdit(browser) {
   await page.mouse.click(target.x, target.y);
   await page.waitForTimeout(150);
   const moves = sent.slice(clicked).filter((m) => m.t === "in").map((m) => m.data);
-  check(`${at} a click on the input moves the cursor there (up a row, left to the word clicked)`,
-    JSON.stringify(moves) === JSON.stringify(["\x1b[A" + "\x1b[D".repeat(5)]), JSON.stringify(moves));
+  // along the input's text (boxnav.js): from the end of "second line" (offset 23 + 11) back to "line" (6)
+  check(`${at} a click on the input moves the cursor there, along its text with ←`,
+    JSON.stringify(moves) === JSON.stringify(["\x1b[D".repeat(28)]), JSON.stringify(moves.map((m) => m.length)));
   const meta = sent.length;
   await page.keyboard.down(process.platform === "darwin" ? "Meta" : "Control");
   await page.mouse.click(target.x, target.y);

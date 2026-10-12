@@ -2,7 +2,8 @@
 import { Input } from "./input.js";
 import { findItem, metaLine, profileBar, renderNav, stateIcon } from "./nav.js";
 import { textForm } from "./render.js";
-import { arrowsTo, cellAt, cursorCell, inOneBox, typedEnd } from "./cursor.js";
+import { arrowsTo, cellAt, cursorCell, typedEnd } from "./cursor.js";
+import { BoxMoves } from "./boxnav.js";
 import { navTools } from "./navtools.js";
 import { bindReorder, ordered } from "./reorder.js";
 import { linkMarks } from "./linkmarks.js";
@@ -41,9 +42,10 @@ const view = new TermView({ term: $("term"), hist: $("hist"), screen: $("screen"
   bottomBtn: $("bottom"), paused: $("paused"), send, keep: touch.matches ? 2000 : Infinity });
 const input = new Input({ kbd: $("kbd"), kbdButton: $("kbdbtn"), term: $("term"), panel: $("hotkeys"), pasteDialog: $("pastebox"),
   send: (data, path, e) => { send({ t: "in", data, ...trace.keyFields(data, path, e) }); if (data.includes("\r")) { views.commandSent(); st.ran = true; } },
-  options: { appCursor: () => st.appCursor, bracketed: () => st.bracketed, onTyped: () => view.typed(), status: toast, pasteImage: files.pasteImage, pickFile,
+  options: { appCursor: () => st.appCursor, bracketed: () => st.bracketed, onTyped: (line) => { view.typed(); if (!line) boxMoves.forget(); }, status: toast, pasteImage: files.pasteImage, pickFile,
     tapLink: (x, y) => tapLink(x, y), tapMove: (x, y) => tapMove(x, y), cellWidth: () => view.charRatio() * parseFloat(getComputedStyle($("term")).fontSize),
     // Ctrl+W deletes a word: in an agent's input box; at a shell's prompt, not after an Enter until the list says the shell is back (nano: search)
+    lineMove: (d, repeat) => (findItem(st.groups, st.sid)?.item.agent ? boxMoves.line(d, st.appCursor, repeat) : null),
     wordDeletes: () => { const it = st.sid && findItem(st.groups, st.sid)?.item; return !!(it?.agent ? view.box : it?.shell && !st.ran); } } });
 copyButton($("copyfab"), $("term"), (text) => input.copySelection(text));
 
@@ -60,22 +62,23 @@ const openAt = bindLinks($("term"), { paneInfo: () => views.paneInfo(), openFile
 function tapLink(x, y) {
   const it = st.sid && findItem(st.groups, st.sid)?.item;
   const cur = (it?.agent || it?.shell) && cursorCell($("screen")), at = cur && cellAt($("screen"), x, y);
-  return !(at && cur.row === at.row) && openAt(x, y);
+  return !(at && (cur.row === at.row || (it.agent && boxMoves.has(x, y)))) && openAt(x, y);
 }
 
-// A tap or a click (input.js) on the input moves the cursor there with arrow keys; across rows only in
-// a coding agent's pane, where ↑ and ↓ move in the input instead of recalling shell history.
-// Only where arrows edit a line: a coding agent's input or a shell's prompt (not htop, less, mc).
-// Rows only inside one box drawn between two rules: ↑ on an input's first line, or anywhere
-// in a shell, would recall history instead of moving.
+// A tap or a click (input.js) on the input moves the cursor there with arrow keys: in a coding
+// agent's input box by its text (boxnav.js: ← and → only, as the page draws its lines), on a
+// shell's prompt along the row. Only where arrows edit a line (not htop, less, mc); never ↑ or ↓,
+// which would recall history.
+const boxMoves = new BoxMoves(view, $("screen"));
 function tapMove(x, y) {
   const found = st.sid && findItem(st.groups, st.sid);
   if (!found?.item.agent && !found?.item.shell) return;
+  const inBox = found.item.agent ? boxMoves.to(x, y, st.appCursor) : null;
+  if (inBox !== null) { if (inBox) { send({ t: "in", data: inBox, ...trace.keyFields(inBox, "tap") }); view.typed(); } return; }
   const from = cursorCell($("screen")), to = cellAt($("screen"), x, y);
   // right of the cursor only as far as the typed text: → over a suggestion would take it
   if (from && to && to.row === from.row && to.col > from.col) to.col = Math.max(from.col, Math.min(to.col, typedEnd(view.screen[to.row]?.data)));
-  const vertical = !!found.item.agent && !!from && !!to && inOneBox($("screen"), from.row, to.row);
-  const seq = arrowsTo(from, to, { vertical, appCursor: st.appCursor });
+  const seq = arrowsTo(from, to, { appCursor: st.appCursor });
   if (seq) send({ t: "in", data: seq, ...trace.keyFields(seq, "tap") });
   if (seq) view.typed();
 }

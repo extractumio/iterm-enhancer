@@ -43,7 +43,7 @@ export class Input {
   }
 
   // path and e: how it was typed and when, for the latency trace (trace.js)
-  type(text, path = "other", e = null) { if (text) { this.send(text, path, e); this.options.onTyped(); } }
+  type(text, path = "other", e = null) { if (text) { this.send(text, path, e); this.options.onTyped(path === "line"); } }
 
   withMods(text) {
     let out = text;
@@ -77,7 +77,10 @@ export class Input {
       } else stopChar();
       let seq = encodeKey(e, this.options.appCursor());
       if (seq === "\x7f" && e.key === "Backspace") seq = this.backspace(e.repeat);   // held: words after a while
-      if (seq !== null) { e.preventDefault(); if (seq) this.type(this.withMods(seq), "keydown", e); }
+      const line = /^Arrow(Up|Down)$/.test(e.key) && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && !this.mods.ctrl && !this.mods.alt
+        ? this.options.lineMove?.(e.key === "ArrowUp" ? -1 : 1, e.repeat) ?? null : null;   // by the page's lines in an agent's input (boxnav.js)
+      if (line !== null) seq = line;
+      if (seq !== null) { e.preventDefault(); if (seq) this.type(this.withMods(seq), line ? "line" : "keydown", e); }
     });
     k.addEventListener("input", (e) => {
       if (e.isComposing) return;
@@ -335,10 +338,11 @@ export class Input {
       const b = e.target.closest("button.key");
       if (!b || !REPEATS(b.dataset.action) || e.button > 0) return;
       stop();
-      const seq = this.withMods(this.seqOf(b.dataset.action));
+      const a = b.dataset.action, live = /^arrow:[AB]$/.test(a) && !this.mods.ctrl && !this.mods.alt;   // ↑ ↓ by the page's lines: each repeat from where the cursor is
+      const seq = this.withMods(this.seqOf(a));
       held = { b, done: false };
-      this.type(seq, "hotkey", e);
-      held.timer = setTimeout(() => { if (!held.done) held.timer = setInterval(() => this.type(seq, "hotkey"), REPEAT); }, HOLD);
+      this.type(seq, live ? "line" : "hotkey", e);
+      held.timer = setTimeout(() => { if (!held.done) held.timer = setInterval(() => this.type(live ? this.seqOf(a, true) : seq, live ? "line" : "hotkey"), REPEAT); }, HOLD);
     });
     for (const end of ["pointerup", "pointercancel", "pointerleave"]) this.panel.addEventListener(end, stop);
     this.panel.addEventListener("click", (e) => {
@@ -355,8 +359,9 @@ export class Input {
     });
   }
 
-  seqOf(a) {
-    return a.startsWith("arrow:") ? (this.options.appCursor() ? "\x1bO" : "\x1b[") + a.slice(6) : a;
+  seqOf(a, repeat = false) {
+    const line = (a === "arrow:A" || a === "arrow:B") && !this.mods.ctrl && !this.mods.alt ? this.options.lineMove?.(a === "arrow:A" ? -1 : 1, repeat) : null;
+    return line ?? (a.startsWith("arrow:") ? (this.options.appCursor() ? "\x1bO" : "\x1b[") + a.slice(6) : a);
   }
 
   syncMods() {

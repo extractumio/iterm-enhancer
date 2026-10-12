@@ -105,6 +105,7 @@ export class TermView {
     this.oldest = 0; this.truncated = false; this.loading = false;
     this.top = 0;            // the screen's first line
     this.queued = []; this.pending = null;
+    this.box = this.idle = null;                 // another pane's (or a cleared screen's) input box and status lines
     this.histEl.replaceChildren(); this.screenEl.replaceChildren();
     this.note.hidden = true;
     this.onReset?.();

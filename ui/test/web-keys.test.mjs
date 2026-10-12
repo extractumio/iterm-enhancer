@@ -35,13 +35,12 @@ test("a pasted image's path is one shell word", async () => {
   assert.equal(shellWord("/tmp/$(rm -rf ~).png"), "'/tmp/$(rm -rf ~).png'");
 });
 
-test("a tap on the input becomes arrow keys; rows only where asked, at most 10", async () => {
+test("a tap on a shell's input becomes ← or → along its row; another row is nothing", async () => {
   const { arrowsTo } = await import("../../bridge/fbbridge/web/static/cursor.js");
   assert.equal(arrowsTo({ row: 5, col: 10 }, { row: 5, col: 7 }), "\x1b[D\x1b[D\x1b[D");
   assert.equal(arrowsTo({ row: 5, col: 2 }, { row: 5, col: 4 }, { appCursor: true }), "\x1bOC\x1bOC");
   assert.equal(arrowsTo({ row: 5, col: 2 }, { row: 3, col: 2 }), "", "another row in a shell: nothing");
-  assert.equal(arrowsTo({ row: 5, col: 2 }, { row: 4, col: 6 }, { vertical: true }), "\x1b[A\x1b[C\x1b[C\x1b[C\x1b[C");
-  assert.equal(arrowsTo({ row: 20, col: 0 }, { row: 5, col: 0 }, { vertical: true }), "", "too far");
+  assert.equal(arrowsTo({ row: 5, col: 0 }, { row: 5, col: 121 }), "", "too far");
   assert.equal(arrowsTo(null, { row: 1, col: 1 }), "");
   assert.equal(arrowsTo({ row: 1, col: 1 }, { row: 1, col: 1 }), "");
 });

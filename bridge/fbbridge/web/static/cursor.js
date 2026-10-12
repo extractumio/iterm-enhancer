@@ -43,19 +43,6 @@ export function cursorCell(screen) {
   return { row: rowsOf(screen).indexOf(row), col: charsBefore(row, first, 0) };
 }
 
-/** Whether rows `a` and `b` of the screen lie inside one box drawn between two rules (an
- *  agent's input), so ↑ and ↓ move within it rather than recalling history. */
-export function inOneBox(screen, a, b) {
-  const rows = rowsOf(screen);
-  const isRule = (i) => rows[i]?.classList.contains("rule");
-  const lo = Math.min(a, b), hi = Math.max(a, b);
-  for (let i = lo; i <= hi; i++) if (isRule(i)) return false;
-  let above = lo - 1, below = hi + 1;
-  while (above >= 0 && !isRule(above)) above--;
-  while (below < rows.length && !isRule(below)) below++;
-  return above >= 0 && below < rows.length && below - above <= 12;
-}
-
 const FAINT = 2, CURSOR = 256;
 
 /** The column after the last character the user typed on a row ({r: runs} as render.js gets
@@ -73,12 +60,11 @@ export function typedEnd(data) {
   return end;
 }
 
-/** The arrow keys from one cell to another: "" when the move is not one to make. Rows only
- *  when `vertical` (a coding agent's input; in a shell ↑ and ↓ recall history), at most 10. */
-export function arrowsTo(from, to, { vertical = false, appCursor = false } = {}) {
-  if (!from || !to) return "";
-  const dy = to.row - from.row, dx = to.col - from.col;
-  if ((dy && !vertical) || Math.abs(dy) > 10 || Math.abs(dx) > 120) return "";
-  const key = (c) => (appCursor ? "\x1bO" : "\x1b[") + c;
-  return (dy < 0 ? key("A") : key("B")).repeat(Math.abs(dy)) + (dx < 0 ? key("D") : key("C")).repeat(Math.abs(dx));
+/** The ← or → keys from one cell to another on its row: "" when the move is not one to make (another
+ *  row: ↑ and ↓ would recall a shell's history; a coding agent's input moves by its text, boxnav.js). */
+export function arrowsTo(from, to, { appCursor = false } = {}) {
+  if (!from || !to || to.row !== from.row) return "";
+  const dx = to.col - from.col;
+  if (Math.abs(dx) > 120) return "";
+  return ((appCursor ? "\x1bO" : "\x1b[") + (dx < 0 ? "D" : "C")).repeat(Math.abs(dx));
 }
