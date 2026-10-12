@@ -130,7 +130,8 @@ test("a document a coding agent's tool printed, indented: found, and its text wi
   const r = regions(rows(out.join("\n")));
   assert.equal(r.length, 1);
   assert.equal(r[0].kind, "markdown");
-  assert.ok(r[0].text.startsWith("How releases") || r[0].text.startsWith("## Signed"), r[0].text.slice(0, 40));
+  assert.equal(r[0].from, 0, "from the tool's first line, its mark read as indentation");
+  assert.ok(r[0].text.startsWith("# Releasing\n"), r[0].text.slice(0, 40));
   assert.ok(!/^ {4}/m.test(r[0].text.split("\n").filter((t) => !t.startsWith("make")).join("\n")), "no line indented 4 spaces: Markdown would take it for code");
 });
 
@@ -152,4 +153,33 @@ test("a shell script's comment block a coding agent's tool printed is not Markdo
   assert.equal(found(changelog)[0]?.kind, "markdown", "a compact changelog");
   const readme = "# App\nA small `tool`.\n## Install\n- run `make`\n- done\n";
   assert.equal(found(readme)[0]?.kind, "markdown", "a heading right after a line of text");
+});
+
+test("a document a tool printed in slices (sed -n) is one widget from the output's first line, after a ● mark", () => {
+  const out = [
+    "● Bash(sed -n '1p;23p;232,238p' docs/plan.md)",
+    "  ⎿  # Audio capture; import for administrators only",
+    "     | O4 | The server's import stays for administrators only: a sign-in whose checked token carries `hd`;",
+    "     enforced on the server; nobody else ever gets it (`example.com` has no mail yet; storing `hd`",
+    "     is a new account field, so the Privacy Policy changes first) |",
+    "     | Terms §1, §4 | add: the Service can record audio playing in another tab; a file the user imports is",
+    "     converted on our server and deleted when the conversion ends; the user records only what they own;",
+    "     shared cache on the public host) |",
+    "     | EULA §3 | `import` becomes `import or record` in the list; a new bullet: recording may be forbidden by",
+    "     that platform's terms, which the user follows (no platform named) |",
+    "",
+    "     ## 2.10 Import for administrators, enforced on the server (O4)",
+    "",
+    "     | Piece | Design |",
+    "     | --- | --- |",
+    "     | Who | an account whose checked token carried `hd` |",
+    "",
+    "● Done.",
+  ];
+  const r = regions(rows(out.join("\n")));
+  assert.deepEqual(r.map(({ kind, from, to }) => ({ kind, from, to })), [{ kind: "markdown", from: 1, to: 15 }]);
+  assert.ok(r[0].text.startsWith("# Audio capture;"), r[0].text.slice(0, 40));
+  // a tool output whose first line is no document leaves the rest to be looked at as before
+  const plain = ["⏺ Bash(cat notes.md)", "  ⎿  Read 3 lines", "", "     # Notes", "", "     - one `a`", "     - two `b`", "", "⏺ Done."];
+  assert.deepEqual(found(plain.join("\n")).map((x) => x.kind), ["markdown"]);
 });

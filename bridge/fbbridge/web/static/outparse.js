@@ -24,8 +24,10 @@ const CODEISH = new RegExp([
 // a prompt mark after a short lead (Starship's "at 12:21 ❯ ", "[main] ❯ ")
 const PROMPT = /^(?:\S+@[\w.-]+[:\s].*?[$#%>](?:\s|$)|[$%❯➜λ»›](?:\s|$)|\(\S+\)\s.*?[$%#❯](?:\s|$)|[^❯➜›]{1,40}[❯➜›](?:\s|$))/;
 // the end of the output: a prompt, a line a program colored (a prompt's other lines usually are),
-// or a coding agent's next message or tool result (⏺, ⎿)
-const ends = (l) => l.styled || PROMPT.test(l.text) || /^\s*[⏺⎿]/.test(l.text);
+// or a coding agent's next message or tool result (⏺ or ●, ⎿)
+const ends = (l) => l.styled || PROMPT.test(l.text) || /^\s*[⏺●⎿]/.test(l.text);
+// a coding agent's tool output begins after this mark on its first line ("  ⎿  # Title")
+const TOOL_OUT = /^\s*⎿/;
 // prompts compared without their numbers: a clock, a counter or an exit code changes
 const shape = (t) => t.replace(/\d/g, "0");
 // a command that prints one file: the output after it is that file, up to the next prompt
@@ -78,11 +80,20 @@ export function scan(rows, end = rows.length) {
       i = printed.to;
       continue;
     }
-    // a run that is no document has none inside it either (its fences are still looked at)
-    const doc = i > noRun ? markdownRun(lines, i) : null;
+    // a run that is no document has none inside it either (its fences are still looked at); a
+    // tool's output may be one from its first line, its mark read as indentation
+    const tool = TOOL_OUT.test(lines[i].text) && i > noRun ? lines[i] : null;
+    if (tool) lines[i] = { ...tool, text: tool.text.replace("⎿", " "), first: true };
+    let doc;
+    try {
+      doc = i > noRun ? markdownRun(lines, i) : null;
+      if (doc?.ok) add("markdown", i, doc.to, "markdown", body(lines, i, doc.to));
+    } finally {
+      if (tool) lines[i] = tool;
+    }
     if (doc?.open) open = Math.min(open, i);
-    if (doc?.ok) { add("markdown", i, doc.to, "markdown", body(lines, i, doc.to)); i = doc.to; continue; }
-    if (doc) noRun = doc.to;
+    if (doc?.ok) { i = doc.to; continue; }
+    if (doc && !tool) noRun = doc.to;                             // from its next line the output is looked at as before
     const fence = fenced(lines, i);
     if (fence === null && lines.length - i <= MAX_LINES) { open = Math.min(open, i); break; }   // still printing: it may close
     if (fence) {
@@ -153,8 +164,8 @@ function fenced(lines, i) {
 function sign(lines, i) {
   const t = lines[i].text.trimStart();           // indented as a tool's output is
   if (HEADING.test(t)) {
-    // a heading stands after a blank line; "#" lines in a run of code are its comments
-    const prev = lines[i - 1]?.text ?? "";
+    // a heading stands after a blank line (or first in a tool's output); "#" lines in a run of code are its comments
+    const prev = lines[i].first ? "" : lines[i - 1]?.text ?? "";
     return prev.trim() || HEADING.test((lines[i + 1]?.text ?? "").trimStart()) ? "" : "heading";
   }
   if (TABLE_SEP.test(t)) return "table";
@@ -170,7 +181,7 @@ function sign(lines, i) {
 // a compact changelog, a heading right after a line of text).
 function comment(lines, i) {
   const hash = (k) => HEADING.test(lines[k]?.text.trimStart() ?? "");
-  const prev = lines[i - 1]?.text.trimStart() ?? "";
+  const prev = lines[i].first ? "" : lines[i - 1]?.text.trimStart() ?? "";
   if (!hash(i) || !prev || LIST.test(prev) || QUOTE.test(prev)) return false;
   let a = i, b = i;
   while (a > 0 && i - a < 50 && lines[a - 1].text.trim()) a--;
