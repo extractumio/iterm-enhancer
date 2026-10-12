@@ -2,7 +2,8 @@
 """New sessions from the web app's session list (AC-52): [+] on a group opens a new tab in that
 iTerm2 window right after the selected pane's tab, with its profile and in its folder or, in
 a tmux -CC window, a new tmux window as that tab; "New window" opens a window with a profile
-the user picks."""
+the user picks. Both open in the background: iTerm2 is not raised, nor a minimized window
+brought back."""
 import asyncio
 import os
 
@@ -15,6 +16,10 @@ from .rename import CONTROL, tmux_word
 SETTLE_TRIES = 10          # iTerm2 may report a new tab before its session
 TMUX_TRIES = 50            # 5 s: a tmux tab through ssh
 SETTLE_GAP = 0.1
+# CreateTabRequest.select_tab = false (field 6, varint 0): iTerm2 3.7 then opens the tab without
+# selecting it or ordering its window front (un-minimizing it); the Python library has no such
+# argument yet, and an iTerm2 without the field ignores it
+IN_BACKGROUND = b"\x30\x00"
 
 
 class NewSessionError(Exception):
@@ -56,6 +61,33 @@ async def new_session(conn, app, window_id, shown_sid=None):
     return await new_tab(conn, app, window, tab, session)
 
 
+async def create_in_background(conn, profile=None, window_id=None, index=None, custom=None):
+    """iTerm2's CreateTab (a tab, or a window without window_id) in the background, as the
+    library's Window.async_create_tab otherwise. (window id, session id)"""
+    request = iterm2.rpc._alloc_request()
+    t = request.create_tab_request
+    t.SetInParent()
+    if profile:
+        t.profile_name = profile
+    if window_id is not None:
+        t.window_id = window_id
+    if index is not None:
+        t.tab_index = index
+    if custom is not None:
+        t.custom_profile_properties.extend(iterm2.rpc._profile_properties_from_dict(custom.values))
+    t.MergeFromString(IN_BACKGROUND)
+    r = (await iterm2.rpc._async_call(conn, request)).create_tab_response
+    if r.status != iterm2.api_pb2.CreateTabResponse.Status.Value("OK"):
+        raise NewSessionError(iterm2.api_pb2.CreateTabResponse.Status.Name(r.status))
+    return r.window_id, r.session_id
+
+
+def tab_of(app, session_id):
+    """The tab of a session once the app reports it, else None."""
+    s = app.get_session_by_id(session_id)
+    return s.tab if s else None
+
+
 async def local_folder(conn, session):
     """The folder of `session` on this Mac, and None; or None and why it is not known."""
     if not session:
@@ -83,13 +115,10 @@ async def new_tab(conn, app, window, tab, session):
         custom._simple_set("Working Directory", cwd)
     index = next((n + 1 for n, t in enumerate(window.tabs) if tab and t.tab_id == tab.tab_id), None)
     try:
-        made = await window.async_create_tab(profile=profile or None, index=index, profile_customizations=custom)
-    except Exception as e:  # iTerm2's CreateTabException: a profile renamed or deleted
+        _, made = await create_in_background(conn, profile or None, window.window_id, index, custom)
+    except Exception as e:  # a profile renamed or deleted, a window closed meanwhile
         raise NewSessionError(f"iTerm2 did not open a tab with the profile {profile or 'Default'}: {e}") from e
-
-    def find():
-        return (app.get_tab_by_id(made.tab_id) or made) if made else None
-    sid = await settled(find, "iTerm2 did not report the new session.")
+    sid = await settled(lambda: tab_of(app, made), "iTerm2 did not report the new session.")
     return sid, f"The new tab starts in its profile's folder: {why}." if why else None
 
 
@@ -161,16 +190,10 @@ async def new_window(conn, app, profile):
     if profile not in await profiles(conn):
         raise NewSessionError(f"iTerm2 has no profile named {profile!r}.")
     try:
-        window = await iterm2.Window.async_create(conn, profile=profile)
-    except Exception as e:  # iTerm2's CreateWindowException
+        _, made = await create_in_background(conn, profile)
+    except Exception as e:
         raise NewSessionError(f"iTerm2 did not open a window with the profile {profile}: {e}") from e
-    if not window:
-        raise NewSessionError("iTerm2 did not open the window.")
-
-    def find():
-        w = app.get_window_by_id(window.window_id)
-        return w.current_tab if w else None
-    return await settled(find, "iTerm2 did not report the new window.")
+    return await settled(lambda: tab_of(app, made), "iTerm2 did not report the new window.")
 
 
 async def reorder_tabs(app, window_id, session_ids):

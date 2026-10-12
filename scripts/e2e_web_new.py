@@ -4,7 +4,8 @@
 selected pane, in its folder.
 
 A plain window of its own with two tabs in two folders: [+] with the first tab's pane shown
-opens a tab between them, in the first one's folder. A private tmux server (-f /dev/null)
+opens a tab between them, in the first one's folder, in the background (the window's selected tab
+stays, so a minimized window stays down). A private tmux server (-f /dev/null)
 attached with -CC, its first pane in a folder named with quotes, `#(…)` and `$`: [+] opens a
 tmux window right after it in that folder, and no command in the name runs. (A folder name with
 a line break is left to the unit tests: iTerm2 drops the -CC connection when a tmux window opens
@@ -86,9 +87,14 @@ async def main(conn):
         await app.async_refresh()
         window = app.get_window_by_id(window.window_id)
         first, second = window.tabs
+        await first.async_select(order_window_front=False)
+        await asyncio.sleep(0.3)
         sid, note = await new_session(conn, app, window.window_id, first.current_session.session_id)
         await asyncio.sleep(0.5)
         await app.async_refresh()
+        selected = app.get_window_by_id(window.window_id).current_tab.tab_id
+        ok &= check("AC-52 [+]: the tab opens in the background: the window's selected tab stays",
+                    selected == first.tab_id, f"selected {selected}, was {first.tab_id}")
         order = [t.tab_id for t in app.get_window_by_id(window.window_id).tabs]
         made = app.get_session_by_id(sid)
         ok &= check("AC-52 [+]: the tab opens right after the selected one",

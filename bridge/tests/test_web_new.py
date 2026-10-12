@@ -27,6 +27,8 @@ class Session:
 class Tab:
     def __init__(self, tid, session=None, tmux=None):
         self.tab_id, self.current_session = tid, session
+        if session:
+            session.tab = self
         self.sessions = [session] if session else []
         self.tmux_window_id, self.tmux_connection_id = (tmux, "conn-1") if tmux else (None, None)
 
@@ -58,6 +60,22 @@ class App:
     def get_tab_by_id(self, tid):
         return next((t for w in self.terminal_windows for t in w.tabs if t.tab_id == tid), None)
 
+    def get_session_by_id(self, sid):
+        return next((s for w in self.terminal_windows for t in w.tabs for s in t.sessions if s.session_id == sid), None)
+
+
+async def create(conn, profile=None, window_id=None, index=None, custom=None):
+    """newsession.create_in_background on the fake app: a tab of a window, or a window."""
+    app = create.app
+    if window_id is None:
+        create.windows.append(profile)
+        w = Window("w-new", [Tab("t-new", Session("s-new", profile))])
+        app.terminal_windows.append(w)
+        return w.window_id, "s-new"
+    w = app.get_window_by_id(window_id)
+    tab = await w.async_create_tab(profile=profile, index=index, profile_customizations=custom)
+    return w.window_id, tab.current_session.session_id if tab.current_session else "s-never"
+
 
 class Profile:
     def __init__(self):
@@ -88,13 +106,15 @@ class Tmux:
 
 
 def run(app, wid, shown=None):
+    create.app = app
     return asyncio.run(newsession.new_session(None, app, wid, shown))
 
 
 class NewSessionTest(unittest.TestCase):
     def setUp(self):
         self.saved = {k: getattr(iterm2, k, None) for k in ("async_get_tmux_connection_by_connection_id", "TmuxException", "LocalWriteOnlyProfile")}
-        self.saved_resolve = newsession.resolve
+        self.saved_resolve, self.saved_create = newsession.resolve, newsession.create_in_background
+        newsession.create_in_background = create
         iterm2.TmuxException = type("TmuxException", (Exception,), {})
         iterm2.LocalWriteOnlyProfile = Profile
         self.folder = tempfile.mkdtemp()
@@ -107,7 +127,7 @@ class NewSessionTest(unittest.TestCase):
     def tearDown(self):
         for k, v in self.saved.items():
             setattr(iterm2, k, v)
-        newsession.resolve = self.saved_resolve
+        newsession.resolve, newsession.create_in_background = self.saved_resolve, self.saved_create
 
     def plain(self):
         w = Window("w1", [Tab("t1", Session("s1", "devbox ssh")), Tab("t2", Session("s2", "Default")), Tab("t3", Session("s3"))])
@@ -181,7 +201,7 @@ class NewSessionTest(unittest.TestCase):
         app, w = self.plain()
 
         async def empty_tab(**kw):
-            return Tab("t-empty")
+            return Tab("t-empty")                           # its session never shows up
         w.async_create_tab = empty_tab
         old, newsession.SETTLE_GAP = newsession.SETTLE_GAP, 0
         try:
@@ -253,19 +273,86 @@ class ProfilesTest(unittest.TestCase):
         self.assertEqual(asyncio.run(newsession.profiles(None)), ["Default", "devbox ssh", "tmux"])
 
     def test_a_new_window_with_a_known_profile_only(self):
-        made = []
         app = App([])
+        create.app, create.windows = app, []
+        saved, newsession.create_in_background = newsession.create_in_background, create
+        try:
+            self.assertEqual(asyncio.run(newsession.new_window(None, app, "tmux")), "s-new")
+            with self.assertRaisesRegex(newsession.NewSessionError, "no profile"):
+                asyncio.run(newsession.new_window(None, app, "Files Viewer"))
+        finally:
+            newsession.create_in_background = saved
+        self.assertEqual(create.windows, ["tmux"])
 
-        async def create(conn, profile=None):
-            made.append(profile)
-            w = Window("w-new", [Tab("t-new", Session("s-new", profile))])
-            app.terminal_windows.append(w)
-            return w
-        iterm2.Window = types.SimpleNamespace(async_create=create)
-        self.assertEqual(asyncio.run(newsession.new_window(None, app, "tmux")), "s-new")
-        with self.assertRaisesRegex(newsession.NewSessionError, "no profile"):
-            asyncio.run(newsession.new_window(None, app, "Files Viewer"))
-        self.assertEqual(made, ["tmux"])
+
+class BackgroundTest(unittest.TestCase):
+    """New tabs and windows open in the background: iTerm2's CreateTab with select_tab false (field
+    6), which the library cannot set, so its bytes are added to the request."""
+
+    def setUp(self):
+        self.saved = {k: getattr(iterm2, k, None) for k in ("rpc", "api_pb2")}
+        self.sent = []
+
+        class Request:
+            def __init__(self):
+                self.create_tab_request = types.SimpleNamespace(SetInParent=lambda: None, custom_profile_properties=[], merged=[])
+                self.create_tab_request.MergeFromString = self.create_tab_request.merged.append
+
+        status = types.SimpleNamespace(Value=lambda name: 0, Name=lambda n: {0: "OK", 3: "INVALID_WINDOW_ID"}[n])
+
+        async def call(conn, request):
+            self.sent.append(request.create_tab_request)
+            return types.SimpleNamespace(create_tab_response=types.SimpleNamespace(status=self.status, window_id="w9", session_id="s9"))
+        iterm2.rpc = types.SimpleNamespace(_alloc_request=Request, _async_call=call,
+                                           _profile_properties_from_dict=lambda values: [("prop", k, v) for k, v in values.items()])
+        iterm2.api_pb2 = types.SimpleNamespace(CreateTabResponse=types.SimpleNamespace(Status=status))
+        self.status = 0
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            setattr(iterm2, k, v)
+
+    def test_a_tab_is_asked_for_in_the_background_with_its_profile_place_and_folder(self):
+        custom = Profile()
+        custom._simple_set("Working Directory", "/srv/app")
+        self.assertEqual(asyncio.run(newsession.create_in_background(None, "Default", "w1", 2, custom)), ("w9", "s9"))
+        t = self.sent[0]
+        self.assertEqual((t.profile_name, t.window_id, t.tab_index), ("Default", "w1", 2))
+        self.assertEqual(t.custom_profile_properties, [("prop", "Working Directory", "/srv/app")])
+        self.assertEqual(t.merged, [b"\x30\x00"], "select_tab (field 6) = false")
+
+    def test_the_real_library_sends_select_tab_false_inside_the_create_tab_request(self):
+        """Against the installed iterm2 library (its private helpers and protobuf), in a process of
+        its own: the field survives serialization, nested in the request."""
+        import subprocess
+        code = (
+            "import asyncio, sys, iterm2, iterm2.rpc as rpc\n"
+            f"sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})\n"
+            "from fbbridge.web import newsession\n"
+            "sent = []\n"
+            "async def call(conn, request):\n"
+            "    sent.append(request.SerializeToString())\n"
+            "    r = iterm2.api_pb2.ServerOriginatedMessage(); r.create_tab_response.status = 0\n"
+            "    r.create_tab_response.window_id = 'w9'; r.create_tab_response.session_id = 's9'\n"
+            "    return r\n"
+            "rpc._async_call = call\n"
+            "p = iterm2.LocalWriteOnlyProfile(); p._simple_set('Working Directory', '/srv/app')\n"
+            "print(asyncio.run(newsession.create_in_background(None, 'Default', 'w1', 2, p)))\n"
+            "m = iterm2.api_pb2.ClientOriginatedMessage(); m.ParseFromString(sent[0])\n"
+            "t = m.create_tab_request\n"
+            "print(t.profile_name, t.window_id, t.tab_index, len(t.custom_profile_properties), t.SerializeToString().endswith(b'0\\x00'))\n")
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+        if "No module named 'iterm2'" in out.stderr:
+            self.skipTest("the iterm2 library is not installed")
+        self.assertEqual(out.stdout.split("\n")[:2], ["('w9', 's9')", "Default w1 2 1 True"], out.stderr)
+
+    def test_a_window_has_no_window_id_and_a_refusal_says_why(self):
+        asyncio.run(newsession.create_in_background(None, "tmux"))
+        self.assertFalse(hasattr(self.sent[0], "window_id"))
+        self.assertEqual(self.sent[0].merged, [b"\x30\x00"])
+        self.status = 3
+        with self.assertRaisesRegex(newsession.NewSessionError, "INVALID_WINDOW_ID"):
+            asyncio.run(newsession.create_in_background(None, None, "w-gone"))
 
 
 class ReorderTest(unittest.TestCase):
