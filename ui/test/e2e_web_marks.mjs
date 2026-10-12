@@ -167,6 +167,18 @@ export async function webMarks(browser, name = "") {
   check(`${at} the session list shows an orange strip beside a session with bookmarks, its row laid out as the others`,
     rowsAt[0].strip && !rowsAt[1].strip && rowsAt[0].stripIn && rowsAt[0].text === rowsAt[1].text && rowsAt[0].top === rowsAt[1].top && rowsAt[0].state === rowsAt[1].state, JSON.stringify(rowsAt));
 
+  // renaming the session (the pencil) keeps its bookmarks: they belong to the pane, which keeps its id
+  say({ t: "layout", groups: [{ ...LAYOUT[0], items: [{ ...LAYOUT[0].items[0], title: "Renamed one" }, LAYOUT[0].items[1]] }] });
+  await page.waitForFunction(() => document.querySelector('#sessions .item[data-id="S1"] .t')?.textContent === "Renamed one");
+  await page.click("#marksbtn");
+  const renamed = await page.evaluate(() => ({
+    rail: document.querySelectorAll("#markrail .mk").length, strip: !!document.querySelector('#sessions .item[data-id="S1"] .bmbar'),
+    fab: document.getElementById("marksfabn").textContent,
+    titles: [...document.querySelectorAll("#marklist .mkitem")].filter((b) => !b.querySelector(".closed")).map((b) => b.querySelector(".meta").textContent.split(" · ")[0]) }));
+  await page.click("#marksbtn");
+  check(`${at} a renamed session keeps its bookmarks (marks, strip, count), listed under its new name`,
+    renamed.rail >= 4 && renamed.strip && renamed.fab === String(renamed.titles.length) && renamed.titles.length >= 6 && renamed.titles.every((t) => t === "Renamed one"), JSON.stringify(renamed));
+
   // the way back: into older lines not loaded, found by its text (its line moved)
   await page.click('#markrail .mk[title="ask about the retry loop"]');
   await page.waitForFunction(() => document.getElementById("markline")?.range?.toString().includes("retry loop"), null, { timeout: 8000 }).catch(() => {});

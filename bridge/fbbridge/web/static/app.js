@@ -97,7 +97,7 @@ const widgets = new Widgets({ view, term: $("term"), boxes: [$("hist"), $("scree
 view.onRows = (full, keep) => (keep ? widgets.keepPlace(() => widgets.update(full)) : widgets.update(full));
 view.onReset = () => { widgets.reset(); shownFiles.forget(); };
 // Bookmarks of a selection, with a note, kept on the Mac (AC-57)
-const bookmarks = new Marks({ view, widgets, term: $("term"), send, sid: () => st.sid, alive: (id) => !!findItem(st.groups, id),
+const bookmarks = new Marks({ view, widgets, term: $("term"), send, sid: () => st.sid, alive: (id) => findItem(st.groups, id)?.item.title ?? null,
   pick: (id) => pick(id), toast, onChange: () => drawNav(), copy: (text) => input.copySelection(text, true) });
 trace.watch(view);
 let kbdFrame = 0;

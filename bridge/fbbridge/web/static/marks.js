@@ -39,7 +39,7 @@ function armed(button, label, act) {
 
 export class Marks {
   /** view, widgets, term: the terminal's; send(msg) to the bridge; sid(): the pane shown;
-   *  alive(sid): whether a pane is open; pick(sid): show it (and close the drawer); toast(text);
+   *  alive(sid): an open pane's title now (renamed or not), null when it closed; pick(sid): show it (and close the drawer); toast(text);
    *  onChange(): the session list is drawn again (its orange strips); copy(text): to the clipboard. */
   constructor({ view, widgets, term, send, sid, alive, pick, toast, onChange, copy }) {
     Object.assign(this, { view, widgets, term, send, sid, alive, pick, toast, onChange });
@@ -154,7 +154,7 @@ export class Marks {
 
   /** Shows item's pane and brings its text into view; the bar says how it went. */
   async jump(item) {
-    if (!this.alive(item.sid)) return this.showBar(item, "Its session is no longer open: here is what was selected.");
+    if (this.alive(item.sid) === null) return this.showBar(item, "Its session is no longer open: here is what was selected.");
     const other = item.sid !== this.sid();
     const opened = other ? this.jumper.wait((m) => m.t === "hist" && m.mode === "reset" && m.sid === item.sid) : null;
     this.pick(item.sid);
@@ -220,8 +220,10 @@ export class Marks {
       b.type = "button";
       b.append(el("span", "note" + (item.note ? "" : " quiet"), item.note || firstLine(item.text)));
       if (item.note) b.append(el("span", "snip", firstLine(item.text)));
-      const meta = el("span", "meta", (all ? [item.title, item.host, when(item.at)] : [when(item.at)]).filter(Boolean).join(" · "));
-      if (all && !this.alive(item.sid)) meta.append(el("span", "closed", "closed"));
+      // an open session by its name now (it may have been renamed since), a closed one by its last
+      const now = this.alive(item.sid);
+      const meta = el("span", "meta", (all ? [now ?? item.title, item.host, when(item.at)] : [when(item.at)]).filter(Boolean).join(" · "));
+      if (all && now === null) meta.append(el("span", "closed", "closed"));
       b.append(meta);
       b.onclick = () => { this.togglePane(false); this.jump(item); };
       const del = el("button", "mkdel");

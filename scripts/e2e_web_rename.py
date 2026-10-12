@@ -15,6 +15,7 @@ import iterm2
 from e2e_common import new_window
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge"))
+from fbbridge.web.layout import layout_of  # noqa: E402
 from fbbridge.web.rename import rename  # noqa: E402
 
 NAME = r"build \(session.path) #1"
@@ -37,6 +38,12 @@ async def main(conn):
         passed = title == NAME and NAME in (name or "") and NAME in (shown or "")
         ok &= passed
         print(f"{'PASS' if passed else 'FAIL'} AC-52 a name is plain text → tab {title!r}, session {name!r}, shown {shown!r}")
+        # AC-57: bookmarks belong to the session's id; the web app's list still has it, under the new name
+        await app.async_refresh()
+        listed = [it for g in await layout_of(app) for it in g["items"] if it["id"] == s.session_id]
+        passed = len(listed) == 1 and listed[0]["title"] == NAME
+        ok &= passed
+        print(f"{'PASS' if passed else 'FAIL'} AC-57 a renamed session keeps its id (its bookmarks with it) → {s.session_id} titled {listed[0]['title'] if listed else None!r}")
         await rename(conn, s, "")
         await asyncio.sleep(0.5)
         title = await win.current_tab.async_get_variable("titleOverride")
