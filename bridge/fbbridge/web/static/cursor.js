@@ -60,6 +60,41 @@ export function typedEnd(data) {
   return end;
 }
 
+const cellsOf = (text) => (Array.isArray(text) ? text : [...text]);
+
+/** The column of the cursor's cell on a row ({r: runs}), or -1. */
+export function cursorCol(data) {
+  let col = 0;
+  for (const [text, , , flags] of data?.r ?? []) {
+    if (flags & CURSOR) return col;
+    col += cellsOf(text).length;
+  }
+  return -1;
+}
+
+/** The row with the cursor on cell `col` instead (null: none), as the bridge draws it (screen.py):
+ *  its own run, padded out past the text; a wide character's two cells stay together. */
+export function withCursor(data, col) {
+  const runs = [];
+  let x = 0;
+  for (const [text, fg, bg, flags] of data.r) {
+    const cells = cellsOf(text), f = flags & ~CURSOR;
+    const part = (a, b, fl) => { if (b > a) runs.push([Array.isArray(text) ? cells.slice(a, b) : cells.slice(a, b).join(""), fg, bg, fl]); };
+    let i = col == null ? -1 : col - x;
+    if (i >= 0 && i < cells.length) {
+      if (cells[i] === "" && i > 0) i--;                                   // the right half of a wide one
+      const j = cells[i + 1] === "" ? i + 2 : i + 1;
+      part(0, i, f); part(i, j, f | CURSOR); part(j, cells.length, f);
+    } else part(0, cells.length, f);
+    x += cells.length;
+  }
+  if (col != null && col >= x) {
+    if (col > x) runs.push([" ".repeat(col - x), null, null, 0]);
+    runs.push([" ", null, null, CURSOR]);
+  }
+  return { ...data, r: runs };
+}
+
 /** The ← or → keys from one cell to another on its row: "" when the move is not one to make (another
  *  row: ↑ and ↓ would recall a shell's history; a coding agent's input moves by its text, boxnav.js). */
 export function arrowsTo(from, to, { appCursor = false } = {}) {

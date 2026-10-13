@@ -70,3 +70,18 @@ test("a tap right of the cursor stops where the typed text ends: a faint suggest
   assert.equal(typedEnd({ r: [[["❯", " ", "日", "", "x"], null, null, 0]] }), 5);
   assert.equal(typedEnd(undefined), 0);
 });
+
+test("the cursor's column on a row, and the row with the cursor moved (as the bridge draws it)", async () => {
+  const { cursorCol, withCursor } = await import("../../bridge/fbbridge/web/static/cursor.js");
+  const row = { r: [["❯ fix", null, null, 1], [" ", null, null, 256]], e: true };
+  assert.equal(cursorCol(row), 5);
+  assert.equal(cursorCol({ r: [["❯ fix", null, null, 0]] }), -1);
+  assert.equal(cursorCol(undefined), -1);
+  assert.deepEqual(withCursor(row, null), { r: [["❯ fix", null, null, 1], [" ", null, null, 0]], e: true }, "none: the flag goes, the style stays");
+  assert.deepEqual(withCursor(row, 2).r, [["❯ ", null, null, 1], ["f", null, null, 257], ["ix", null, null, 1], [" ", null, null, 0]]);
+  assert.deepEqual(withCursor({ r: [["ab", 3, null, 0]] }, 4).r, [["ab", 3, null, 0], ["  ", null, null, 0], [" ", null, null, 256]], "past the text: padded");
+  assert.deepEqual(withCursor({ r: [["ab", 3, null, 0]] }, 2).r, [["ab", 3, null, 0], [" ", null, null, 256]], "right after the text");
+  const wide = { r: [[["❯", " ", "日", "", "x"], null, null, 0]] };
+  assert.deepEqual(withCursor(wide, 3).r, [[["❯", " "], null, null, 0], [["日", ""], null, null, 256], [["x"], null, null, 0]], "a wide character's two cells together");
+  assert.equal(cursorCol(withCursor(wide, 4)), 4);
+});

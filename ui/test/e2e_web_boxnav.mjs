@@ -38,8 +38,9 @@ function rowsOf(text) {
   return rows;
 }
 
-/** The screen with the input box holding `text` and Claude Code's cursor at offset `at`. */
-function screen(text, at) {
+/** The screen with the input box holding `text` and Claude Code's cursor at offset `at`; parked:
+ *  the terminal's cursor left on the row after the footer, as Claude Code's own redraws leave it. */
+function screen(text, at, parked = false) {
   const rows = rowsOf(text);
   let cr = rows.length - 1;
   while (cr > 0 && rows[cr].start > at) cr--;
@@ -47,11 +48,13 @@ function screen(text, at) {
     const t = (i ? "  " : "❯ ") + r.text;
     if (i !== cr) return line(t);
     const x = 2 + at - r.start;
+    if (parked) return line(t);
     return x < t.length
       ? { r: [[t.slice(0, x), null, null, 0], [t[x], null, null, 256], ...(t.slice(x + 1) ? [[t.slice(x + 1), null, null, 0]] : [])], e: true }
       : { r: [[t, null, null, 0], [" ", null, null, 256]], e: true };
   });
-  return [line("⏺ Done."), line(""), line(RULE), ...box, line(RULE), line("  ~/app main"), line("  ⏵⏵ accept edits on")];
+  return [line("⏺ Done."), line(""), line(RULE), ...box, line(RULE), line("  ~/app main"), line("  ⏵⏵ accept edits on"),
+    ...(parked ? [{ r: [[" ", null, null, 256]], e: true }] : [])];
 }
 
 const TEXT = "the problem with wrapping stays when the width of the original iTerm2 window differs from the browser's: "
@@ -62,11 +65,12 @@ export async function webBoxNav(browser, name = "chromium") {
   const cc = { text: TEXT, at: TEXT.length, history: 0, delay: 20 };
   let say = null;
   const draw = () => {
-    const rows = cc.menu ?? screen(cc.text, cc.at);
+    const rows = cc.menu ?? screen(cc.text, cc.at, cc.parked);
     say({ t: "screen", sid: "S1", full: true, n: rows.length, cols: COLS, rows: 30, ch: rows.map((r, i) => [i, r]) });
   };
   const hook = (msg) => {
     if (msg.t !== "in") return;
+    cc.parked = false;                             // a key puts the cursor back on the caret (measured)
     for (const k of msg.data.match(/\x1b\[[A-D]|[^\x1b]+/g) ?? []) {
       if (k === "\x1b[D") cc.at = Math.max(0, cc.at - 1);
       else if (k === "\x1b[C") cc.at = Math.min(cc.text.length, cc.at + 1);
@@ -193,6 +197,35 @@ export async function webBoxNav(browser, name = "chromium") {
   }
   check(`${at} Claude Code's recorded rows: all ${rec.frames.length} frames one line on the page, the cursor where it is in the text`,
     wrong.length === 0, JSON.stringify(wrong.slice(0, 3)));
+
+  // Claude Code's own redraw (a status line's refresh) leaves the terminal's cursor below its footer:
+  // the page keeps drawing it on the caret, and ↑ goes on from there
+  await set(TEXT, 150);
+  const caret = await where();
+  cc.parked = true; draw(); await page.waitForTimeout(250);
+  const parked = await page.evaluate(() => ({ n: document.querySelectorAll("#screen .cur").length, inBox: !!document.querySelector("#screen .blk.inbox .cur"),
+    box: document.getElementById("term").classList.contains("hasbox") }));
+  const shown = await where();
+  check(`${at} the cursor Claude Code left below its footer is drawn on its caret, the box kept`,
+    parked.n === 1 && parked.inBox && parked.box && shown.x === caret.x && shown.y === caret.y, JSON.stringify({ parked, caret, shown }));
+  await press("ArrowUp");
+  const back = await page.evaluate(() => document.querySelectorAll("#screen .cur").length);
+  check(`${at} ↑ from there goes to the character drawn above, and one cursor is drawn after the echo`, cc.at === upAt && back === 1, JSON.stringify({ at: cc.at, upAt, back }));
+
+  // the bridge sends only the rows that changed: after a new theme (rows drawn again) the caret
+  // moves to another row and the row the page drew the cursor on is not sent again
+  await set(TEXT, 150);
+  cc.parked = true; draw(); await page.waitForTimeout(250);
+  const theme = { bg: "#202020", fg: "#d0d0d0", cursor: "#ffffff", cursorText: "#000000", bold: "#ffffff", useBold: false,
+    ansi: Array(16).fill("#888888"), font: null, size: null };
+  say({ t: "theme", sid: "S1", theme }); await page.waitForTimeout(100);
+  const was = screen(TEXT, 150, true), now = [...screen(TEXT, 20), line("")];
+  const ch = now.map((r, i) => [i, r]).filter(([i, r]) => JSON.stringify(r) !== JSON.stringify(was[i]));
+  say({ t: "screen", sid: "S1", full: false, n: now.length, cols: COLS, rows: 30, ch }); await page.waitForTimeout(250);
+  const one = await page.evaluate(() => [...document.querySelectorAll("#screen .cur")].map((c) => c.closest(".ln").textContent.slice(0, 12)));
+  check(`${at} a new theme while the cursor is parked, then a frame of the changed rows only: one cursor, on the caret's new row`,
+    one.length === 1 && one[0].startsWith("❯") && ch.length === 2, JSON.stringify({ one, sent: ch.map(([i]) => i) }));
+  cc.at = 20;
 
   // Claude Code's questions between rules, as drawn in iTerm2 (the hidden cursor at the chosen
   // item, 7 rows above the lower rule): ↓ is the menu's, not → to the next question

@@ -30,5 +30,22 @@ export function inputBox(rows, cursor) {
   return { top, bottom, end };
 }
 
+/** Where the agent's caret is while the cursor stands below its box and footer: Claude Code puts
+ *  the terminal's cursor on its caret after a key, but a redraw of its own (a status line's
+ *  refresh, a notice) leaves it on the row after its footer (measured in iTerm2). {row, col}: the
+ *  caret last seen in this box ({top, bottom, row, col, txt}: the same rules, its row's text
+ *  unchanged), else the end of the input's last row (rows' `end`: the column after its typed
+ *  text); null when the cursor is elsewhere. */
+export function parkedCaret(rows, cursor, seen) {
+  if (cursor == null || cursor < 0 || cursor >= rows.length || !rows[cursor].blank) return null;
+  const bottom = rows.findLastIndex((r, i) => i < cursor && r.rule);
+  if (bottom <= 0) return null;
+  const known = seen && seen.bottom === bottom && seen.row < bottom && rows[seen.row]?.txt === seen.txt;
+  const at = inputBox(rows, known ? seen.row : bottom - 1);           // a tall input: from the row seen
+  if (!at || at.bottom !== bottom || cursor <= at.end) return null;
+  if (known && seen.top === at.top) return { row: seen.row, col: Math.max(2, seen.col) };
+  return { row: bottom - 1, col: Math.max(2, rows[bottom - 1].end ?? 0) };
+}
+
 /** A status line as it stays while it only counts (context, limits, shells): digits left out. */
 export const statusKey = (txt) => txt.trim().replace(/\d+/g, "#");
