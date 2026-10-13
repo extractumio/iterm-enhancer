@@ -5,7 +5,8 @@
 // a step (the space of a wrap and a line end are one), ↑ on its first row recalls history. And
 // Claude Code's real rows, recorded in iTerm2 at 60 columns while a text was typed a character at
 // a time (claude-input-60.json: the text, each frame's row starts and cursor): every frame is one
-// line on the page, and the page counts the cursor where it is in the text.
+// line on the page, and the page counts the cursor where it is in the text. A menu Claude Code
+// draws between rules (its questions) keeps its own ↑ and ↓.
 // Alone: node test/e2e_web_boxnav.mjs.
 
 import fs from "node:fs";
@@ -61,7 +62,7 @@ export async function webBoxNav(browser, name = "chromium") {
   const cc = { text: TEXT, at: TEXT.length, history: 0, delay: 20 };
   let say = null;
   const draw = () => {
-    const rows = screen(cc.text, cc.at);
+    const rows = cc.menu ?? screen(cc.text, cc.at);
     say({ t: "screen", sid: "S1", full: true, n: rows.length, cols: COLS, rows: 30, ch: rows.map((r, i) => [i, r]) });
   };
   const hook = (msg) => {
@@ -192,6 +193,21 @@ export async function webBoxNav(browser, name = "chromium") {
   }
   check(`${at} Claude Code's recorded rows: all ${rec.frames.length} frames one line on the page, the cursor where it is in the text`,
     wrong.length === 0, JSON.stringify(wrong.slice(0, 3)));
+
+  // Claude Code's questions between rules, as drawn in iTerm2 (the hidden cursor at the chosen
+  // item, 7 rows above the lower rule): ↓ is the menu's, not → to the next question
+  const desc = line("     What this choice does, on a row of its own");
+  cc.menu = [line("⏺ Done."), line(RULE), line("←  ☒ Old files  ☐ Keep  ✔ Submit  →"), line(""), line("Which files should go?"), line(""),
+    line("  1. [✔] Drafts"), desc, desc, { r: [["❯", null, null, 256], [" 2. [✔] Branches", null, null, 0]], e: true }, desc, desc,
+    line("  3. [ ] Logs"), desc, line("  4. [ ] Type something"), line("     Next"), line(RULE), line("  5. Chat about this"), line(""),
+    line("Enter to select · Tab/Arrow keys to navigate · Esc to cancel")];
+  cc.history = 0; draw(); await page.waitForTimeout(250);
+  const menuFrom = sent.length;
+  await press("ArrowDown");
+  const menuKeys = sent.slice(menuFrom).filter((m) => m.t === "in").map((m) => m.data);
+  const boxed = await page.evaluate(() => document.getElementById("term").classList.contains("hasbox"));
+  check(`${at} in a menu between rules (Claude Code's questions) ↓ goes as it is, and it is not drawn as the input`,
+    menuKeys.length === 1 && menuKeys[0] === "\x1b[B" && !boxed, JSON.stringify({ menuKeys, boxed }));
   await page.close();
 }
 

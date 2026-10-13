@@ -269,7 +269,7 @@ export class TermView {
   // behind the button, so a "/" or "@" list or a new notice there stays in sight.
   findBox(rows) {
     const cursor = rows.findIndex((r) => r.el.querySelector(".cur"));
-    let at = inputBox(rows.map((r) => ({ rule: r.el.classList.contains("rule"), blank: !r.txt.trim() })), cursor);
+    let at = inputBox(rows.map((r) => ({ rule: r.el.classList.contains("rule"), blank: !r.txt.trim(), txt: r.txt })), cursor);
     const was = this.box;
     if (!at && cursor < 0 && was && was.end < rows.length && rows[was.top]?.el.classList.contains("rule") && rows[was.bottom]?.el.classList.contains("rule")) at = was;
     this.box = at;
