@@ -104,6 +104,7 @@ export class TermView {
     this.screen = [];        // line records
     this.oldest = 0; this.truncated = false; this.loading = false;
     this.top = 0;            // the screen's first line
+    this.alt = false;        // the pane shows its alternate screen (a full-screen program)
     this.queued = []; this.pending = null;
     this.box = this.idle = null;                 // another pane's (or a cleared screen's) input box and status lines
     this.histEl.replaceChildren(); this.screenEl.replaceChildren();
@@ -399,6 +400,7 @@ export class TermView {
     if (!this.pending || m.full) this.pending = { full: m.full, n: m.n, ch: new Map() };
     this.pending.n = m.n;
     if (m.cols !== this.cols) { this.cols = m.cols; this.onCols?.(); }
+    if (!!m.alt !== !!this.alt) { this.alt = !!m.alt; this.onAlt?.(); }   // a full-screen program (mc, vim) began or ended
     for (const [i, data] of m.ch) this.pending.ch.set(i, data);
     if (!this.raf) this.raf = requestAnimationFrame(() => this.flush());
   }
@@ -454,6 +456,11 @@ export class TermView {
     probe.remove();
     return this.ratio;
   }
+
+  /** The text size chosen (the page's --size): Grid's, and Fit's at most. */
+  chosenSize() { return parseFloat(getComputedStyle(this.term).getPropertyValue("--size")); }
+  /** True when iTerm's rows are wider than the visible area at the chosen size (in Grid). */
+  tooWide() { return this.cols * this.charRatio() * this.chosenSize() > this.inner().w; }
 
   /** Columns and rows that fit the visible area at the current font size. */
   gridFit() {

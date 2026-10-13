@@ -391,12 +391,15 @@ function setSize(px, save = true) {
 // Wrap: lines re-flow to the screen. Grid: iTerm's exact layout at the chosen text size.
 // Fit: iTerm's exact layout scaled down so a whole line fits the screen width; iTerm itself is
 // not touched. (Resizing iTerm to the screen is a separate menu action, as it changes the Mac.)
+// A full-screen program (mc, vim: iTerm's alternate screen) in a pane wider than the view breaks
+// when re-flowed: Wrap shows it as Fit while it runs; the buttons keep the mode chosen.
 
 // The mode is remembered per session, and the one chosen last is the default for every other:
 // session ids change when iTerm2 restarts or tmux -CC attaches again.
 const MODES_KEPT = 100;
 // Until the user picks one: Wrap, on every screen.
 function mode() { return st.mode[st.sid] ?? store.get("modeDefault", "wrap"); }
+function shownMode() { return view.alt && view.tooWide() && mode() === "wrap" ? "fit" : mode(); }
 function setMode(m, chosen = true) {
   delete st.mode[st.sid];                          // re-added last: the oldest choices go first
   st.mode[st.sid] = m;
@@ -408,18 +411,18 @@ function setMode(m, chosen = true) {
 }
 
 function applyFit() {
-  const term = $("term");
-  if (mode() !== "fit" || !view.cols) { term.style.fontSize = ""; return; }
+  const term = $("term"), m = shownMode();
+  term.classList.toggle("wrap", m === "wrap");
+  term.classList.toggle("grid", m !== "wrap");
+  if (m !== "fit" || !view.cols) { term.style.fontSize = ""; return; }
   const px = Math.floor(((view.inner().w - 1) / view.cols / view.charRatio()) * 10) / 10;
-  term.style.fontSize = `${Math.min(px, st.size + 4)}px`;
+  term.style.fontSize = `${Math.min(px, view.chosenSize() + 4)}px`;
 }
-view.onCols = () => view.keepBottom(applyFit);
+view.onCols = view.onAlt = () => view.keepBottom(applyFit);
 document.fonts?.addEventListener("loadingdone", () => { view.ratio = 0; view.keepBottom(applyFit); });
 
 function syncControls() {
   const m = mode();
-  $("term").classList.toggle("wrap", m === "wrap");
-  $("term").classList.toggle("grid", m !== "wrap");
   for (const b of document.querySelectorAll("[data-mode]")) b.setAttribute("aria-pressed", String(b.dataset.mode === m));
   $("resize").querySelector(".label").textContent = st.resized ? "Restore iTerm's size" : "Resize iTerm to this screen";
   $("appcur").checked = st.appCursor;

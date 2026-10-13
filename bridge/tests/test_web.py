@@ -397,6 +397,54 @@ class MirrorTest(unittest.TestCase):
         self.assertIn("SESSION_NOT_FOUND", logged[0])
 
 
+    def test_a_full_screen_program_is_named_in_the_frame_even_when_no_cell_changed(self):
+        from fbbridge.web import mirror
+        sent = []
+
+        class Ws:
+            flip = False
+
+            async def send(self, text):
+                sent.append(json.loads(text))
+                if self.flip:                                      # iTerm2's notice lands during the send
+                    client.alt, self.flip = True, False
+
+        same = types.SimpleNamespace(SerializeToString=lambda: b"abc")    # iTerm2's identity of unchanged contents
+
+        class Line:
+            hard_eol, _LineContents__proto = False, same
+
+            def string_at(self, x):
+                if x >= 3:
+                    raise IndexError(x)
+                return "abc"[x]
+
+            def style_at(self, x):
+                return None
+
+        coord = types.SimpleNamespace
+        screen = types.SimpleNamespace(number_of_lines=1, line=lambda i: Line(), cursor_coord=coord(x=0, y=0), _ScreenContents__proto=same,
+                                       windowed_coord_range=coord(coordRange=coord(start=coord(y=0))))
+        session = types.SimpleNamespace(session_id="s1", grid_size=coord(width=145, height=1))
+        ws = Ws()
+        client = mirror.Client(None, types.SimpleNamespace(app=None), ws, 1000, None)
+        client.top = 0                                   # no history to send first
+
+        async def frames():
+            got = [await client.send_screen(session, screen)]
+            got.append(await client.send_screen(session, screen))      # nothing changed
+            client.alt = True                                         # mc started: iTerm2's notice
+            got.append(await client.send_screen(session, screen))
+            got.append(await client.send_screen(session, screen))
+            client.alt, ws.flip = False, True                         # mc ended; it starts again mid-send
+            got.append(await client.send_screen(session, screen))
+            got.append(await client.send_screen(session, screen))      # the notice still reaches the page
+            return got
+        self.assertEqual(asyncio.run(frames()), [True, False, True, False, True, True])
+        self.assertEqual([(m["alt"], m["full"], len(m["ch"])) for m in sent],
+                         [(False, True, 1), (True, False, 0), (False, False, 0), (True, False, 0)])
+        self.assertEqual([mirror.is_on(v) for v in (1, "1", '"1"', 0, "0", None, "")], [True] * 3 + [False] * 4)
+
 class BuildTest(unittest.TestCase):
     def test_the_build_names_every_page_file_and_index_carries_it(self):
         from fbbridge.web import site

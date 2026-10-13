@@ -43,6 +43,12 @@ ACTIONS = {"sub": "open the session", "in": "type into the session", "files": "s
            "unfold": "show folded lines", "mark": "save the bookmark", "unmark": "delete the bookmark",
            "locate": "find the bookmark", "find": "search the history"}
 UNFOLD_MAX = 20000     # lines one "unfold" may ask for
+ALT = "showingAlternateScreen"   # a full-screen program (mc, vim, htop): the page shows its grid
+
+
+def is_on(value):
+    """iTerm2 gives a flag variable as 1, "1" or '"1"' depending on the call."""
+    return str(value).strip('"') == "1"
 
 
 def screen_key(screen):
@@ -78,6 +84,7 @@ class Client:
         self.encoded = {}        # (line key, cursor x) -> encoded line, from the last frame
         self.prev_size = None
         self.prev_cursor = None
+        self.alt = self.sent_alt = False   # the pane shows its alternate screen; as last sent
         self.history = History(self.max_history)   # what this browser has, for folding (AC-56)
 
     async def send(self, msg):
@@ -158,8 +165,8 @@ class Client:
 
     async def send_screen(self, session, screen):
         """Send what changed since the last frame; False when nothing did."""
-        key = screen_key(screen)
-        if key is not None and key == self.shown:
+        key, alt = screen_key(screen), self.alt     # alt read once: iTerm2 may change it during the send
+        if key is not None and key == self.shown and alt == self.sent_alt:
             return False
         self.shown = key
         top = screen.windowed_coord_range.coordRange.start.y  # absolute; the cursor uses it too
@@ -187,12 +194,14 @@ class Client:
             enc = encoded.get(k) if k[0] is not None else None
             self.encoded[k] = enc = enc or enc_line(line, k[1])
             changes.append([i, enc])
-        if full or changes:     # with the keys it shows, when tracing: the cursor moved or its row changed
+        fresh = full or changes or alt != self.sent_alt
+        if fresh:               # with the keys it shows, when tracing: the cursor moved or its row changed
             moved = (cx, cy) != self.prev_cursor or any(i == cy for i, _ in changes)
             await self.send({"t": "screen", "sid": session.session_id, "full": full, "n": screen.number_of_lines,
-                             "cols": size[0], "rows": size[1], "ch": changes, **self.trace.frame(moved)})
+                             "cols": size[0], "rows": size[1], "alt": alt, "ch": changes, **self.trace.frame(moved)})
+            self.sent_alt = alt
         self.prev_size, self.prev_cursor = size, (cx, cy)
-        return bool(full or changes)
+        return bool(fresh)
 
     async def stream(self, session):
         """Push theme, history and then every screen change until stopped."""
@@ -207,9 +216,18 @@ class Client:
             self.trace.woken("notify")
             changed.set()
 
+        async def on_alt(_conn, msg):
+            if self.wake is changed:       # not a stream of a pane no longer shown
+                self.alt = is_on(msg.json_new_value)
+                changed.set()
+
         sub = await iterm2.notifications.async_subscribe_to_screen_update_notification(
             self.conn, on_update, session.session_id)
+        alt_sub = None
         try:
+            alt_sub = await iterm2.notifications.async_subscribe_to_variable_change_notification(
+                self.conn, on_alt, iterm2.VariableScopes.SESSION.value, ALT, session.session_id)
+            self.alt = is_on(await session.async_get_variable(ALT))   # after subscribing: no change missed
             ticks = 0
             while True:
                 changed.clear()
@@ -234,6 +252,8 @@ class Client:
                         theme = new
                         await self.send({"t": "theme", "sid": session.session_id, "theme": theme})
         finally:
+            if alt_sub:
+                await iterm2.notifications.async_unsubscribe(self.conn, alt_sub)
             await iterm2.notifications.async_unsubscribe(self.conn, sub)
 
     async def stop_stream(self):
