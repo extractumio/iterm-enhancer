@@ -273,11 +273,11 @@ export class TermView {
   // behind the button, so a "/" or "@" list or a new notice there stays in sight.
   findBox(rows) {
     const cursor = rows.findIndex((r) => r.el.querySelector(".cur"));
-    let at = inputBox(rows.map(boxRow), cursor);
-    const was = this.box;
-    if (!at && cursor < 0 && was && was.end < rows.length && rows[was.top]?.el.classList.contains("rule") && rows[was.bottom]?.el.classList.contains("rule")) at = was;
+    let at = inputBox(rows.map(boxRow), cursor, (k) => this.histRow(k));
+    const was = this.box, rule = (i) => (i < 0 ? this.hist.at(i) : rows[i])?.el.classList.contains("rule");
+    if (!at && cursor < 0 && was && was.end < rows.length && rule(was.top) && rule(was.bottom)) at = was;
     this.box = at;
-    this.relinkBox(at ? rows.slice(at.top + 1, at.bottom) : []);
+    this.relinkBox(at ? rows.slice(Math.max(0, at.top + 1), at.bottom) : []);
     if (!at) return null;
     if (cursor > at.top && cursor < at.bottom) this.caret = { top: at.top, bottom: at.bottom, row: cursor, col: cursorCol(rows[cursor].data), txt: rows[cursor].txt };
     const below = rows.slice(at.bottom + 1, at.end + 1);
@@ -285,12 +285,14 @@ export class TermView {
     for (const r of below) r.el.classList.toggle("status", !!this.idle?.has(statusKey(r.txt)));
     return at;
   }
+  /** The history's k-th row from its end as inputBox's (the top of an input taller than the screen). */
+  histRow(k) { const r = this.hist.at(-k); return r && boxRow(r); }
   // The cursor Claude Code left below its footer (agentbox.js parkedCaret) is drawn on its caret,
   // so the box, a tap and ↑ ↓ go on from there; rows drawn so go back to the bridge's data first.
   park(rows) {
     const data = (r) => r.orig ?? r.data;
     const cursor = rows.findIndex((r) => cursorCol(data(r)) >= 0);
-    const at = this.agent && !rows[cursor]?.txt.trim() ? parkedCaret(rows.map(boxRow), cursor, this.caret) : null;
+    const at = this.agent && !rows[cursor]?.txt.trim() ? parkedCaret(rows.map(boxRow), cursor, this.caret, (k) => this.histRow(k)) : null;
     const want = new Map(at ? [[cursor, null], [at.row, at.col]] : []);
     const base = this.hist.length;
     rows.forEach((r, i) => {

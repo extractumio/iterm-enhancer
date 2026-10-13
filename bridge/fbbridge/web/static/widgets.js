@@ -137,7 +137,9 @@ export class Widgets {
     const boxTop = v.agent && v.box ? screen.filter(Boolean)[v.box.top]?.el : null;
     const boxAt = boxTop ? screen.findIndex((r) => r?.el === boxTop) : -1;
     if (boxAt >= 0 && (end < 0 || boxAt < end)) end = boxAt;
-    const { found, settled } = scan(rows.map(info), histPart + (end >= 0 ? end : screen.length));
+    // an input taller than the screen begins in the history: the output ends there
+    const stop = v.agent && v.box?.top < 0 ? Math.max(0, histPart + v.box.top) : histPart + (end >= 0 ? end : screen.length);
+    const { found, settled } = scan(rows.map(info), stop);
     // regions wholly in the history before `settled` are final; the screen changes
     let cut = Math.min(settled, histPart);
     for (const r of [...found].reverse()) if (r.to >= cut && r.from < cut) cut = r.from;

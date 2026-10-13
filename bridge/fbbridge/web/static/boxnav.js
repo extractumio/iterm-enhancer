@@ -66,11 +66,12 @@ export class BoxMoves {
   constructor(view, screen) { Object.assign(this, { view, screen }); this.last = null; }
 
   /** The box's rows, their layout, the cursor's row and offset, the text before it on its row,
-   *  the end of the text; null when the cursor is not in an agent's input box. */
+   *  the end of the text, whether its first row is the input's (whole); null when the cursor is
+   *  not in an agent's input box. */
   state() {
     const v = this.view, rows = v.screen.filter(Boolean);
     if (!v.agent || !v.box) return null;
-    const recs = rows.slice(v.box.top + 1, v.box.bottom);
+    const recs = rows.slice(Math.max(0, v.box.top + 1), v.box.bottom);   // the screen's part of a taller input
     const cur = this.screen.querySelector(".cur"), el = cur?.closest(".ln");
     const row = recs.findIndex((r) => r.el === el);
     if (row < 0) return null;
@@ -80,7 +81,7 @@ export class BoxMoves {
     const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let t = walk.nextNode(); t && !cur.contains(t); t = walk.nextNode()) { col += graphemes(t.data).length; text += t.data; }
     const before = graphemes(text).slice(PREFIX).join("");
-    return { recs, lay, cur, row, before, end: lay.at(-1).start + lay.at(-1).len, at: lay[row].start + Math.max(0, col - PREFIX) };
+    return { recs, lay, cur, row, before, whole: v.box.top >= 0, end: lay.at(-1).start + lay.at(-1).len, at: lay[row].start + Math.max(0, col - PREFIX) };
   }
 
   /** Every character of the box's text where the page draws it: [{o, x, top, h}], also those out
@@ -136,7 +137,7 @@ export class BoxMoves {
    *  (last) row in iTerm, where the agent recalls its history; a repeat (a held key) stops there. */
   line(d, appCursor, repeat = false) {
     const s = this.state();
-    if (!s || listOpen(s.before, s.row === 0)) return null;
+    if (!s || listOpen(s.before, s.row === 0 && s.whole)) return null;
     const from = this.base(s), ps = this.positions(s);
     const start = (from === s.at && ps.find((p) => p.cur)) || ps.find((p) => p.o === from) || ps.at(-1);
     const ls = lines(ps), k = ls.findIndex((l) => l.includes(start)), next = ls[k + d];

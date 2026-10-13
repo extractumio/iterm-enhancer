@@ -76,7 +76,7 @@ export async function webBoxNav(browser, name = "chromium") {
       else if (k === "\x1b[C") cc.at = Math.min(cc.text.length, cc.at + 1);
       else if (k === "\x1b[A" || k === "\x1b[B") cc.history++;
     }
-    setTimeout(draw, cc.delay);                    // the echo comes a moment later, as from iTerm2
+    setTimeout(() => (cc.draw ?? draw)(), cc.delay);                    // the echo comes a moment later, as from iTerm2
   };
   const page0 = await open(browser, { agent: true, screen: ["…"], hook, device: { viewport: { width: 1100, height: 700 } } });
   const { page, sent } = page0;
@@ -226,6 +226,42 @@ export async function webBoxNav(browser, name = "chromium") {
   check(`${at} a new theme while the cursor is parked, then a frame of the changed rows only: one cursor, on the caret's new row`,
     one.length === 1 && one[0].startsWith("❯") && ch.length === 2, JSON.stringify({ one, sent: ch.map(([i]) => i) }));
   cc.at = 20;
+
+  // a long input (19 rows, as the owner's): its top rule 17 rows above the cursor is still the box's
+  const TALL = Array.from({ length: 19 }, (_, i) => `line ${i + 1} of a long input`).join("\n");
+  const tallAt = TALL.lastIndexOf("line 18") + 4;
+  await set(TALL, tallAt);
+  const tall = await where();
+  const tallBox = await page.evaluate(() => !!document.querySelector("#screen .blk.inbox .cur") && document.getElementById("term").classList.contains("hasbox"));
+  cc.parked = true; draw(); await page.waitForTimeout(250);
+  const tallParked = await where(), inBox = await page.evaluate(() => document.querySelectorAll("#screen .blk.inbox .cur").length);
+  check(`${at} a 19-row input is the box, and the cursor Claude Code left below its footer is drawn on its caret there`,
+    tallBox && inBox === 1 && tallParked.x === tall.x && tallParked.y === tall.y, JSON.stringify({ tallBox, inBox, tall, tallParked }));
+  cc.parked = false;
+
+  // an input taller than the screen (50 rows on a 30-row screen; measured: Claude Code scrolls
+  // its top rule and prompt up into the history): still the box, parked or not, and ↑ is the page's
+  const HIGH = Array.from({ length: 50 }, (_, i) => `row ${i + 1} of a very long input`).join("\n");
+  const split = (rows) => ({ hist: rows.slice(0, rows.length - 30), screen: rows.slice(-30) });
+  const drawHigh = () => {
+    const all = screen(cc.text, cc.at, cc.parked);
+    if (!cc.parked) all.push(line(""));             // the screen's last row, where the cursor is left
+    const { hist, screen: rows } = split(all);
+    say({ t: "hist", mode: "reset", sid: "S1", first: 0, oldest: 0, truncated: false, lines: hist });
+    say({ t: "screen", sid: "S1", full: true, n: rows.length, cols: COLS, rows: 30, ch: rows.map((r, i) => [i, r]) });
+  };
+  cc.text = HIGH; cc.at = HIGH.lastIndexOf("row 45") + 4; cc.history = 0; cc.draw = drawHigh; drawHigh(); await page.waitForTimeout(250);
+  const high = await where();
+  const highBox = await page.evaluate(() => document.querySelectorAll("#screen .blk.inbox .cur").length);
+  cc.parked = true; drawHigh(); await page.waitForTimeout(250);
+  const highParked = await where(), highIn = await page.evaluate(() => document.querySelectorAll("#screen .blk.inbox .cur").length);
+  const highFrom = cc.at;
+  await press("ArrowUp");
+  check(`${at} a 50-row input taller than the screen (its top rule in the history) is the box: the cursor left below its footer is drawn on its caret, ↑ moves a line up`,
+    highBox === 1 && highIn === 1 && highParked.x === high.x && highParked.y === high.y && cc.history === 0 && cc.at === highFrom - (HIGH.indexOf("row 45") - HIGH.indexOf("row 44")),
+    JSON.stringify({ highBox, highIn, high, highParked, at: cc.at, highFrom, history: cc.history }));
+  cc.parked = false; cc.draw = null;
+  say({ t: "hist", mode: "reset", sid: "S1", first: 0, oldest: 0, truncated: false, lines: [] });
 
   // Claude Code's questions between rules, as drawn in iTerm2 (the hidden cursor at the chosen
   // item, 7 rows above the lower rule): ↓ is the menu's, not → to the next question
