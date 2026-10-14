@@ -1,0 +1,60 @@
+/* SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial */
+/* The page's buttons drawn a little uneven, as by hand: a rectangle's top and bottom edges bow
+   out or in by a pixel or two (clip-path shape(): corners in pixels, each edge one arc peaking
+   at --x), neighbors a little differently; a round button is a blob. The clip would cut a box
+   border, so a button's border is a ring of the same shape (::after) in the color --edge, which
+   the button's own rules set in place of a border. The blobs that drift (marks.css, find.css)
+   and the marks on the terminal's edge keep their own shapes, the menu's rows their dividers. */
+@supports (clip-path: shape(evenodd from 0 0, curve to 1px 0 with 0 0 / 1px 0, close)) {
+  :where(button:not(#markadd, #markcopy, #marksfab, #findfab, #fabs button, #bottom, #backterm, #markrail *, #findrail *, #menu .row)) {
+    --r: 8px; --t: 1.5px; --b: 1.5px; --x: 46%; --w: 1px;
+    --ct: max(var(--t), 0px); --cb: max(var(--b), 0px);
+    --up: calc(var(--ct) - var(--t) * 4 / 3); --dn: calc(100% - var(--cb) + var(--b) * 4 / 3);   /* the arcs' pull */
+    position: relative;
+    clip-path: shape(from 0 calc(var(--ct) + var(--r)),
+      curve to var(--r) var(--ct) with 0 var(--ct),
+      curve to calc(100% - var(--r)) var(--ct) with var(--x) var(--up) / var(--x) var(--up),
+      curve to 100% calc(var(--ct) + var(--r)) with 100% var(--ct),
+      line to 100% calc(100% - var(--cb) - var(--r)),
+      curve to calc(100% - var(--r)) calc(100% - var(--cb)) with 100% calc(100% - var(--cb)),
+      curve to var(--r) calc(100% - var(--cb)) with calc(100% - var(--x)) var(--dn) / calc(100% - var(--x)) var(--dn),
+      curve to 0 calc(100% - var(--cb) - var(--r)) with 0 calc(100% - var(--cb)),
+      close);
+  }
+  /* the ring: the same outline, and inside it the outline --w in (even-odd: only the band between) */
+  :where(button:not(#markadd, #markcopy, #marksfab, #findfab, #fabs button, #bottom, #backterm, #markrail *, #findrail *, #menu .row))::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none; background: var(--edge, transparent);
+    --i: var(--w); --ti: calc(var(--ct) + var(--i)); --bi: calc(100% - var(--cb) - var(--i));
+    clip-path: shape(evenodd from 0 calc(var(--ct) + var(--r)),
+      curve to var(--r) var(--ct) with 0 var(--ct),
+      curve to calc(100% - var(--r)) var(--ct) with var(--x) var(--up) / var(--x) var(--up),
+      curve to 100% calc(var(--ct) + var(--r)) with 100% var(--ct),
+      line to 100% calc(100% - var(--cb) - var(--r)),
+      curve to calc(100% - var(--r)) calc(100% - var(--cb)) with 100% calc(100% - var(--cb)),
+      curve to var(--r) calc(100% - var(--cb)) with calc(100% - var(--x)) var(--dn) / calc(100% - var(--x)) var(--dn),
+      curve to 0 calc(100% - var(--cb) - var(--r)) with 0 calc(100% - var(--cb)),
+      close,
+      move to var(--i) calc(var(--ct) + var(--r)),
+      curve to var(--r) var(--ti) with var(--i) var(--ti),
+      curve to calc(100% - var(--r)) var(--ti) with var(--x) calc(var(--up) + var(--i)) / var(--x) calc(var(--up) + var(--i)),
+      curve to calc(100% - var(--i)) calc(var(--ct) + var(--r)) with calc(100% - var(--i)) var(--ti),
+      line to calc(100% - var(--i)) calc(100% - var(--cb) - var(--r)),
+      curve to calc(100% - var(--r)) var(--bi) with calc(100% - var(--i)) var(--bi),
+      curve to var(--r) var(--bi) with calc(100% - var(--x)) calc(var(--dn) - var(--i)) / calc(100% - var(--x)) calc(var(--dn) - var(--i)),
+      curve to var(--i) calc(100% - var(--cb) - var(--r)) with var(--i) var(--bi),
+      close);
+  }
+  /* neighbors bow differently: one edge in, the peak off the middle */
+  :where(button:nth-child(3n + 2)) { --t: 2px; --b: -1px; --x: 56%; }
+  :where(button:nth-child(3n)) { --t: -1px; --b: 2px; --x: 51%; }
+  /* the clip cuts the focus outline: the ring shows it (--focus: on a button filled with the accent) */
+  button:focus-visible { --edge: var(--focus, var(--accent)) !important; --w: 2px; }
+}
+/* a browser without shape() (Safari before 18.4): straight edges, the border an inset ring */
+@supports not (clip-path: shape(evenodd from 0 0, curve to 1px 0 with 0 0 / 1px 0, close)) {
+  button { box-shadow: inset 0 0 0 1px var(--edge, transparent); }
+}
+
+/* round and pill-shaped buttons with a shadow: an uneven radius keeps the border and the shadow */
+#bottom { border-radius: 56% 44% 52% 48% / 47% 55% 45% 53%; }
+#backterm { border-radius: 22px 17px 21px 18px / 19px 22px 17px 21px; }

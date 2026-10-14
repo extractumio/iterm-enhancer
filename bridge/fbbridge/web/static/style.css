@@ -62,8 +62,8 @@ svg.lu circle { fill: none; stroke: currentColor; }
 .grp h2 .count { margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums; }
 .grp h2 .count.on { color: var(--accent); font-weight: 600; }
 .grp h2 .new { flex: 0 0 auto; width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border-radius: 7px;
-  border: 1px solid var(--line); background: var(--chrome); color: var(--muted); }
-.grp h2 .new:hover { background: var(--chrome-2); color: var(--t-fg); border-color: color-mix(in srgb, var(--t-fg) 30%, var(--t-bg)); }
+  --edge: var(--line); background: var(--chrome); color: var(--muted); }
+.grp h2 .new:hover { background: var(--chrome-2); color: var(--t-fg); --edge: color-mix(in srgb, var(--t-fg) 30%, var(--t-bg)); }
 
 /* row: dot | title and meta | state */
 .grp li { position: relative; }
@@ -128,7 +128,7 @@ svg.lu circle { fill: none; stroke: currentColor; }
 /* foot: New window and Merge windows, and their boxes above them */
 .nav-foot { padding: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
 #newwin, #mergewin { width: 100%; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: 8px;
-  border: 1px solid var(--line); background: var(--chrome); font-weight: 500; }
+  --edge: var(--line); background: var(--chrome); font-weight: 500; }
 #newwin:hover, #newwin[aria-expanded="true"], #mergewin:hover, #mergewin[aria-expanded="true"] { background: var(--chrome-2); }
 #mergewin[hidden] { display: none; }
 #newwin .chev { margin-left: auto; color: var(--muted); display: grid; transition: transform .15s; }
@@ -141,8 +141,8 @@ svg.lu circle { fill: none; stroke: currentColor; }
 #profiles .pdot { margin: 0; }
 #mergebox p { margin: 0; padding: 4px 6px 6px; font-size: 12.5px; line-height: 1.4; }
 #mergebox .row { display: flex; gap: 6px; padding: 4px 6px 2px; }
-#mergebox button { height: 32px; padding: 0 14px; border-radius: 7px; border: 1px solid var(--line); }
-#mergebox .primary { background: var(--accent); color: var(--t-bg); border-color: transparent; font-weight: 600; }
+#mergebox button { height: 32px; padding: 0 14px; border-radius: 7px; --edge: var(--line); }
+#mergebox .primary { background: var(--accent); color: var(--t-bg); --edge: transparent; --focus: var(--t-bg); font-weight: 600; }
 .nav-title { display: none; }
 
 /* ---------- main column ---------- */
@@ -263,7 +263,7 @@ svg.lu circle { fill: none; stroke: currentColor; }
 #zoom .zstage:active { cursor: grabbing; }
 #zoom .zstage img { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; max-height: none; will-change: transform; }
 #zoom .ztools { position: absolute; top: calc(10px + env(safe-area-inset-top)); right: calc(10px + env(safe-area-inset-right)); display: flex; gap: 6px; }
-#zoom .ztools button { min-width: 40px; height: 40px; border-radius: 10px; border: 1px solid #fff3; background: #222c; color: #eee;
+#zoom .ztools button { min-width: 40px; height: 40px; border-radius: 10px; --edge: #fff3; background: #222c; color: #eee;
   font: 15px var(--ui); padding: 0 10px; }
 #zoom .zcap { position: absolute; left: 12px; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom)); margin: 0;
   font: 12px var(--ui); text-align: center; color: #ccc; overflow-wrap: anywhere; pointer-events: none; }
@@ -280,7 +280,7 @@ svg.lu circle { fill: none; stroke: currentColor; }
 
 /* the latency trace's badge (trace.js, AC-55): small, out of the terminal's way */
 #tracebadge { position: fixed; top: calc(4px + env(safe-area-inset-top)); right: 8px; z-index: 30; padding: 2px 8px;
-  border-radius: 10px; border: 1px solid var(--line); background: var(--chrome-2); color: var(--muted);
+  border-radius: 10px; --edge: var(--line); background: var(--chrome-2); color: var(--muted);
   font: 500 11px/16px ui-monospace, Menlo, monospace; opacity: .9; }
 
 /* ---------- floating keyboard and hot keys buttons (touch screens and narrow windows) ---------- */
@@ -322,11 +322,11 @@ svg.lu circle { fill: none; stroke: currentColor; }
 #hotkeys .keys { display: flex; flex-direction: column; gap: 6px; max-width: 640px; margin: 0 auto; }
 .keyrow { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
 .key { height: 40px; min-width: 0; padding: 0 2px; display: grid; place-items: center; border-radius: 9px;
-  background: var(--chrome-2); border: 1px solid var(--line); font-size: clamp(12px, 3.6vw, 14px); font-weight: 500; line-height: 1;
+  background: var(--chrome-2); --edge: var(--line); font-size: clamp(12px, 3.6vw, 14px); font-weight: 500; line-height: 1;
   white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; }
 .key:active { transform: translateY(1px); background: color-mix(in srgb, var(--t-fg) 16%, var(--chrome-2)); }
-.key.strong { background: color-mix(in srgb, var(--accent) 22%, var(--chrome-2)); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
-.key[aria-pressed="true"] { background: var(--accent); color: var(--t-bg); border-color: var(--accent); }
+.key.strong { background: color-mix(in srgb, var(--accent) 22%, var(--chrome-2)); --edge: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.key[aria-pressed="true"] { background: var(--accent); color: var(--t-bg); --edge: var(--accent); --focus: var(--t-bg); }
 
 /* ---------- settings menu ---------- */
 #menu { position: fixed; top: 52px; right: 8px; z-index: 30; width: min(320px, calc(100vw - 16px));
@@ -351,7 +351,7 @@ svg.lu circle { fill: none; stroke: currentColor; }
 #login input, #pastebox textarea { font: inherit; font-size: 16px; color: inherit; background: var(--chrome-2);
   border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 #loginerr { min-height: 1.35em; color: #ff8a7f !important; margin: 0 !important; }
-#login button, #pastebox .primary { height: 44px; border-radius: 10px; background: var(--accent); color: var(--t-bg); font-weight: 600; }
+#login button, #pastebox .primary { height: 44px; border-radius: 10px; background: var(--accent); color: var(--t-bg); --focus: var(--t-bg); font-weight: 600; }
 #pastebox { background: var(--chrome); color: var(--t-fg); border: 1px solid var(--line); border-radius: 14px;
   width: min(480px, calc(100vw - 32px)); padding: 16px; }
 #pastebox::backdrop { background: color-mix(in srgb, #000 50%, transparent); }
@@ -407,8 +407,8 @@ svg.lu circle { fill: none; stroke: currentColor; }
 /* wide screens: the terminal is always shown; Files and File are toggles beside it */
 body.wide #views { background: none; border: 0; padding: 0; gap: 4px; }
 body.wide #views button[data-view="term"] { display: none; }
-body.wide #views button { height: 30px; border: 1px solid var(--line); border-radius: 8px; }
-body.wide #views button[aria-selected="true"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--chrome)); }
+body.wide #views button { height: 30px; --edge: var(--line); border-radius: 8px; }
+body.wide #views button[aria-selected="true"] { --edge: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--chrome)); }
 @media (prefers-reduced-motion: reduce) { #nav, .grp h2 .toggle svg { transition: none; } }
 
 /* ---------- views: Terminal, Files, File ---------- */
