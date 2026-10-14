@@ -290,6 +290,21 @@ export async function webApp(browser) {
   await page.waitForTimeout(150);
   const narrow = await layoutNow();
   check("AC-52 web app: a full-screen program in a pane that fits the view stays in Wrap", narrow.wrap, JSON.stringify(narrow));
+  // its arrows are application cursor keys (mc takes no key after an ESC [ B); a shell's as before
+  const arrows = async () => {
+    const from = sent.length;
+    await $eval(() => document.getElementById("kbd").focus());
+    for (const k of ["ArrowDown", "ArrowLeft", "Shift+ArrowUp"]) await page.keyboard.press(k);
+    await page.waitForTimeout(100);
+    return sent.slice(from).filter((m) => m.t === "in").map((m) => m.data);
+  };
+  const inApp = await arrows();
+  draw(false, 80);
+  await page.waitForTimeout(150);
+  const inShell = await arrows();
+  check("AC-52 web app: on the alternate screen (mc, vim) the arrows go as ESC O, with a modifier as ESC [ 1;m; off it as ESC [",
+    JSON.stringify(inApp) === JSON.stringify(["\x1bOB", "\x1bOD", "\x1b[1;2A"]) && JSON.stringify(inShell) === JSON.stringify(["\x1b[B", "\x1b[D", "\x1b[1;2A"]),
+    JSON.stringify({ inApp, inShell }));
 
   // a tab's other panes (a coding agent's subagents) go under its first one, as children
   const pane = (id, title, n) => ({ ...item(id, title, "working"), index: "3", pane: n });

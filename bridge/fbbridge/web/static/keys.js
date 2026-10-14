@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 // Browser key events -> the bytes a terminal would send (xterm conventions, as iTerm2 sends them).
-// The iTerm2 API does not expose terminal modes, so "application cursor keys" is a manual toggle.
+// The iTerm2 API does not expose terminal modes, so "application cursor keys" is a manual toggle,
+// and on while the pane shows its alternate screen: full-screen programs switch to them (measured
+// in iTerm2: mc took no key after an ESC [ B; vim, nano and htop take either).
 
 const ESC = "\x1b";
 
