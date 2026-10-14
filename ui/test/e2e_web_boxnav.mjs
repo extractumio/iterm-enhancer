@@ -225,7 +225,26 @@ export async function webBoxNav(browser, name = "chromium") {
   const one = await page.evaluate(() => [...document.querySelectorAll("#screen .cur")].map((c) => c.closest(".ln").textContent.slice(0, 12)));
   check(`${at} a new theme while the cursor is parked, then a frame of the changed rows only: one cursor, on the caret's new row`,
     one.length === 1 && one[0].startsWith("❯") && ch.length === 2, JSON.stringify({ one, sent: ch.map(([i]) => i) }));
-  cc.at = 20;
+  cc.at = 20; cc.parked = false;
+
+  // → from a row's last character puts Claude Code's cursor past that row's text, on the space it
+  // wrapped at (measured: "самые" then "известные" on the next row): the cursor's cell is that
+  // space on the page, so the words after it stay where they were
+  const wrap = rowsOf(TEXT)[1].start - 1;                            // the space the first row wrapped at
+  const nextAt = () => page.evaluate(() => {
+    const ln = document.querySelector("#screen .blk.inbox .ln.cont"), w = document.createTreeWalker(ln, NodeFilter.SHOW_TEXT);
+    for (let t = w.nextNode(); t; t = w.nextNode()) {
+      const i = t.data.search(/\S/);
+      if (i >= 0) { const r = document.createRange(); r.setStart(t, i); r.setEnd(t, i + 1); return Math.round(r.getClientRects()[0].left); }
+    }
+    return null;
+  });
+  await set(TEXT, wrap - 1);
+  const onLast = await nextAt(), lastX = (await where()).x;
+  await set(TEXT, wrap);
+  const onSpace = await nextAt(), spaceX = (await where()).x;
+  check(`${at} the cursor on the space a row wrapped at (past the row's text) stands for it: the next word does not move`,
+    onLast !== null && Math.abs(onSpace - onLast) <= 1 && Math.abs(spaceX - lastX - cell) <= 1, JSON.stringify({ onLast, onSpace, lastX, spaceX, cell }));
 
   // a long input (19 rows, as the owner's): its top rule 17 rows above the cursor is still the box's
   const TALL = Array.from({ length: 19 }, (_, i) => `line ${i + 1} of a long input`).join("\n");

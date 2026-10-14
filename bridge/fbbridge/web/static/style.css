@@ -232,6 +232,7 @@ svg.lu circle { fill: none; stroke: currentColor; }
 #term.wrap .ln.eol::after { content: "\A"; }
 #term.wrap .ln.eol.join::after { content: " "; }
 #term.wrap .ln.eol.join.glue::after { content: none; }   /* a word the program broke at the row's edge */
+#term.wrap .ln.eol.join.curend::after { content: none; }   /* the cursor's cell is the space (term.js cursorLast) */
 #term.wrap .ln.cont .lead { display: none; }
 #term.wrap .tail { display: none; }
 #term.wrap .ln.rule { display: block; white-space: pre; overflow: hidden; height: 1.25em; }

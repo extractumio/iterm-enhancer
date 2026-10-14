@@ -18,6 +18,10 @@ function wrappedHere(a, b, cols, boxed) {
   return boxed ? inputWraps(a.txt, b.txt, cols, !!b.el.querySelector(".cur")) : wrapsInto(a.txt, b.txt, cols);
 }
 
+// A row that ends in the cursor, past its text: Claude Code's cursor on the space it wrapped at
+// (measured: → from a row's last character); re-joined, the cursor's cell stands for that space.
+const cursorLast = (data) => { const [t, , , f] = data.r.at(-1) ?? []; return !!(f & 256) && !(Array.isArray(t) ? t.join("") : t).trim(); };
+
 // Lines that start something new: a list item, an agent's mark (⏺ ⎿ ● ❯ ✻ · and other symbols
 // and emoji) or a numbered line of a listing or a diff ("151:", "12 +", "694-}").
 const STARTS_NEW = /^(?:[-*•+>]\s|\d+[.)]\s|[\u00b7\u2190-\u2bff\u{1f000}-\u{1faff}]|\d+(?::|\s*[-+]))/u;
@@ -186,6 +190,7 @@ export class TermView {
     const join = wrappedHere(a, b, this.cols, this.boxed?.has(a.el) && this.boxed.has(b.el));
     a.el.classList.toggle("join", join);
     a.el.classList.toggle("glue", join && glued(a.txt, b.txt, this.cols));
+    a.el.classList.toggle("curend", join && cursorLast(a.data));
     // a separator at least half of iTerm's width is a line across the whole view; a line pushed
     // to the right by spaces (a notice) loses them on a phone, where they would wrap it
     a.el.classList.toggle("full", a.el.classList.contains("rule") && !a.el.classList.contains("labelled") && a.txt.trim().length * 2 >= this.cols);
