@@ -82,6 +82,7 @@ class WebAccess:
             log(f"web: {self.error}")
             return
         self.site, self.running = site, settings
+        await site.hub.watch()
         self.hub_task = asyncio.create_task(site.hub.run())
         self.stall_task = asyncio.create_task(stall.watch(site.hub))
         self.urls = urls(cfg["host"], cfg["port"], addresses)

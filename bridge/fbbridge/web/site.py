@@ -182,6 +182,7 @@ class Site:
     async def close(self):
         """Sign everyone out of this server: their pages get the sign-in back, iTerm its sizes."""
         self.hub.stop()
+        await self.hub.unwatch()
         self.auth.close()
         for c in list(self.hub.clients):
             await c.ws.close()

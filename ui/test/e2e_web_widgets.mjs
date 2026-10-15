@@ -327,6 +327,16 @@ export async function webWidgets(browser, name = "") {
     JSON.stringify(one) === JSON.stringify(["⋯ 54 similar lines"]) && pages.sent.some((m) => m.t === "unfold" && m.n === 3 && m.to === 56), JSON.stringify(one));
   await pages.page.close();
 
+  // what a full-screen program scrolled off is told as far as it got: the pieces are one fold
+  const prog = await open(browser, { history: [line("$ claude"), ...Array.from({ length: 30 }, (_, k) => line(`old frame ${k}`)), line("$ ")], screen: [],
+    folds: [{ n: 1, to: 12, label: "⋯ 12 lines of a full-screen program" }, { n: 13, to: 30, label: "⋯ 18 lines of a full-screen program" }] });
+  await prog.page.waitForFunction(() => document.querySelector("#hist .ln.wg-fold"), null, { timeout: 5000 }).catch(() => {});
+  const whole = await prog.page.evaluate(() => [...document.querySelectorAll("#hist .ln.wg-fold")].map((h) => h.shadowRoot.querySelector('[data-act="fold"]').textContent));
+  const hidden = await prog.page.evaluate(() => [...document.querySelectorAll("#hist .ln")].filter((el) => /^old frame/.test(el.textContent) && el.offsetParent).length);
+  check(`${at} the lines a full-screen program scrolled off are one fold, however many pieces the bridge told`,
+    JSON.stringify(whole) === JSON.stringify(["⋯ 30 lines of a full-screen program"]) && hidden === 0, JSON.stringify({ whole, hidden }));
+  await prog.page.close();
+
   // lines the bridge cannot send say why; a cleared scrollback takes its folds along
   const gone = await open(browser, { history: ["a", "b", "c", "d", "e"].map((t) => line(t)), screen: [],
     folds: [{ n: 1, to: 3, label: "⋯ 3 similar lines", fail: true }] });

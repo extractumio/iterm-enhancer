@@ -172,8 +172,9 @@ class History:
     """What one browser has of a pane's history, for folding: the text of the lines it was sent
     and the folds it was told of (absolute line numbers)."""
 
-    def __init__(self, keep):
+    def __init__(self, keep, scrolled=None):
         self.keep = keep            # lines kept (the browser's own limit)
+        self.scrolled = scrolled    # (lo, hi) -> [(a, b)]: lines a full-screen program scrolled off (altspans.py)
         self.text = {}              # n -> (text, hard_eol)
         self.folds = {}             # first n -> last n of a fold told
         self.pending = False        # lines scrolled off since the last look
@@ -221,6 +222,10 @@ class History:
             elif ns:
                 break
         found = []
+        for a, b in self.scrolled(ns[0], ns[-1] + 1) if ns and self.scrolled else ():
+            for x, y in self._untold(a, b):      # a program still running: told as far as it got
+                self.folds[x] = y
+                found.append({"n": x, "to": y, "label": f"⋯ {y - x + 1} lines of a full-screen program"})
         for f in folds([self.text[n] for n in ns], newest=not ns or ns[-1] == max(self.text)):
             a, b = ns[f["from"]], ns[f["to"]]
             label = f["label"]
@@ -236,6 +241,18 @@ class History:
             self.folds[a] = b
             found.append({"n": a, "to": b, "label": label})
         return found
+
+    def _untold(self, a, b):
+        """The runs of a..b that lie in no fold told yet."""
+        told = sorted((x, y) for x, y in self.folds.items() if x <= b and a <= y)
+        out, n = [], a
+        for x, y in told:
+            if n < x:
+                out.append((n, x - 1))
+            n = max(n, y + 1)
+        if n <= b:
+            out.append((n, b))
+        return out
 
     def told(self, a, b):
         """a..b lies in folds the browser was told of, one after another (it may ask only for

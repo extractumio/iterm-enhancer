@@ -17,7 +17,8 @@ from .merge import MergeError, merge_windows
 from .newsession import NewSessionError, new_session, new_window, profiles, reorder_tabs
 from .rename import RenameError, rename
 from .tmuxkeys import type_into
-from .hub import encode, gone
+from .altspans import Spans
+from .hub import ALT, encode, gone, is_on
 from .trace import Tracer
 from .screen import enc_line, line_key
 from .fold import History
@@ -45,12 +46,6 @@ ACTIONS = {"sub": "open the session", "in": "type into the session", "files": "s
            "unfold": "show folded lines", "mark": "save the bookmark", "unmark": "delete the bookmark",
            "locate": "find the bookmark", "find": "search the history"}
 UNFOLD_MAX = 20000     # lines one "unfold" may ask for
-ALT = "showingAlternateScreen"   # a full-screen program (mc, vim, htop): the page shows its grid
-
-
-def is_on(value):
-    """iTerm2 gives a flag variable as 1, "1" or '"1"' depending on the call."""
-    return str(value).strip('"') == "1"
 
 
 def screen_key(screen):
@@ -76,6 +71,7 @@ class Client:
         self.trace = Tracer(self)    # ?trace=1 (AC-55)
         self.typing = deque()        # (session, text, trace record): typed, not yet handed to iTerm2
         self.typer = None            # the task that hands them over
+        self.spans = getattr(hub, "alt", None) or Spans()   # lines full-screen programs scrolled off (AC-56)
         self.reset_screen()
 
     def reset_screen(self):
@@ -87,7 +83,11 @@ class Client:
         self.prev_size = None
         self.prev_cursor = None
         self.alt = self.sent_alt = False   # the pane shows its alternate screen; as last sent
-        self.history = History(self.max_history)   # what this browser has, for folding (AC-56)
+        self.history = History(self.max_history, scrolled=self.scrolled)   # what this browser has, for folding (AC-56)
+
+    def scrolled(self, lo, hi):
+        """Lines among lo..hi-1 a full-screen program scrolled off the shown pane's screen."""
+        return self.spans.ranges(self.session.session_id, lo, hi) if self.session else []
 
     async def send(self, msg):
         """A message (or its encoded text). A stalled browser must not hold up its session's
@@ -172,16 +172,17 @@ class Client:
             return False
         self.shown = key
         top = screen.windowed_coord_range.coordRange.start.y  # absolute; the cursor uses it too
+        size = (session.grid_size.width, session.grid_size.height, screen.number_of_lines)
+        self.spans.grew(session.session_id, top, size[0])    # a full-screen program's span ends where this got
         if self.top is None or top < self.top:                 # first frame or scrollback cleared
             if self.top is not None:
-                self.history = History(self.max_history)        # its line numbers mean other lines now
+                self.history = History(self.max_history, scrolled=self.scrolled)   # its numbers mean other lines now
             self.top = top
             self.overflow = (await session.async_get_line_info()).overflow
             await self.send_hist(session, "reset", max(self.oldest(), top - FIRST_HISTORY), top)
         elif top > self.top:                                    # lines scrolled off the top
             prev_top, self.top = self.top, top
             await self.send_hist(session, "append", max(self.oldest(), prev_top), top)
-        size = (session.grid_size.width, session.grid_size.height, screen.number_of_lines)
         full = size != self.prev_size
         cx, cy = screen.cursor_coord.x, screen.cursor_coord.y - top
         prev, encoded, self.prev, self.encoded, changes = self.prev, self.encoded, [], {}, []
