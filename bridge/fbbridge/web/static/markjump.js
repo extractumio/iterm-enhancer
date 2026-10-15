@@ -74,7 +74,10 @@ export class Jumper {
       const at = await this.wait((m) => m.t === "located" && m.id === item.id);
       if (gone()) return { cancelled: true };
       if (at.n === null || at.n === undefined) return { why: at.why, gone: true };
-      return await this.bring(at.n, at.size ? part(item.text, at.start, at.size) : "", 0, gone);
+      // the bridge finds it by its first letters (bookmarks.py PRINT): the line covers its whole
+      // text from there, or else the part found
+      const found = at.size ? part(item.text, at.start, at.size) : "", whole = loose(item.text);
+      return await this.bring(at.n, !at.start && found && whole.length > found.length && whole.startsWith(found) ? [whole, found] : found, 0, gone);
     } catch (e) {
       return gone() ? { cancelled: true } : { why: e.message };
     }
@@ -139,23 +142,26 @@ export class Jumper {
   }
 
   /** Where line n's text is now: a Range over it (in the rows, or in a rendered widget), else
-   *  the element that shows the line. Looked up anew each time: a widget may have been drawn. */
+   *  the element that shows the line. Looked up anew each time: a widget may have been drawn.
+   *  needle: the text, or [texts] tried in turn, the longest first (a bookmark's). */
   target(n, needle, skip = 0) {
     const rec = this.view.recordAt(n);
     if (!rec) return null;
+    const first = (nodes) => [needle].flat().reduce((r, nd) => r || rangeOf(nodes, nd), null);
+    const longest = [needle].flat()[0] ?? "";
     const count = (text) => { let c = 0, i = -1; while ((i = text.toLowerCase().indexOf(needle.toLowerCase(), i + 1)) >= 0) c++; return c; };
     for (const [anchor, h] of this.widgets.hosts) {
       if (h.raw || !h.rows.includes(rec.el)) continue;
       const body = anchor.shadowRoot?.querySelector(".wg .body");
       if (!needle || !body) return anchor;
-      if (!this.exact) return rangeOf(textNodes(body), needle) || anchor;
+      if (!this.exact) return first(textNodes(body)) || anchor;
       // the rendered text holds the region's matches in order: those on its rows before this one first
       const before = h.rows.slice(0, h.rows.indexOf(rec.el)).reduce((s, el) => s + count(this.view.recs.get(el)?.txt ?? ""), 0);
       return rangeOfText(textNodes(body), needle, before + skip) || anchor;
     }
     const nodes = [];
     let letters = 0;
-    for (let k = n; k < n + SPAN && (this.exact || letters < needle.length + 200); k++) {
+    for (let k = n; k < n + SPAN && (this.exact || letters < longest.length + 200); k++) {
       const r = this.view.recordAt(k);
       if (!r) break;
       if (!r.el.classList.contains("wg-hid")) nodes.push(...textNodes(r.el));
@@ -163,7 +169,7 @@ export class Jumper {
       if (this.exact && r.data.e) break;                            // a search's match lies within its line
     }
     if (!needle) return rec.el;
-    return (this.exact ? rangeOfText(nodes, needle, skip) : rangeOf(nodes, needle)) || rec.el;
+    return (this.exact ? rangeOfText(nodes, needle, skip) : first(nodes)) || rec.el;
   }
 
   reveal(n, needle, skip = 0) {

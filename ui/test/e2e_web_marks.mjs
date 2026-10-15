@@ -23,6 +23,11 @@ TEXT[100] = "find alpha here";
 TEXT[2650] = "alpha beta ALPHA";
 TEXT[2700] = "x".repeat(250) + " gam";                             // a long row iTerm wrapped, "gamma" across the wrap
 TEXT[2701] = "ma end";
+const LONG = ["Long answer: the first paragraph says what changes and why it matters to the reader,",   // over 200 letters
+  "and it goes on over a second row of the same paragraph with more words in it", "",
+  "The second paragraph explains the check that was run on the delivered tree and",
+  "ends here with the closing words of the answer"];
+TEXT.splice(2400, LONG.length, ...LONG);
 const HISTORY = TEXT.map((t, n) => (n === 2700 ? { ...line(t), e: false } : line(t)));
 const FOLDS = [{ n: 500, to: 530, label: "⋯ 31 similar lines" }];
 const GONE = "These lines are no longer in this session's history.";
@@ -35,16 +40,17 @@ const ITEMS = [
   { id: "E", sid: "S9", key: null, n: 7, text: "from a session that closed", note: "closed one", title: "Old", host: null, at: at0 + 5 },
   { id: "F", sid: "S1", key: null, n: 2200, text: "See the guide for the install steps", note: "guide", title: "One", host: null, at: at0 + 6 },
   { id: "G", sid: "S1", key: null, n: 2300, text: "phantom words", note: "phantom", title: "One", host: null, at: at0 + 7 },
+  { id: "H", sid: "S1", key: null, n: 2400, text: LONG.join("\n"), note: "long answer", title: "One", host: null, at: at0 + 8 },
 ];
 const LAYOUT = [{ kind: "window", label: "Window 1", where: "", host: null, wid: "W1", new: "New tab", pool: "", items: [
   { id: "S1", title: "One", sub: ["zsh", "~/p"], index: "1", host: null, profile: "Default", agent: null, shell: true, state: "" },
   { id: "S2", title: "Two", sub: ["zsh", "~/q"], index: "2", host: null, profile: "Default", agent: null, shell: true, state: "" }] }];
 
-// the bridge's search (bookmarks.py find), enough for these checks: the line where the text, or
-// else a 20-letter part of it, starts
+// the bridge's search (bookmarks.py find), enough for these checks: the line where the text (its
+// first 200 letters and digits, PRINT), or else a 20-letter part of it, starts
 function locate(item) {
   if (item.id === "G") return { n: 2300, start: 0, size: 12 };    // as if the bridge found it, the page does not
-  const whole = loose(item.text);
+  const whole = loose(item.text).slice(0, 200);
   let joined = "";
   const starts = TEXT.map((t) => { const s = joined.length; joined += loose(t); return s; });
   const parts = whole.length > 20 ? [...Array.from({ length: Math.floor(whole.length / 20) }, (_, k) => k * 20), whole.length - 20] : [];
@@ -275,6 +281,14 @@ export async function webMarks(browser, name = "") {
   await page.waitForFunction(() => /install steps/.test(document.getElementById("markline")?.range?.toString() ?? ""), null, { timeout: 8000 }).catch(() => {});
   m = await marked(page);
   check(`${at} found by a part of its text, that part is marked`, /for the install steps$/.test(m?.text ?? "") && !/https/.test(m.text) && inView(m), JSON.stringify(m));
+  // longer than the 200 letters it is found by: the line covers it all, both paragraphs
+  await page.click('#marklist .mkitem:has-text("long answer")');
+  await page.waitForFunction(() => /closing words of the answer$/.test(document.getElementById("markline")?.range?.toString() ?? ""), null, { timeout: 8000 }).catch(() => {});
+  m = await marked(page);
+  const lastRow = await page.evaluate(() => { const row = [...document.querySelectorAll("#term .ln")].find((el) => el.textContent.includes("closing words"));
+    const r = row.getClientRects()[0], l = document.getElementById("markline").getBoundingClientRect(); return { rowBottom: Math.round(r.bottom), lineBottom: Math.round(l.bottom) }; });
+  check(`${at} a bookmark longer than the letters it is found by: the wavy line covers its whole text, to its last row`,
+    /^Long answer/.test(m?.text ?? "") && /closing words of the answer$/.test(m.text) && m.line && lastRow.lineBottom >= lastRow.rowBottom - 1, JSON.stringify({ m, lastRow }));
   await page.click('#marklist .mkitem:has-text("phantom")');
   await page.waitForFunction(() => !document.getElementById("mbwhy").hidden, null, { timeout: 5000 }).catch(() => {});
   check(`${at} its text not on the line the bridge named: the bar says so`, /not found there/.test(await page.textContent("#mbwhy")));
