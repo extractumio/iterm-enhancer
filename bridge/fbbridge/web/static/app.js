@@ -11,6 +11,7 @@ import { paneFiles } from "./panefiles.js";
 import { bindLinks } from "./termlinks.js";
 import { copyButton } from "./touchcopy.js";
 import { TermView } from "./term.js";
+import { charRatio, fitPx, frameMode, gridFit } from "./termsize.js";
 import { Views } from "./views.js";
 import { uploads } from "./upload.js";
 import { waitingCards } from "./waiting.js";
@@ -27,6 +28,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } },
 };
 
+const SIZE_MIN = 7, SIZE_MAX = 28;            // the text sizes the − and + buttons allow
 const st = {
   ws: null, groups: [], sid: store.get("sid", null),
   mode: store.get("mode", {}), size: store.get("size", null), resized: false,
@@ -43,7 +45,7 @@ const view = new TermView({ term: $("term"), hist: $("hist"), screen: $("screen"
 const input = new Input({ kbd: $("kbd"), kbdButton: $("kbdbtn"), term: $("term"), panel: $("hotkeys"), pasteDialog: $("pastebox"),
   send: (data, path, e) => { send({ t: "in", data, ...trace.keyFields(data, path, e) }); if (data.includes("\r")) { views.commandSent(); st.ran = true; } },
   options: { appCursor: () => st.appCursor || view.alt, bracketed: () => st.bracketed, onTyped: (line) => { view.typed(); if (!line) boxMoves.forget(); }, status: toast, pasteImage: files.pasteImage, pickFile,
-    tapLink: (x, y) => tapLink(x, y), tapMove: (x, y) => tapMove(x, y), cellWidth: () => view.charRatio() * parseFloat(getComputedStyle($("term")).fontSize),
+    tapLink: (x, y) => tapLink(x, y), tapMove: (x, y) => tapMove(x, y), cellWidth: () => charRatio(view) * parseFloat(getComputedStyle($("term")).fontSize),
     // Ctrl+W deletes a word: in an agent's input box; at a shell's prompt, not after an Enter until the list says the shell is back (nano: search)
     lineMove: (d, repeat) => (findItem(st.groups, st.sid)?.item.agent ? boxMoves.line(d, st.appCursor, repeat) : null),
     wordDeletes: () => { const it = st.sid && findItem(st.groups, st.sid)?.item; return !!(it?.agent ? view.box : it?.shell && !st.ran); } } });
@@ -382,7 +384,7 @@ function applyTheme(theme) {
 }
 
 function setSize(px, save = true) {
-  st.size = Math.max(7, Math.min(28, Math.round(px)));
+  st.size = Math.max(SIZE_MIN, Math.min(SIZE_MAX, Math.round(px)));
   document.documentElement.style.setProperty("--size", `${st.size}px`);
   $("sizeval").textContent = st.size;
   if (save) store.set("size", st.size);
@@ -392,15 +394,15 @@ function setSize(px, save = true) {
 // Wrap: lines re-flow to the screen. Grid: iTerm's exact layout at the chosen text size.
 // Fit: iTerm's exact layout scaled down so a whole line fits the screen width; iTerm itself is
 // not touched. (Resizing iTerm to the screen is a separate menu action, as it changes the Mac.)
-// A full-screen program (mc, vim: iTerm's alternate screen) in a pane wider than the view breaks
-// when re-flowed: Wrap shows it as Fit while it runs; the buttons keep the mode chosen.
+// A full-screen program drawing a frame wider than the view (termsize.js: mc, htop, an agent with its side
+// panel) breaks when re-flowed: Wrap shows it as Fit, or as Grid when Fit would go below SIZE_MIN; text re-flows.
 
 // The mode is remembered per session, and the one chosen last is the default for every other:
 // session ids change when iTerm2 restarts or tmux -CC attaches again.
 const MODES_KEPT = 100;
 // Until the user picks one: Wrap, on every screen.
 function mode() { return st.mode[st.sid] ?? store.get("modeDefault", "wrap"); }
-function shownMode() { return view.alt && view.tooWide() && mode() === "wrap" ? "fit" : mode(); }
+function shownMode() { return (mode() === "wrap" && frameMode(view, SIZE_MIN)) || mode(); }
 function setMode(m, chosen = true) {
   delete st.mode[st.sid];                          // re-added last: the oldest choices go first
   st.mode[st.sid] = m;
@@ -415,11 +417,9 @@ function applyFit() {
   const term = $("term"), m = shownMode();
   term.classList.toggle("wrap", m === "wrap");
   term.classList.toggle("grid", m !== "wrap");
-  if (m !== "fit" || !view.cols) { term.style.fontSize = ""; return; }
-  const px = Math.floor(((view.inner().w - 1) / view.cols / view.charRatio()) * 10) / 10;
-  term.style.fontSize = `${Math.min(px, view.chosenSize() + 4)}px`;
+  term.style.fontSize = m === "fit" && view.cols ? `${fitPx(view)}px` : "";
 }
-view.onCols = view.onAlt = () => view.keepBottom(applyFit);
+view.onFrame = () => view.keepBottom(applyFit);   // the width changed, or a frame began or ended
 document.fonts?.addEventListener("loadingdone", () => { view.ratio = 0; view.keepBottom(applyFit); });
 
 function syncControls() {
@@ -450,7 +450,7 @@ $("resize").onclick = () => {
   if (st.resized) return send({ t: "unfit" });
   if (mode() === "wrap") setMode("grid", false);   // a resized session is shown as its exact grid
   $("term").style.fontSize = "";
-  send({ t: "fit", ...view.gridFit() });
+  send({ t: "fit", ...gridFit(view) });
 };
 
 // ---------- the on-screen keyboard ----------

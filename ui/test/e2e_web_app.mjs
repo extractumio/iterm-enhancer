@@ -270,8 +270,9 @@ export async function webApp(browser) {
     fresh.shown === 4 && fresh.inView, JSON.stringify(fresh));
 
   // a full-screen program (mc) in a pane wider than the view: its rows stay rows while Wrap is chosen
-  const mc = Array.from({ length: 6 }, (_, i) => ({ r: [run("│" + `file-${i}.json`.padEnd(98) + "│" + "4.0K".padStart(98) + "│", 0)], e: false }));
-  const draw = (alt, cols = 200) => tell({ t: "screen", sid: "S1", full: true, n: mc.length, cols, rows: mc.length, alt, ch: mc.map((l, i) => [i, l]) });
+  // (120 columns: Fit keeps the text above the smallest size here; 200 would be too small to read)
+  const mcRows = (cols) => Array.from({ length: 6 }, (_, i) => ({ r: [run("│" + `file-${i}.json`.padEnd(cols / 2 - 2) + "│" + "4.0K".padStart(cols / 2 - 2) + "│", 0)], e: false }));
+  const draw = (alt, cols = 120) => { const mc = mcRows(cols); tell({ t: "screen", sid: "S1", full: true, n: mc.length, cols, rows: mc.length, alt, ch: mc.map((l, i) => [i, l]) }); };
   const layoutNow = () => $eval(() => {
     const t = document.getElementById("term"), right = t.getBoundingClientRect().right, rows = [...document.querySelectorAll("#screen .ln")];
     const lh = parseFloat(getComputedStyle(t).lineHeight);
@@ -290,6 +291,33 @@ export async function webApp(browser) {
   await page.waitForTimeout(150);
   const narrow = await layoutNow();
   check("AC-52 web app: a full-screen program in a pane that fits the view stays in Wrap", narrow.wrap, JSON.stringify(narrow));
+  // a coding agent's full-screen mode in the same wide pane: text rows, two rules and a count at the
+  // right edge; its rows end at their text, so Wrap re-flows them as it does off the alternate screen
+  const agent = [{ r: [run("⏺ Bash(python3 - <<'EOF'")], e: true }, { r: [run("  " + "the owner's long line of output ".repeat(5))], e: true },
+    ...Array.from({ length: 6 }, (_, i) => ({ r: [run(`  - a line of the answer ${i}`)], e: true })),
+    { r: [run(" ".repeat(186) + "312859 tokens")], e: true }, { r: [run("─".repeat(180) + " a title ─")], e: true },
+    { r: [run("❯ "), run(" ", 256)], e: true }, { r: [run("─".repeat(200))], e: true }, { r: [run("  ~/p main dirty:20")], e: true }];
+  tell({ t: "screen", sid: "S1", full: true, n: agent.length, cols: 200, rows: agent.length, alt: true, ch: agent.map((l, i) => [i, l]) });
+  await page.waitForTimeout(150);
+  const text = await layoutNow();
+  draw(true);                                                   // mc again: a frame
+  await page.waitForTimeout(150);
+  const frameAgain = await layoutNow();
+  check("AC-52 web app: a full-screen program whose rows are text (a coding agent's full-screen mode) re-flows in Wrap; a frame still shows as Fit",
+    text.wrap && !text.oneRow && text.pressed === "true" && !frameAgain.wrap && frameAgain.oneRow && frameAgain.inside, JSON.stringify({ text, frameAgain }));
+  // a frame so wide that Fit would shrink the text below the smallest size: Grid at the chosen size, scrolled sideways
+  const wall = mcRows(600);
+  tell({ t: "screen", sid: "S1", full: true, n: wall.length, cols: 600, rows: wall.length, alt: true, ch: wall.map((l, i) => [i, l]) });
+  await page.waitForTimeout(150);
+  const huge = await $eval(() => {
+    const t = document.getElementById("term"), cs = getComputedStyle(t);
+    return { grid: t.classList.contains("grid"), size: parseFloat(cs.fontSize), chosen: parseFloat(cs.getPropertyValue("--size")),
+      wider: t.scrollWidth > t.clientWidth, pressed: document.querySelector("[data-mode=wrap]").getAttribute("aria-pressed") };
+  });
+  draw(true, 80);                                               // as before these checks: on the alternate screen, in a pane that fits
+  await page.waitForTimeout(150);
+  check("AC-52 web app: a frame too wide for Fit to stay readable shows as Grid at the chosen size, the rest reachable sideways",
+    huge.grid && huge.size === huge.chosen && huge.wider && huge.pressed === "true", JSON.stringify(huge));
   // its arrows are application cursor keys (mc takes no key after an ESC [ B); a shell's as before
   const arrows = async () => {
     const from = sent.length;

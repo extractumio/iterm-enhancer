@@ -4,6 +4,7 @@ import { inputBox, parkedCaret, statusKey } from "./agentbox.js";
 import { cursorCol, typedEnd, withCursor } from "./cursor.js";
 import { lineRec, palette } from "./render.js";
 import { glued, inputWraps, wrapsInto } from "./rejoin.js";
+import { framed } from "./termsize.js";
 
 const LOAD_OLDER_AT = 300;   // px from the top that triggers loading older lines
 const MAX_BLOCK = 400;       // most lines in a paragraph's block: a longer one is cut (one huge soft-wrapped line)
@@ -70,6 +71,8 @@ export class TermView {
     this.oldest = 0; this.truncated = false; this.loading = false;
     this.top = 0;            // the screen's first line
     this.alt = false;        // the pane shows its alternate screen (a full-screen program)
+    this.frame = false;      // and draws a frame too wide for the view (framed), as last told
+    this.recols = false;     // the pane's width changed since the last frame was told
     this.queued = []; this.pending = null;
     this.box = this.idle = this.caret = null;    // another pane's (or a cleared screen's) input box and status lines
     this.histEl.replaceChildren(); this.screenEl.replaceChildren();
@@ -386,8 +389,8 @@ export class TermView {
     // Coalesce bursts: apply the latest state once per animation frame.
     if (!this.pending || m.full) this.pending = { full: m.full, n: m.n, ch: new Map() };
     this.pending.n = m.n;
-    if (m.cols !== this.cols) { this.cols = m.cols; this.onCols?.(); }
-    if (!!m.alt !== !!this.alt) { this.alt = !!m.alt; this.onAlt?.(); }   // a full-screen program (mc, vim) began or ended
+    if (m.cols !== this.cols) { this.cols = m.cols; this.recols = true; }   // told with the rows, in flush
+    this.alt = !!m.alt;      // a full-screen program (mc, vim, a coding agent's full-screen mode) runs
     for (const [i, data] of m.ch) this.pending.ch.set(i, data);
     if (!this.raf) this.raf = requestAnimationFrame(() => this.flush());
   }
@@ -412,6 +415,9 @@ export class TermView {
       }
       this.onRows?.(false);
     });
+    // the width changed, or a frame too wide for the view began or ended: judged on the rows now shown
+    const frame = framed(this);
+    if (frame !== this.frame || this.recols) { this.frame = frame; this.recols = false; this.onFrame?.(); }
     if (performance.now() < (this.followUntil ?? 0)) this.showCursor();
     this.onDrawn?.();
   }
@@ -423,35 +429,5 @@ export class TermView {
       this.loading = true;
       this.send({ t: "more", before: first });
     }
-  }
-
-  /** The text area's inner size in px. */
-  inner() {
-    const cs = getComputedStyle(this.term);
-    return { cs, w: this.term.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight),
-      h: this.term.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) };
-  }
-
-  /** One cell's advance per px of font size, for the terminal font now loaded. */
-  charRatio() {
-    if (this.ratio) return this.ratio;
-    const probe = document.createElement("span");
-    probe.textContent = "0".repeat(100);
-    probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;font-size:100px";
-    this.term.append(probe);
-    this.ratio = probe.getBoundingClientRect().width / 100 / 100;
-    probe.remove();
-    return this.ratio;
-  }
-
-  /** The text size chosen (the page's --size): Grid's, and Fit's at most. */
-  chosenSize() { return parseFloat(getComputedStyle(this.term).getPropertyValue("--size")); }
-  /** True when iTerm's rows are wider than the visible area at the chosen size (in Grid). */
-  tooWide() { return this.cols * this.charRatio() * this.chosenSize() > this.inner().w; }
-
-  /** Columns and rows that fit the visible area at the current font size. */
-  gridFit() {
-    const { cs, w, h } = this.inner();
-    return { cols: Math.floor(w / (this.charRatio() * parseFloat(cs.fontSize))), rows: Math.floor(h / parseFloat(cs.lineHeight)) };
   }
 }

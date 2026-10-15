@@ -3,6 +3,7 @@
 // state as text lines: sizes and places, the session, its history and bookmarks, iTerm2's rows
 // (a coding agent's input box and the screen) with the page's own row classes, and the lines
 // the browser lays the input out in. Read-only: nothing on the page changes.
+import { charRatio, gridFit } from "./termsize.js";
 
 const HIST_ROWS = 12;          // the history's last rows in a snapshot
 const SCREEN_ROWS = 120;       // the screen's rows at most
@@ -83,8 +84,8 @@ export function webLines(el) {
 export function sizes(view) {
   const vv = window.visualViewport, term = view.term, cs = getComputedStyle(term), px = parseFloat(cs.fontSize);
   return { win: [innerWidth, innerHeight], vv: vv ? [round(vv.width), round(vv.height), round(vv.offsetTop)] : null, dpr: devicePixelRatio,
-    term: [term.clientWidth, term.clientHeight], font: px, lh: parseFloat(cs.lineHeight) || null, cell: Math.round(view.charRatio() * px * 100) / 100,
-    fits: view.gridFit(), iterm: [view.cols, view.screen.length], wrap: term.classList.contains("wrap"), alt: !!view.alt,
+    term: [term.clientWidth, term.clientHeight], font: px, lh: parseFloat(cs.lineHeight) || null, cell: Math.round(charRatio(view) * px * 100) / 100,
+    fits: gridFit(view), iterm: [view.cols, view.screen.length], wrap: term.classList.contains("wrap"), alt: !!view.alt,
     scroll: [Math.round(term.scrollTop), term.scrollHeight, view.atBottom()] };
 }
 
