@@ -7,6 +7,7 @@ fall back to the running program and the directory. The line below names the pro
 folder, then the other titles: those matter least.
 """
 import asyncio
+import json
 import re
 import shlex
 
@@ -71,7 +72,16 @@ def ssh_host(command_line):
 
 
 async def _vars(obj, names):
-    values = await asyncio.gather(*(gated(obj.async_get_variable(n)) for n in names))
+    """A session's or a tab's variables, in one request to iTerm2 (one each would be 9 answers
+    a pane, every poll: rpcstats.py); an object without a connection (a test's) one by one."""
+    sid, tid, conn = getattr(obj, "session_id", None), getattr(obj, "tab_id", None), getattr(obj, "connection", None)
+    if conn is not None and (sid or tid):
+        r = (await gated(iterm2.rpc.async_variable(conn, session_id=sid, tab_id=None if sid else tid, gets=names))).variable_response
+        if r.status != iterm2.api_pb2.VariableResponse.Status.Value("OK"):
+            raise iterm2.rpc.RPCException(iterm2.api_pb2.VariableResponse.Status.Name(r.status))
+        values = [json.loads(v) for v in r.values]
+    else:
+        values = await asyncio.gather(*(gated(obj.async_get_variable(n)) for n in names))
     return {n: (v or "") if not isinstance(v, (int, float)) else v for n, v in zip(names, values)}
 
 

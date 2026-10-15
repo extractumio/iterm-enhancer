@@ -91,6 +91,19 @@ export function navTools({ send, store, current, onResize, onRenamed }) {
   $("mergego").onclick = () => { hideMerge(); send({ t: "merge" }); };
   $("mergecancel").onclick = hideMerge;
 
+  // ---------- iTerm2 not answering (AC-55, the bridge's stall.py) ----------
+  // Screens, keys and histories wait for it: say so, with the time it has not answered.
+  let stallTimer = null;
+  function showStall(m) {
+    clearInterval(stallTimer);
+    const el = $("stall"), since = performance.now() - (m.ms ?? 0);
+    el.hidden = !!m.ok;
+    if (m.ok) return;
+    const say = () => { el.textContent = `iTerm2 is not responding (${Math.round((performance.now() - since) / 1000)} s). Screens and keys wait for it; another program using its API may be busy with it.`; };
+    say();
+    stallTimer = setInterval(say, 1000);
+  }
+
   // ---------- dropped tmux integrations (AC-54) ----------
   // The bridge detached a tmux client iTerm2 had let go of: the session keeps running on its
   // host; Reattach opens it in iTerm2 again.
@@ -138,5 +151,5 @@ export function navTools({ send, store, current, onResize, onRenamed }) {
   });
   $("renamename").addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); endRename(true); } });
 
-  return { showProfiles, showMerge, showDrops, endRename, renaming: () => !$("renamebox").hidden };
+  return { showProfiles, showMerge, showDrops, showStall, endRename, renaming: () => !$("renamebox").hidden };
 }

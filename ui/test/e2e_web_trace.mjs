@@ -21,7 +21,7 @@ const THEME = { bg: "#1e1e1e", fg: "#d4d4d4", cursor: "#ffffff", cursorText: "#0
 export async function open(browser, query, device = { viewport: { width: 1400, height: 800 } }) {
   const page = await browser.newPage(device);
   const sent = [], errors = [];
-  let typed = "";
+  let typed = "", tell = null;
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.route(`${ORIGIN}/**`, (route) => {
     const p = new URL(route.request().url()).pathname;
@@ -34,6 +34,7 @@ export async function open(browser, query, device = { viewport: { width: 1400, h
   });
   await page.routeWebSocket(`${ORIGIN.replace("http", "ws")}/ws`, (ws) => {
     const say = (m) => ws.send(JSON.stringify(m));
+    tell = say;
     const screen = (sid, full, rows, extra = {}) => say({ t: "screen", sid, full, n: 3, cols: 80, rows: 3, ch: rows, ...extra });
     let sid = null;
     ws.onMessage((m) => {
@@ -59,7 +60,7 @@ export async function open(browser, query, device = { viewport: { width: 1400, h
   });
   await page.goto(`${ORIGIN}/${query}`);
   await page.waitForFunction(() => document.querySelectorAll("#screen .ln").length === 3, null, { timeout: 10000 });
-  return { page, sent, errors };
+  return { page, sent, errors, say: (m) => tell(m) };
 }
 
 const records = (sent) => sent.filter((m) => m.t === "trace" && Array.isArray(m.ev)).flatMap((m) => m.ev);
@@ -105,5 +106,13 @@ export async function webTrace(browser) {
   const msgs = plain.sent.filter((m) => m.t === "in" || m.t === "trace");
   check("AC-55 trace: without ?trace=1 no key number, no trace message, no badge",
     msgs.length === 1 && msgs[0].t === "in" && !("k" in msgs[0]) && !(await plain.page.$("#tracebadge")), JSON.stringify(msgs));
+  // iTerm2 not answering (the bridge's stall.py): a line says so and counts the seconds, gone once it answers
+  plain.say({ t: "iterm", ok: false, ms: 4000 });
+  await plain.page.waitForTimeout(1200);
+  const stalled = await plain.page.evaluate(() => { const el = document.getElementById("stall"); return { shown: !el.hidden && el.getClientRects().length > 0, text: el.textContent }; });
+  plain.say({ t: "iterm", ok: true, ms: 9000 });
+  await plain.page.waitForTimeout(200);
+  check("AC-55: iTerm2 not answering is said above the terminal with its seconds, and hidden once it answers",
+    stalled.shown && /^iTerm2 is not responding \((5|6) s\)/.test(stalled.text) && await plain.page.evaluate(() => document.getElementById("stall").hidden), JSON.stringify(stalled));
   await plain.page.close();
 }

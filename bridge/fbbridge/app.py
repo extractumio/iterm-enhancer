@@ -12,7 +12,7 @@ import urllib.error
 import iterm2
 
 from .backend import Backend
-from . import agentctl, profiler, settings
+from . import agentctl, profiler, rpcstats, settings
 from .common import APP_DIR, BASE, HEARTBEAT, HOSTS_EVERY, POLL, POLL_TIMEOUT, SHELLS, THEME_EVERY, TOOL_ID, UserError, log
 from .lifecycle import LockError, bounded, connection_closed, take_lock, watch
 from .inventory import Inventory
@@ -21,6 +21,7 @@ from .procinfo import iterm_process
 from .registry import heal, registered_here, remember
 from .resolve import open_hosts, resolve, static_vars, theme_of
 from .remote import Remotes
+from .rpcstats import tag, tagged
 from .updates import Updates
 from .recovery_capture import Capture, epoch
 from .recovery_lifecycle import Lifecycle
@@ -275,6 +276,7 @@ async def main(conn):
     await register(conn, run_epoch)
     install_viewer_profile()
 
+    rpcstats.install()
     app = await iterm2.async_get_app(conn)
     windows = Windows(app, backend)
     await windows.adopt_viewer()
@@ -283,22 +285,23 @@ async def main(conn):
     capture = Capture(conn, app, windows, backend)
     capture.epoch = run_epoch
     capture.lifecycle = Lifecycle(capture)
-    asyncio.create_task(capture.lifecycle.follow())
+    asyncio.create_task(tagged("lifecycle", capture.lifecycle.follow()))
     recovery = Runner(capture)
     updates = Updates(backend.post)
     tmux_watch = TmuxWatch(conn, app)
-    asyncio.create_task(tmux_watch.follow())
+    asyncio.create_task(tagged("tmuxwatch", tmux_watch.follow()))
     web = WebAccess(conn, app, backend.post, remotes, tmux_watch)
-    asyncio.create_task(run_commands(conn, app, windows, commands, recovery, updates, web))
-    asyncio.create_task(web.follow())
+    asyncio.create_task(tagged("commands", run_commands(conn, app, windows, commands, recovery, updates, web)))
+    asyncio.create_task(tagged("web", web.follow()))
     asyncio.create_task(updates.follow())
-    asyncio.create_task(Startup(capture, recovery).follow())
-    asyncio.create_task(recovery.follow())
-    asyncio.create_task(capture.follow())
-    asyncio.create_task(Inventory().follow(conn, backend.post))
-    asyncio.create_task(settings.follow(conn, APP_DIR, backend.post))
+    asyncio.create_task(tagged("startup", Startup(capture, recovery).follow()))
+    asyncio.create_task(tagged("recovery", recovery.follow()))
+    asyncio.create_task(tagged("capture", capture.follow()))
+    asyncio.create_task(tagged("inventory", Inventory().follow(conn, backend.post)))
+    asyncio.create_task(tagged("settings", settings.follow(conn, APP_DIR, backend.post)))
 
     follower = Follower(conn, app, windows)
+    tag("focus")
     while True:
         try:
             if not backend.alive():

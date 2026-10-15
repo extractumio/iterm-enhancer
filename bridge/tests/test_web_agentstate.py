@@ -9,6 +9,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.modules.setdefault("iterm2", types.ModuleType("iterm2"))
 
+import asyncio  # noqa: E402
+from unittest.mock import AsyncMock  # noqa: E402
+
+from fbbridge.web import agentstate  # noqa: E402
 from fbbridge.web.agentstate import claude_marked, state_of  # noqa: E402
 
 FOOTER = ["────", "❯ ", "────", "  ~/p Opus 5.5 ctx:47%"]
@@ -148,6 +152,21 @@ class TmuxPaneTest(unittest.TestCase):
         self.assertEqual((shell["title"], shell["pane"]), ("bash", 6))
         alone = asyncio.run(layout.session_item(session(jobName="zsh"), plain, tv, 1, 1, 3))
         self.assertEqual(alone["pane"], 0)
+
+
+
+class ReadTest(unittest.TestCase):
+    def test_the_screen_is_read_again_only_on_a_new_title_or_after_a_while(self):
+        rows = types.SimpleNamespace(string="Do you want to proceed?")
+        screen = types.SimpleNamespace(number_of_lines=1, line=lambda i: rows)
+        s = types.SimpleNamespace(session_id="agent-1", async_get_screen_contents=AsyncMock(return_value=screen))
+        every = agentstate.STATE_EVERY
+
+        async def go():
+            return [await agentstate.session_state(s, title, now) for title, now in
+                    [("✳ x", 0), ("✳ x", 1), ("◐ x", 2), ("◐ x", 3), ("◐ x", 3 + every)]]
+        self.assertEqual(asyncio.run(go()), ["waiting"] * 5)
+        self.assertEqual(s.async_get_screen_contents.await_count, 3)
 
 
 if __name__ == "__main__":

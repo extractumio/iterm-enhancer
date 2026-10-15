@@ -10,6 +10,7 @@ import time
 import iterm2
 
 from ..common import UserError, log
+from ..rpcstats import tag
 from ..resolve import theme_of
 from .httpd import ConnectionClosed
 from .merge import MergeError, merge_windows
@@ -31,7 +32,8 @@ FRAME_GAP = 0.03       # shortest gap between two screen frames (max ~30 fps)
 # polled: fast right after typing or a change, slowly when idle. An unchanged screen costs one
 # request and one comparison.
 POLL_ACTIVE = 0.05     # seconds between polls while busy
-POLL_IDLE = 0.25       # seconds between polls when nothing changed for ACTIVE_FOR
+POLL_IDLE = 1.0        # seconds between polls when nothing changed for ACTIVE_FOR: iTerm2 says when
+                       # it changes; this only catches a change it did not report (a screen is ~9 KB)
 ACTIVE_FOR = 3.0
 SEND_TIMEOUT = 10      # a browser that takes longer to accept a message is dropped
 CLOSED = "This session has closed. Pick another one."
@@ -205,6 +207,7 @@ class Client:
 
     async def stream(self, session):
         """Push theme, history and then every screen change until stopped."""
+        tag("web screen")
         theme = await theme_of(self.app, session)
         await self.send({"t": "theme", "sid": session.session_id, "theme": theme})
         # Not session.get_screen_streamer(): it drops updates that arrive while no get() is

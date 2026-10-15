@@ -10,7 +10,7 @@ from pathlib import Path
 from .. import agentctl
 from ..common import log
 from ..resolve import resolve
-from . import config, httpd
+from . import config, httpd, stall
 from .net import lan_addresses, urls
 from .paste import PasteError
 from .site import Site
@@ -22,7 +22,7 @@ REPORT_EVERY = 30        # seconds between status reports (a restarted fbd forge
 class WebAccess:
     def __init__(self, conn, app, post, remotes, tmux=None):
         self.conn, self.app, self.post, self.remotes, self.tmux = conn, app, post, remotes, tmux
-        self.server = self.site = self.hub_task = None
+        self.server = self.site = self.hub_task = self.stall_task = None
         self.running = None      # the settings the server runs with
         self.seen = object()     # web.json's mtime when last applied
         self.cfg, self.error, self.urls = None, None, []
@@ -83,6 +83,7 @@ class WebAccess:
             return
         self.site, self.running = site, settings
         self.hub_task = asyncio.create_task(site.hub.run())
+        self.stall_task = asyncio.create_task(stall.watch(site.hub))
         self.urls = urls(cfg["host"], cfg["port"], addresses)
         log(f"web access on: {', '.join(self.urls)}")
 
@@ -90,9 +91,10 @@ class WebAccess:
         if not self.server:
             return
         self.hub_task.cancel()
+        self.stall_task.cancel()
         await self.site.close()
         self.server.close()                      # also the connections still open (Files, its sockets)
-        self.server = self.site = self.hub_task = self.running = None
+        self.server = self.site = self.hub_task = self.stall_task = self.running = None
         self.urls = []
         log("web access off")
 

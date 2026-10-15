@@ -8,6 +8,7 @@ import time
 import iterm2
 
 from ..common import log
+from ..rpcstats import tag
 from .bookmarks import Store
 from .layout import layout_of
 from .trace import ms, note
@@ -39,8 +40,10 @@ class Hub:
         self.fitted = {}         # session id -> [original (cols, rows), browsers that fitted it]
         self.merging = asyncio.Lock()   # two browsers merging at once would move tabs of closed windows
         self.marks = Store(marks)        # bookmarks (AC-57); marks: their file, none for a test's Hub
+        self.stalled = None              # when iTerm2 stopped answering (stall.py), None while it answers
 
     async def run(self):
+        tag("web list")
         loop = asyncio.get_running_loop()
         polled = loop.time()
         while True:
@@ -121,5 +124,7 @@ class Hub:
         if self.layout is None:
             self.layout = await layout_of(self.app)
         await client.send({"t": "layout", "groups": self.layout})
+        if self.stalled is not None:
+            await client.send({"t": "iterm", "ok": False, "ms": round((asyncio.get_running_loop().time() - self.stalled) * 1000)})
         await client.send(self.drops())
         await client.send({"t": "marks", "items": self.marks.all(), "error": self.marks.broken})

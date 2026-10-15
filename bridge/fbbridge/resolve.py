@@ -119,8 +119,26 @@ def _hex(c):
     return "#%02x%02x%02x" % (round(c.red), round(c.green), round(c.blue)) if c else None
 
 
+_THEME_COLORS = ["Background", "Foreground", "Selection", "Selected Text", "Cursor", "Link", "Bold", "Cursor Text",
+                 *(f"Ansi {i}" for i in range(16))]
+THEME_KEYS = ["Use Separate Colors for Light and Dark Mode", "Use Bright Bold", "Normal Font",
+              *(f"{c} Color{v}" for c in _THEME_COLORS for v in ("", " (Dark)", " (Light)"))]
+
+
+async def theme_profile(session):
+    """The profile's keys a theme reads: the whole profile is about 21 KB an answer, read every
+    2 s, and iTerm2 writes each answer out for its Script Console (rpcstats.py)."""
+    conn = getattr(session, "connection", None)
+    if conn is None:          # a test's session
+        return await session.async_get_profile()
+    r = (await iterm2.rpc.async_get_profile(conn, session.session_id, keys=THEME_KEYS)).get_profile_property_response
+    if r.status != iterm2.api_pb2.GetProfilePropertyResponse.Status.Value("OK"):
+        raise iterm2.rpc.RPCException(iterm2.api_pb2.GetProfilePropertyResponse.Status.Name(r.status))
+    return iterm2.profile.Profile(session.session_id, conn, r.properties)
+
+
 async def theme_of(app, session):
-    p = await session.async_get_profile()
+    p = await theme_profile(session)
     dark = "dark" in str(await app.async_get_variable("effectiveTheme") or "dark")
     variant = ("_dark" if dark else "_light") if p.use_separate_colors_for_light_and_dark_mode else ""
 

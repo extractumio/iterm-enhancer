@@ -250,6 +250,7 @@ function onMessage(m) {
     case "error": status(m.msg); break;
     case "note": toast(m.msg, 4000); break;
     case "drops": tools.showDrops(m.items); break;
+    case "iterm": tools.showStall(m); break;
     case "profiles": tools.showProfiles(m.items); break;
     case "build": checkBuild(m.id); break;
     case "trace": trace.onMessage(m); break;

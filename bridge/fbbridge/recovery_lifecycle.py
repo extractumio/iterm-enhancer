@@ -14,6 +14,8 @@ from .recovery_liveness import session_state
 
 GRACE = 1.5
 GAP = 5
+MARKER_EVERY = 10   # rounds between profile reads of a session seen before
+BACKOFF = 4         # most seconds between polls after timeouts in a row
 
 
 class Lifecycle:
@@ -32,6 +34,8 @@ class Lifecycle:
         self.exits = {}
         self.pending = {}
         self.last = None
+        self.rounds = 0
+        self.unproven = {}           # sid -> the round its root was last tried and not proven
         self.lock = asyncio.Lock()
 
     def operational(self):
@@ -143,19 +147,32 @@ class Lifecycle:
                 self.absent.clear()  # a gap is not evidence of a deliberate closure
             self.last = now
             self.live = set()
+            self.rounds += 1
             for sid, session in sessions.items():
                 returned = sid in self.absent or self.pending.get(sid, {}).get("revive") is False
                 self.absent.pop(sid, None)
-                try:
-                    marker = await session.async_get_variable("profileName")
-                    if not isinstance(marker, str):
-                        marker = None
-                except Exception:
-                    marker = self.known.get(sid)
-                self.known[sid] = marker
+                # Each read is a call iTerm2 answers on its main thread (rpcstats.py): a session
+                # seen before reads its profile every MARKER_EVERY rounds, and a root watched for
+                # its exit is not read again until the watch lets it go (it exited) or the session
+                # comes back; a tmux -CC pane stays one.
+                if sid not in self.known or returned or self.rounds % MARKER_EVERY == 0:
+                    try:
+                        marker = await session.async_get_variable("profileName")
+                        if not isinstance(marker, str):
+                            marker = None
+                    except Exception:
+                        marker = self.known.get(sid)
+                    self.known[sid] = marker
+                marker = self.known[sid]
                 source = await self.source(marker)
-                identity = await root_identity(session)
                 previous = self.identities.get(sid)
+                watched = bool(previous) and not returned and getattr(self.watch, "sessions", {}).get(previous[0]) == (sid, previous)
+                known_control = sid in self.controls and not returned
+                # a root not proven (iTerm2's pid is root's /usr/bin/login, unreadable) is tried
+                # again every MARKER_EVERY rounds; at once for a session new or back, and every
+                # round while an exit it had waits for its confirmation
+                unproven = not returned and sid not in self.exits and self.rounds - self.unproven.get(sid, -MARKER_EVERY) < MARKER_EVERY
+                identity = previous if watched else None if known_control or unproven else await root_identity(session)
                 if identity:
                     self.live.add(sid)
                     self.failed.discard(sid)
@@ -173,9 +190,11 @@ class Lifecycle:
                         self.queue(sid, True)  # Undo/restart with a freshly proven live root
                 if identity is None:
                     try:
-                        control = await session.async_get_variable("tmuxRole") == "client"
+                        control = known_control or (not unproven and await session.async_get_variable("tmuxRole") == "client")
                     except Exception:
                         control = False
+                    if not control and not unproven:
+                        self.unproven[sid] = self.rounds
                     if control and (sid not in self.controls or returned):
                         self.controls.add(sid)
                         self.queue(sid, True)  # CC panes have no local root PID; fresh native role is proof.
@@ -184,11 +203,14 @@ class Lifecycle:
                     elif source and source["connection"]["kind"] in ("ssh", "tmux") and sid not in self.exits:
                         if await session_state(session) == "ended":
                             self.failed.add(sid)  # bridge restart after an unacknowledged connection failure
+                else:
+                    self.unproven.pop(sid, None)
             self.failed = {sid for sid in self.failed if not self.superseded(sid)}
             self.connecting = {sid for sid in self.connecting if not self.superseded(sid)}
             self.pending = {sid: event for sid, event in self.pending.items() if event["revive"] or not self.superseded(sid)}
             for sid in set(self.known) - set(sessions):
                 self.absent.setdefault(sid, now)
+            self.unproven = {sid: k for sid, k in self.unproven.items() if sid in sessions}
             for sid, since in {**self.absent, **self.exits}.items():
                 if now - since >= GRACE:
                     self.queue(sid, False)
@@ -220,11 +242,15 @@ class Lifecycle:
             self.recipes = {m: p for m, p in self.recipes.items() if m in markers}
 
     async def follow(self):
+        wait = 0.5
         try:
             while True:
                 try:
                     await asyncio.wait_for(self.poll(), 4)
+                    wait = 0.5
                 except Exception as e:
+                    if isinstance(e, TimeoutError):   # iTerm2 busy: asking again at once adds to it
+                        wait = min(wait * 2, BACKOFF)
                     self.absent.clear()
                     message = f"Session closure tracking unavailable ({type(e).__name__}); recovery history preserved"
                     log(message)
@@ -232,6 +258,6 @@ class Lifecycle:
                         await self.capture.call("POST", "/internal/recovery/error", {"message": message})
                     except Exception:
                         pass
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(wait)
         finally:
             self.watch.close()

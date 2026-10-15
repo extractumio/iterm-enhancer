@@ -4,6 +4,7 @@ working, waiting for the user, failed, or done. Claude Code puts a spinner in fr
 terminal title while it works and ✳ when it is idle (measured: ◐ ◑ ◒ ◓ turning, ✳ at rest);
 a question or a failure shows only on its screen, so the last rows are read for those."""
 import re
+import time
 
 SPINNER = re.compile("^[◐-◓✢✶✻✽·⠀-⣿]")   # ◐◑◒◓ ✢✶✻✽ · braille
 IDLE = re.compile("^✳")                                                            # ✳
@@ -34,7 +35,23 @@ def state_of(title, rows):
     return "working" if working else "done"
 
 
-async def session_state(session, title):
+STATE_EVERY = 6.0         # seconds a state stands while the title stays the same
+_known = {}               # session id -> (title, when read, state)
+
+
+async def session_state(session, title, now=None):
+    """The state, from the screen read again only when the title changed (Claude Code turns its
+    spinner while it works) or STATE_EVERY passed: the screen is iTerm2's largest answer (about
+    24 KB, its styles included), and the list asks every 2 s for every agent's pane."""
+    now = time.monotonic() if now is None else now
+    sid = session.session_id
+    last = _known.get(sid)
+    if last and last[0] == title and now - last[1] < STATE_EVERY:
+        return last[2]
     screen = await session.async_get_screen_contents()
     n = screen.number_of_lines
-    return state_of(title, [screen.line(i).string for i in range(max(0, n - ROWS), n)])
+    state = state_of(title, [screen.line(i).string for i in range(max(0, n - ROWS), n)])
+    if len(_known) > 500:     # sessions long closed
+        _known.clear()
+    _known[sid] = (title, now, state)
+    return state
