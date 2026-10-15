@@ -187,6 +187,9 @@ and sign in:
   there goes by words after 1.5 s. On a phone lines
   re-flow to the screen (**Wrap**); **Grid** keeps iTerm2's layout, **Fit** scales it to the
   width, **Resize iTerm to this screen** (⋯) changes the Mac's window until you restore it.
+  A full-screen program drawing a frame wider than the screen (mc, htop) shows as Fit while it
+  runs; the lines such a program scrolled off (iTerm2 keeps them when its profile saves the
+  alternate screen's lines) fold to one line in the history.
   With a keyboard attached to a phone or a tablet, ⌘C copies the selected terminal text and ⌘V
   pastes into the pane.
 - **Names**: the pencil beside the title names the session: its iTerm2 tab and session, and in
