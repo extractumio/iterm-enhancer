@@ -1,7 +1,7 @@
 // The web app's Wrap mode (AC-52): which hard line ends are a program's own wrap of one line.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { glued, inputWraps, wrapsInto } from "../../bridge/fbbridge/web/static/term.js";
+import { glued, inputWraps, wrapsInto } from "../../bridge/fbbridge/web/static/rejoin.js";
 
 const COLS = 131;
 
@@ -39,6 +39,21 @@ test("a word longer than the row, broken by the program at its edge, joins witho
   assert.equal(glued(listed(1), listed(2), 80), false, "two paths of a listing, each on its line");
   assert.equal(glued("  cp /Users/alex/shots/build-2026-10-11/simulator/iphone-17/a.png /Users/alex/x.png", "  /Users/alex/final/home-screen.png", 80), false, "cp a b wrapped at its space");
   assert.equal(glued("  " + "x".repeat(76), "  https://devbox.example/next", 80), false, "an address of its own");
+});
+
+test("a tool's output Claude Code cut by characters at cols - 5 joins without a space, wherever the cut falls", () => {
+  // measured in iTerm2 at 80 columns (Claude Code 2.1.300, an output shown short): rows of 75, hard line ends
+  const first = "  ⎿ \u00a0# /etc/app/env on the build VMs, owned by root with group app, mode 06";
+  assert.equal(first.length, 75);
+  assert.equal(wrapsInto(first, "     40), read by both units.", 80), true);
+  assert.equal(glued(first, "     40), read by both units.", 80), true);
+  const listing = "     -rw-r----- 1 root app 1041 Oct 14 14:51 /etc/devbox-example-consoles/e";
+  assert.equal(listing.length, 75);
+  assert.equal(glued(listing, "     nv", 80), true, "a path shorter than the row, cut inside");
+  assert.equal(glued(listing.slice(0, 70), "     nv", 80), false, "a row not full ends a word");
+  assert.equal(glued(listing.slice(0, 74) + " ", "     nv", 80), false, "a row ending in a space");
+  assert.equal(glued(listing, "      nv", 80), false, "the next row indented more: its own");
+  assert.equal(glued("  " + listing.slice(2), "  nv", 80), false, "prose (indented 2) keeps the old rule");
 });
 
 // Claude Code's input box at 80 columns, as measured in iTerm2: rows of at most 78 characters

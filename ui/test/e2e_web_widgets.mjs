@@ -393,6 +393,13 @@ export async function webWidgets(browser, name = "") {
     glue.glue && glue.shown && glue.path === long && glue.lnk.some(([a, b]) => a === 1 && b === 2) && openedLong === long && copiedLong?.trim() === long,
     JSON.stringify({ glue, openedLong, copiedLong }));
   await broken.page.close();
+  // a tool's output Claude Code cut by characters at cols - 5 (measured): one path again, though shorter than the row
+  const row = "  ⎿ \u00a0-rw-r----- 1 root app 1041 Oct 14 14:51 /etc/devbox-example-consoles/e";
+  const cutOut = await open(browser, { screen: ["⏺ Bash(ls -l /etc/devbox-example-consoles/env)", row, "     nv", "     … +3 lines (ctrl+o to expand)"] });
+  const cutRows = await cutOut.page.evaluate(() => { const r = [...document.querySelectorAll("#screen .ln")]; return { glue: r[1].classList.contains("glue"), text: r[1].parentElement.textContent }; });
+  check(`${at} a tool's output cut inside a path at cols - 5 joins without a space`,
+    row.length === 75 && cutRows.glue && /consoles\/env/.test(cutRows.text.replace(/\s{2,}/g, "")), JSON.stringify(cutRows));
+  await cutOut.page.close();
 
   // fbd not running: the widget says so, and the rows show as text
   const off = await open(browser, { renderers: false });

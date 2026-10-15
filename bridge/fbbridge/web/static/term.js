@@ -3,10 +3,10 @@
 import { inputBox, parkedCaret, statusKey } from "./agentbox.js";
 import { cursorCol, typedEnd, withCursor } from "./cursor.js";
 import { lineRec, palette } from "./render.js";
+import { glued, inputWraps, wrapsInto } from "./rejoin.js";
 
 const LOAD_OLDER_AT = 300;   // px from the top that triggers loading older lines
 const MAX_BLOCK = 400;       // most lines in a paragraph's block: a longer one is cut (one huge soft-wrapped line)
-const BOXED = /^[│┃║╎┆|]|[│┃║╎┆|]$/; // rows of a drawn box: never re-joined
 
 // Programs such as Claude Code wrap prose themselves at iTerm's width, with hard line ends.
 // Re-flowing that on a narrow screen leaves ragged half-lines. A hard end is treated as a
@@ -21,47 +21,6 @@ function wrappedHere(a, b, cols, boxed) {
 // A row that ends in the cursor, past its text: Claude Code's cursor on the space it wrapped at
 // (measured: → from a row's last character); re-joined, the cursor's cell stands for that space.
 const cursorLast = (data) => { const [t, , , f] = data.r.at(-1) ?? []; return !!(f & 256) && !(Array.isArray(t) ? t.join("") : t).trim(); };
-
-// Lines that start something new: a list item, an agent's mark (⏺ ⎿ ● ❯ ✻ · and other symbols
-// and emoji) or a numbered line of a listing or a diff ("151:", "12 +", "694-}").
-const STARTS_NEW = /^(?:[-*•+>]\s|\d+[.)]\s|[\u00b7\u2190-\u2bff\u{1f000}-\u{1faff}]|\d+(?::|\s*[-+]))/u;
-
-/** True when line a's hard end is a wrap of the text that goes on in line b; room: the most
- *  characters a row of it holds (a program's prose leaves a few cells free). */
-export function wrapsInto(a, b, cols, room = cols - 4) {
-  if (!a || !b.trim()) return false;
-  if (BOXED.test(a.trim()) || BOXED.test(b.trim())) return false;
-  const next = b.trimStart();
-  if (STARTS_NEW.test(next)) return false;
-  // Right-aligned or centered text is padded in front, which makes a short line look full.
-  const indent = (t) => t.length - t.trimStart().length;
-  if (indent(a) > cols / 4 || indent(b) > cols / 4) return false;
-  const word = next.split(/\s/, 1)[0].length;
-  return a.length + 1 + word > room;
-}
-
-/** The same in a coding agent's input box, as Claude Code wraps what is typed there (measured):
- *  its rows hold cols - 2 characters, prompt included, and a space typed at a full row's end
- *  puts the cursor alone on the next row, which goes on the same line until a word comes. */
-export function inputWraps(a, b, cols, cursor) {
-  if (!b.trim()) return cursor && !!a && a.length >= cols - 2;
-  return wrapsInto(a, b, cols, cols - 2);
-}
-
-const NEW_TOKEN = /^(?:\/|~\/|\.\.?\/|[a-z][\w+.-]*:\/\/)/i;   // how a path or an address starts
-
-/** True when the wrap between line a and line b (wrapsInto) broke a word longer than the row:
- *  a program does so only at the row's edge (wrap-ansi's hard mode, as Claude Code's), so a is
- *  full and the word across the break is longer than the row's room. Such rows join without a
- *  space (a long path or address stays one), prose keeps its space; a next row that starts a
- *  path or an address is one of its own. Characters are counted, not cells: a full row with
- *  wide characters reads as short and is not glued (a known limit). */
-export function glued(a, b, cols) {
-  if (!a || !cols || a.length < cols - 4) return false;
-  const tail = /\S+$/.exec(a)?.[0], head = /^\S+/.exec(b.trimStart())?.[0];
-  if (NEW_TOKEN.test(head ?? "")) return false;                 // a path or address of its own (a listing, cp a b)
-  return !!tail && !!head && tail.length + head.length > cols - (a.length - a.trimStart().length) - 4;
-}
 
 /** Where blocks of lines end: after the first paragraph end (ends[i]) at least `min` lines
  *  into each block, or after `max` lines without one. Returns the end indexes (exclusive);
