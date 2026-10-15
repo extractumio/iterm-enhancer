@@ -47,6 +47,7 @@ export async function open(browser, query, device = { viewport: { width: 1400, h
       }
       if (msg.t === "trace" && "on" in msg) say({ t: "trace", on: msg.on, left: 900, file: "trace-20261009-120000.jsonl" });
       if (msg.t === "trace" && msg.ping != null) say({ t: "trace", pong: msg.ping });
+      if (msg.t === "trace" && "stages" in msg) say({ t: "trace", stages: msg.stages === true });   // ?trace=2 (trace.py)
       if (msg.t === "in") {
         typed += msg.data;
         const tr = msg.k ? { tr: { ks: [{ k: msg.k, fwd: 0.5, type: 1.5, via: "text", woke: "wake", wait: 4, polls: 0, read: 2, bt: 9, skip: 0 }], enc: 0.4 } } : {};

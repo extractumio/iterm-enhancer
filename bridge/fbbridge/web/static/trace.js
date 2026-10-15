@@ -4,6 +4,9 @@
 // keys and its own stages in it), the parse, the drawing and the next frame; also a session
 // opened, pings and stalled frames. Records go to the bridge every 2 s, which writes them with
 // its own to a log on the Mac (trace.py). Nothing typed or shown is recorded: kinds and times.
+// The same hooks feed the context trace of ?trace=2 (tracebuf.js), which is the page's alone.
+import * as buf from "./tracebuf.js";
+
 const ON = new URLSearchParams(globalThis.location?.search ?? "").get("trace") === "1";
 const EVERY = 2000;             // ms between batches, pings and checks
 const STALE = 10000;            // a key with no echo by then is noted without one
@@ -33,6 +36,7 @@ export function keyKind(data) {
 
 /** The WebSocket is open: ask the bridge to record (a reconnect goes on with the same file). */
 export function connected(send, ws) {
+  buf.connected(send);
   if (!ON) return;
   link = { send, ws };
   send({ t: "trace", on: true, resume: started });
@@ -44,7 +48,8 @@ export function composing(e) { if (live) compStart = stamp(e); }
 
 /** Fields for an "in" message: its key number, and the record of its way so far. */
 export function keyFields(data, path, e) {
-  if (!live) return {};
+  const own = buf.key(data, path, e);           // ?trace=2's number, when it is on
+  if (!live) return own;
   const t1 = now(), t0 = e ? stamp(e) : t1;
   k += 1;
   keys.set(k, { ev: "echo", k, path, cls: keyKind(data), n: data.length, comp: compStart == null ? undefined : t1 - compStart,
@@ -55,6 +60,7 @@ export function keyFields(data, path, e) {
 
 /** A message from the bridge, parsed and timed. */
 export function parse(text) {
+  buf.size(text.length);
   if (!live) return JSON.parse(text);
   const a = now(), m = JSON.parse(text);
   parsed = { at: a, ms: now() - a, bytes: text.length };
@@ -63,6 +69,7 @@ export function parse(text) {
 
 /** A message the page will apply: keys it answers, or a session's first screen. */
 export function received(m) {
+  buf.rx(m);
   if (!live || m.t !== "screen") return;
   for (const b of m.tr?.ks ?? []) {
     const r = keys.get(b.k);
@@ -76,6 +83,7 @@ export function received(m) {
 
 /** The terminal drew what came: the keys' and an opened session's next frame is their paint. */
 export function drawn() {
+  buf.drawn();
   if (!live) return;
   const t3 = now(), done = drawnKeys.splice(0), o = open?.first != null ? open : null;
   if (o) open = null;
@@ -96,16 +104,22 @@ export function drawn() {
 }
 
 /** The user picked a session. */
-export function opening(sid) { if (live) open = { sid, t0: now(), first: null }; }
+export function opening(sid) { buf.opening(sid); if (live) open = { sid, t0: now(), first: null }; }
 
-/** Drawing that takes longer than a frame, by what drew. */
-export function watch(view) {
-  if (!ON) return;
+/** Every message the page sends: the context trace's. */
+export const sent = buf.sent;
+
+/** Drawing that takes longer than a frame, by what drew; ctx: what the context trace reads and
+ *  its copy (tracebuf.js init). */
+export function watch(view, ctx) {
+  buf.init({ view, ...ctx });
+  if (!ON && !buf.ON) return;
   for (const [name, what] of [["flush", "screen"], ["onHist", "hist"]]) {
     const f = view[name];
     view[name] = function (...a) {
-      const s = now(), r = f.apply(this, a), ms = now() - s;
-      if (ms > SLOW_DRAW) push({ ev: "draw", what, ms, rows: this.screen.length + this.hist.length });
+      const s = now(), r = f.apply(this, a), ms = now() - s, rows = this.screen.length + this.hist.length;
+      buf.drew(what, ms, rows);
+      if (ms > SLOW_DRAW) push({ ev: "draw", what, ms, rows });
       return r;
     };
   }
@@ -113,6 +127,7 @@ export function watch(view) {
 
 /** The bridge's answer: on or off, and pongs. */
 export function onMessage(m) {
+  if (!ON) return;                                // ?trace=2's answers are tracebuf.js's
   if (m.pong != null) {
     const t = pings.get(m.pong);
     pings.delete(m.pong);

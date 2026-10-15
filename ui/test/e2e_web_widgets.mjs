@@ -36,7 +36,7 @@ const FILES = { "/tmp/shots": ["shot.png", "b.png", "notes.txt"] };     // what 
  *  history's first line sent on opening (older ones are there to load); hook(msg, say): every
  *  message the page sends, to answer more. */
 export async function open(browser, { renderers = true, agent = false, history = HISTORY, screen = SCREEN, cwd = "/tmp/shots", files = FILES, image = PNG, folds = [],
-  device = { viewport: { width: 1200, height: 800 } }, first = 0, hook = null, layout = LAYOUT } = {}) {
+  device = { viewport: { width: 1200, height: 800 } }, first = 0, hook = null, layout = LAYOUT, query = "" } = {}) {
   const opts = { renderers };
   const page = await browser.newPage(device);
   const errors = [], sent = [];
@@ -85,7 +85,7 @@ export async function open(browser, { renderers = true, agent = false, history =
     say({ t: "build", id: "test" });
     say({ t: "layout", groups: agent ? [{ ...layout[0], items: [{ ...layout[0].items[0], agent: "claude", shell: false }] }] : layout });
   });
-  await page.goto(`${ORIGIN}/`);
+  await page.goto(`${ORIGIN}/${query}`);
   await page.waitForFunction((n) => document.querySelectorAll("#screen .ln").length === n, screen.length + 1, { timeout: 10000 });
   return { page, errors, sent, say: (m) => say(m), setRenderers: (on) => { opts.renderers = on; } };
 }

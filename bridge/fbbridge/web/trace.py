@@ -3,7 +3,8 @@
 echo, sessions opened, round trips and stalls, one JSON record per line in the log folder, for
 TRACE_FOR seconds on the bridge's clock. Nothing typed or shown is recorded: kinds, counts,
 times, session ids and the session's mode. The page's records are kept only as known names
-with numbers, booleans and listed words."""
+with numbers, booleans and listed words. A page with ?trace=2 (its own context trace) asks only
+for the key stages in the screen messages ("stages"): nothing is written then."""
 import asyncio
 import itertools
 import json
@@ -171,10 +172,16 @@ class Tracer:
         self.mode = {}
         self.opened = None
         self.task = None
+        self.stages = False      # the page's context trace: key stages in the frames, no file
 
     @property
     def live(self):
         return self.on and RECORDER.on
+
+    @property
+    def timing(self):
+        """Keys are timed: for the file, or for the page's own trace."""
+        return self.live or self.stages
 
     def write(self, rec):
         RECORDER.write("bridge", {"c": self.id, **rec})
@@ -182,6 +189,9 @@ class Tracer:
     async def handle(self, msg):
         if msg.get("ping") is not None:
             return await self.client.send({"t": "trace", "pong": msg["ping"]})
+        if "stages" in msg:
+            self.stages = msg["stages"] is True
+            return await self.client.send({"t": "trace", "stages": self.stages})
         if "on" in msg:
             if msg["on"] and not RECORDER.on:
                 if msg.get("resume"):            # the page's trace ended while it was away
@@ -249,7 +259,7 @@ class Tracer:
     def key(self, msg):
         """An "in" message: its record, timed step by step, or None."""
         k = msg.get("k")
-        if not self.live or not isinstance(k, int):
+        if not self.timing or not isinstance(k, int):
             return None
         t = time.perf_counter()
         return {"k": k, "t0": t, "m": t}
@@ -264,7 +274,8 @@ class Tracer:
     def typed(self, rec):
         if rec is not None:
             rec["polls"] = 0
-            self.keys.append(rec)
+            now = time.perf_counter()        # keys never shown go (the file's watch notes them first)
+            self.keys = [r for r in self.keys if now - r["t0"] < STALE] + [rec]
 
     def woken(self, how):
         if self.woke is None:            # the first cause counts
@@ -272,7 +283,7 @@ class Tracer:
 
     def read(self, t):
         """A screen read that began at t ended: what woke it and how long it took."""
-        if self.live:
+        if self.timing:
             self.read_at, self.read_ms, self.read_woke = t, ms(t), self.woke or "next"
             for r in self.keys:
                 if r["m"] <= t:
@@ -293,7 +304,7 @@ class Tracer:
     def frame(self, cursor_moved):
         """Fields for a screen message: the keys it shows (with the cursor moved or its row
         changed: a spinner's frame does not answer a key) and their stages."""
-        if not self.live:
+        if not self.timing:
             return {}
         if self.opened:
             self.write({"ev": "open", "sid": self.opened["sid"], "ms": ms(self.opened["t0"]), **self.mode})

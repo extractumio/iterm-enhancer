@@ -230,6 +230,12 @@ and sign in:
   `scripts/trace_report.py` sums up the newest trace by stage and by mode (shell or tmux, local
   or remote). When the bridge itself is busy, `kill -USR1 <bridge pid>` writes its busiest
   functions over 15 s to `profile-<date>-<time>.txt` in the same folder.
+- **Context trace**: to hand a bug to a coding agent, open the page with `?trace=2`, use it until
+  the problem shows, and press **trace** (left of ⓘ): the page's last events (keys and their
+  echo, sessions opened, taps and clicks, sizes, messages, errors) and its state (the screen,
+  the input box as iTerm2 has it and as the page lays it out) are copied as text to paste into
+  the agent's chat. It holds what you typed into the terminal and what it shows, stays in the
+  page and goes only where you paste it. Format and analysis: `docs/web-trace.md`.
 - **Files** and **View**: this panel for the pane's folder (remote hosts too) and its editor
   (at 1400 px and wider, Files docked on the right and View a window over the terminal);
   web links open in your browser; Finder, apps and typing into a terminal are not offered.

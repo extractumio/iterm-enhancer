@@ -97,6 +97,25 @@ class TraceTest(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(os.stat(trace.RECORDER.path).st_mode), 0o600)
         asyncio.run(go())
 
+    def test_the_pages_own_trace_gets_the_stages_and_nothing_is_written(self):
+        async def go():
+            c = Client()
+            t = trace.Tracer(c)
+            await t.handle({"t": "trace", "stages": True})
+            self.assertEqual(c.sent[-1], {"t": "trace", "stages": True})
+            key = t.key({"t": "in", "data": "a", "k": 2})
+            t.step(key, "fwd")
+            t.typed(key)
+            t.read(trace.time.perf_counter())
+            b = t.frame(True)["tr"]["ks"][0]
+            self.assertEqual(b["k"], 2)
+            self.assertTrue(b["bt"] >= 0)
+            self.assertFalse(list(Path(self.dir.name).glob("trace-*")), "no file")
+            await t.handle({"t": "trace", "stages": "yes"})
+            self.assertEqual(c.sent[-1], {"t": "trace", "stages": False})
+            self.assertIsNone(t.key({"t": "in", "data": "a", "k": 3}))
+        asyncio.run(go())
+
     def test_off_nothing_is_recorded_and_the_messages_carry_nothing(self):
         t = trace.Tracer(Client())
         self.assertIsNone(t.key({"t": "in", "data": "a", "k": 1}))

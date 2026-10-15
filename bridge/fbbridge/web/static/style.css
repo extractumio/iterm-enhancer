@@ -316,6 +316,10 @@ svg.lu circle { fill: none; stroke: currentColor; }
 }
 /* A mouse and a hardware keyboard need no keyboard button. */
 @media (hover: hover) { #fabs #kbdbtn, #fabs #copyfab { display: none; } }
+/* The context trace's copy button (?trace=2, tracebuf.js): left of ⓘ, alone on a computer */
+body.ctxtrace #fabs { display: flex; }
+#fabs #tracefab { width: auto; padding: 0 12px; font: 600 12px/1 ui-monospace, Menlo, monospace; }
+@media (hover: hover) and (min-width: 861px) { body.ctxtrace #fabs > :not(#tracefab) { display: none; } }
 
 /* ---------- hot keys panel ---------- */
 #hotkeys { background: var(--chrome); border-top: 1px solid var(--line);

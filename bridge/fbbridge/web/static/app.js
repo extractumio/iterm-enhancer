@@ -103,7 +103,7 @@ view.onReset = () => { widgets.reset(); shownFiles.forget(); };
 // Bookmarks of a selection, with a note, kept on the Mac (AC-57)
 const bookmarks = new Marks({ view, widgets, term: $("term"), send, sid: () => st.sid, alive: (id) => findItem(st.groups, id)?.item.title ?? null,
   pick: (id) => pick(id), toast, onChange: () => drawNav(), copy: (text) => input.copySelection(text, true) });
-trace.watch(view);
+trace.watch(view, { st, bookmarks, widgets, findItem, send, mode: () => shownMode(), copy: (text) => input.copySelection(text) });
 let kbdFrame = 0;
 $("term").addEventListener("scroll", () => { if (!kbdFrame) kbdFrame = requestAnimationFrame(() => { kbdFrame = 0; placeKbd(); }); }, { passive: true });
 
@@ -144,7 +144,7 @@ function connect() {
     setTimeout(connect, retry = Math.min(retry * 2, 8000));
   };
 }
-function send(m) { if (st.ws?.readyState === 1) st.ws.send(JSON.stringify(m)); }
+function send(m) { trace.sent(m); if (st.ws?.readyState === 1) st.ws.send(JSON.stringify(m)); }
 function status(text) { $("status").hidden = !text; $("status").textContent = text; }
 
 function showLogin(message = "") {
