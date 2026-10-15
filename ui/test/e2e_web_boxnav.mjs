@@ -137,6 +137,15 @@ export async function webBoxNav(browser, name = "chromium") {
   await press("ArrowDown", 2);
   check(`${at} ↑ and ↓ step over a blank line one line at a time, keeping their column`, blank === 16 && firstPara === 10 && cc.at === 27 && cc.history === 0,
     JSON.stringify({ blank, firstPara, back: cc.at }));
+  // a space typed at a paragraph's end, the cursor after it: ↓ goes on to the blank line and the next
+  // paragraph (the space was not counted, the blank line stood where the cursor was and ↓ sent nothing)
+  await page.waitForTimeout(1500);                      // the last move is done (boxnav.js ARRIVE), not taken for one on its way
+  await set("first paragraph \n\nsecond paragraph here", 16);
+  await press("ArrowDown");
+  const blank2 = cc.at;
+  await press("ArrowDown");
+  check(`${at} ↓ after a space typed at a paragraph's end goes to the blank line, then on`, blank2 === 17 && cc.at > 17 && cc.history === 0,
+    JSON.stringify({ blank2, at: cc.at }));
 
   // a line above out of sight is a line all the same
   await set(TEXT, 150);

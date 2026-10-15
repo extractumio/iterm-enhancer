@@ -75,11 +75,12 @@ export class BoxMoves {
     const cur = this.screen.querySelector(".cur"), el = cur?.closest(".ln");
     const row = recs.findIndex((r) => r.el === el);
     if (row < 0) return null;
-    const lay = layout(recs.map((r) => ({ len: typedLength(r.data), glue: r.el.classList.contains("glue") })));
     // the cursor's own column, not clamped to the text: spaces typed at a row's end are not sent
     let col = 0, text = "";
     const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let t = walk.nextNode(); t && !cur.contains(t); t = walk.nextNode()) { col += graphemes(t.data).length; text += t.data; }
+    // all before the cursor is typed: spaces at its row's end count, or the next row starts a character early
+    const lay = layout(recs.map((r, i) => ({ len: i === row ? Math.max(typedLength(r.data), col) : typedLength(r.data), glue: r.el.classList.contains("glue") })));
     const before = graphemes(text).slice(PREFIX).join("");
     return { recs, lay, cur, row, before, whole: v.box.top >= 0, end: lay.at(-1).start + lay.at(-1).len, at: lay[row].start + Math.max(0, col - PREFIX) };
   }
